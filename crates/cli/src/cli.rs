@@ -286,9 +286,11 @@ fn dispatch(ctx: &Context, command: Commands) -> anyhow::Result<()> {
         Commands::Config { action } => config_command(ctx, out, action),
         // Wired by later tasks; each replaces its arm.
         Commands::Daemon { .. } => not_available("daemon"), // Task 36
-        Commands::Open { .. } => not_available("open"),     // Task 38
-        Commands::Pick => not_available("pick"),            // Task 46
-        Commands::Settings => not_available("settings"),    // Task 46
+        Commands::Open { folder, favorites } => {
+            block_on(commands::open::run(ctx, out, folder, favorites))
+        }
+        Commands::Pick => not_available("pick"), // Task 46
+        Commands::Settings => not_available("settings"), // Task 46
         Commands::Detect { .. } => not_available("detect"), // Task 37
         Commands::Doctor { .. } => not_available("doctor"), // Task 37
         Commands::Service { .. } => not_available("service"), // Task 39
