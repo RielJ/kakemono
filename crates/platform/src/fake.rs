@@ -3,8 +3,8 @@
 //! ```
 //! # async fn demo() {
 //! use std::{path::Path, sync::Arc};
-//! use wallpaperd_platform::fake::{ManualSignals, RecordingSetter};
-//! use wallpaperd_platform::{Fit, Platform, Signal, Theme, WallpaperSetter};
+//! use kakemono_platform::fake::{ManualSignals, RecordingSetter};
+//! use kakemono_platform::{Fit, Platform, Signal, Theme, WallpaperSetter};
 //!
 //! let setter = RecordingSetter::new();
 //! let signals = ManualSignals::new(Theme::Light);

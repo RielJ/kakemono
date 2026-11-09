@@ -1,4 +1,4 @@
-# wallpaperd → Rust, cross-platform rewrite
+# kakemono: Rust, cross-platform rewrite of wallpaperd
 
 > **Provenance.** This plan merges a multi-model planning run (`~/.pi/multi-runs/20261109-174615-plan/`). Plan A (Opus 5.5) is the base. Plans B (GPT 5.6 Sol) and C (GLM 5.2) contributed the changes listed under *Synthesis decisions*. Plan D (Opus 5) produced no output.
 
@@ -8,7 +8,7 @@ The user chose these:
 
 | Decision | Choice | Source |
 | --- | --- | --- |
-| App name | **kakemono** (renamed from `wallpaperd`, which is too close to the existing Rust Wayland daemon `wpaperd`). Binary `kakemono`, crates `kakemono-*`, `~/.config/kakemono/`, app id `dev.rielj.kakemono`, env prefix `KAKEMONO_`. The Go config path `~/.config/wallpaperd/config.toml` is read as a legacy fallback and never moved automatically. Throughout this plan, read `wallpaperd` as `kakemono` wherever it is user-facing. | user |
+| App name | **kakemono** (renamed from `wallpaperd`, which is too close to the existing Rust Wayland daemon `wpaperd`). Binary `kakemono`, crates `kakemono-*`, `~/.config/kakemono/`, app id `dev.rielj.kakemono`, env prefix `KAKEMONO_`. The Go config path `~/.config/wallpaperd/config.toml` is read as a legacy fallback and never moved automatically. Throughout this plan, read `kakemono` as `kakemono` wherever it is user-facing. | user |
 | macOS Space switching | Re-applying on Space change is **opt-in**: `[daemon] reapply_on_space_change = false` by default. By default only the current Space changes, as in Go today. | B's warning, A/C's mechanism |
 | Wayland picker (v1) | Centred window, documented compositor window rules, opt-in `force_x11`, and a time-boxed raw-wry layer-shell spike that ships nothing | A |
 | Picker placement | The user can **drag** the picker anywhere on every OS. The position is remembered on macOS, Windows, X11, Hyprland and sway (see §H). | User request |
@@ -39,11 +39,11 @@ These came from B and C and were merged in:
 
 Rewrite `wallpaperd` (Go: cobra CLI and daemon, about 3.3k LOC in `cmd/` and `internal/`; plus two Wails apps in `gui/` and `picker/` with about 2.1k LOC of React/TS) as a Cargo workspace. The new version runs on macOS, Linux and Windows and needs no helper apps: no `osascript`, `defaults`, `open` or sketchybar.
 
-- **Daemon and CLI.** A headless binary called `wallpaperd` hosts the engine and the CLI. It has no GUI dependencies.
+- **Daemon and CLI.** A headless binary called `kakemono` hosts the engine and the CLI. It has no GUI dependencies.
   - The engine covers rotation, history, favorites, trash, cache, theme awareness and hooks.
   - It talks to the OS through a small platform seam: set the wallpaper, report the theme, and emit system signals.
-- **Tray, settings and picker.** A separate, optional Tauri 2 app called `wallpaperd-ui` provides these. It reuses the existing React frontends, merged into one Vite multi-page app, and is a pure IPC client of the daemon.
-- **Linux.** We do not draw the wallpaper ourselves. At first run (and on demand through `wallpaperd detect` and `wallpaperd doctor`) the daemon works out which desktop environment or compositor is running and which wallpaper tool is available. It saves the chosen backend and an argv `set_command` to `config.toml`, and the user can edit or pin that choice.
+- **Tray, settings and picker.** A separate, optional Tauri 2 app called `kakemono-ui` provides these. It reuses the existing React frontends, merged into one Vite multi-page app, and is a pure IPC client of the daemon.
+- **Linux.** We do not draw the wallpaper ourselves. At first run (and on demand through `kakemono detect` and `kakemono doctor`) the daemon works out which desktop environment or compositor is running and which wallpaper tool is available. It saves the chosen backend and an argv `set_command` to `config.toml`, and the user can edit or pin that choice.
 - **Compatibility.** `config.toml`, `state.json`, the newline-JSON IPC protocol and the CLI surface (including `status --json`, which the sketchybar scripts use) stay compatible. Existing setups keep working.
 - **Hooks.** A user-defined `[hooks] on_change` command replaces the sketchybar coupling. The Go README claims the daemon triggers `wallpaper_changed`, but the Go code never does this, so this is effectively a new feature.
 
@@ -57,14 +57,14 @@ rust-toolchain.toml           # stable >= 1.90 (std File::try_lock is 1.89; taur
 deny.toml                     # cargo-deny: licenses (block GPL; see variety-reference risk), advisories
 .github/workflows/ci.yml
 crates/
-  protocol/   wallpaperd-protocol   IPC wire types + codec + client + endpoint naming
-  config/     wallpaperd-config     schema, defaults, load (serde/toml), edit (toml_edit), paths (etcetera), Go-duration parser
-  sources/    wallpaperd-sources    Provider trait, http/retry/download helpers, 6 providers, registry
-  platform/   wallpaperd-platform   seam traits + fake, exec (argv templating), host (main-thread ownership),
+  protocol/   kakemono-protocol   IPC wire types + codec + client + endpoint naming
+  config/     kakemono-config     schema, defaults, load (serde/toml), edit (toml_edit), paths (etcetera), Go-duration parser
+  sources/    kakemono-sources    Provider trait, http/retry/download helpers, 6 providers, registry
+  platform/   kakemono-platform   seam traits + fake, exec (argv templating), host (main-thread ownership),
                                     macos/, windows/, linux/{detect,backends,…}, open (url/reveal), service install
-  engine/     wallpaperd-engine     State (history), Engine (ops), rotation loop, Clock, files (fav/trash/cache), hooks, events
-  cli/        wallpaperd (bin)      clap CLI + daemon host (IPC server, instance lock, logging)
-  ui/src-tauri wallpaperd-ui (bin)  Tauri app: tray, settings window, picker window, thumb:// protocol
+  engine/     kakemono-engine     State (history), Engine (ops), rotation loop, Clock, files (fav/trash/cache), hooks, events
+  cli/        kakemono (bin)        clap CLI + daemon host (IPC server, instance lock, logging)
+  ui/src-tauri kakemono-ui (bin)  Tauri app: tray, settings window, picker window, thumb:// protocol
   ui/frontend                       Vite multi-page React app (settings.html, picker.html, shared/)
 contrib/sketchybar/  contrib/waybar/   example integrations (moved from ./sketchybar)
 docs/linux-backends.md docs/migration.md
@@ -124,7 +124,7 @@ where F: FnOnce(Platform) -> Fut + Send + 'static, Fut: Future<Output = anyhow::
 
 ### C. Who hosts the engine: the headless daemon only
 
-- **Decision.** `wallpaperd daemon` is the only host. `wallpaperd-ui` (tray, settings, picker) is an IPC client that spawns the daemon (bundled as a Tauri sidecar) if it isn't running.
+- **Decision.** `kakemono daemon` is the only host. `kakemono-ui` (tray, settings, picker) is an IPC client that spawns the daemon (bundled as a Tauri sidecar) if it isn't running.
 - **Rejected: the GUI hosts the engine.** Linux users on sway, Hyprland or niri, and macOS users with sketchybar, want rotation without GTK, WebKit or a tray. Also, the Linux tray is unreliable: GNOME needs an extension, and tray-icon #336 fails silently on KDE Wayland. Rotation must not depend on it.
 - **Rejected: both host, with single-instance locking.** This needs two hosting code paths and two lifecycles, makes engine ownership ambiguous during a UI crash, and fights over the main thread: on macOS both tao and our NSApplication observer want it.
 - **Single instance.** The daemon takes `std::fs::File::try_lock` on `<runtime_dir>/daemon.lock`, then binds the socket.
@@ -201,7 +201,7 @@ impl Engine {
    - `SWAYSOCK`: `sway` (`swaymsg output * bg {path} fill`; sway supervises swaybg itself).
    - `NIRI_SOCKET` or another Wayland session: awww or swww if installed, else swaybg (we supervise it), else wbg.
 5. **X11 without a known DE:** xwallpaper > feh > nitrogen > hsetroot.
-6. **Nothing found:** `Unconfigured`. `set` returns an actionable error: "No wallpaper backend detected. Run `wallpaperd doctor`, or set `[desktop] set_command`."
+6. **Nothing found:** `Unconfigured`. `set` returns an actionable error: "No wallpaper backend detected. Run `kakemono doctor`, or set `[desktop] set_command`."
 
 **Persisted shape.** New, optional keys; Go's BurntSushi/toml ignores them, so a parity build can read the same file.
 
@@ -239,9 +239,9 @@ detected_at = "2026-11-09T17:46:15Z"
 - On daemon start, adopt any existing recorded PID.
 
 **Failure, fallback and re-detection:**
-- After 2 consecutive `SetError`s with `managed_by = "detect"`, the daemon re-runs detection in memory. If the result differs, it retries once with the new backend and logs a suggestion to run `wallpaperd detect --write`.
+- After 2 consecutive `SetError`s with `managed_by = "detect"`, the daemon re-runs detection in memory. If the result differs, it retries once with the new backend and logs a suggestion to run `kakemono detect --write`.
 - It never silently rewrites a config the user pinned.
-- `wallpaperd doctor` prints the env snapshot, the probes, the resolution and its reasons, and the tray watcher's presence. It runs a dry-run argv render, and with `--apply` it test-sets the current image.
+- `kakemono doctor` prints the env snapshot, the probes, the resolution and its reasons, and the tray watcher's presence. It runs a dry-run argv render, and with `--apply` it test-sets the current image.
 
 ### F. Per-OS notes
 
@@ -270,7 +270,7 @@ detected_at = "2026-11-09T17:46:15Z"
 - **Theme.** dark-light 3.0. Its Windows watch mechanism is UNVERIFIED, so Task 27 tests it. If it polls, that's fine.
   - The registry value is `HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize\SystemUsesLightTheme`. Note dark-light may read `AppsUseLightTheme`; record which one it uses.
 - **Signals.** A hidden message-only window on the host thread: `WM_DISPLAYCHANGE` → `DisplaysChanged`, `WM_POWERBROADCAST/PBT_APMRESUMEAUTOMATIC` → `Resumed`.
-- **IPC.** Named pipe `\\.\pipe\wallpaperd-<USERNAME>` via interprocess. Restricting the pipe ACL to the current user SID is a risk to verify.
+- **IPC.** Named pipe `\\.\pipe\kakemono-<USERNAME>` via interprocess. Restricting the pipe ACL to the current user SID is a risk to verify.
 
 **Linux:**
 - **Wallpaper:** the backends above.
@@ -280,7 +280,7 @@ detected_at = "2026-11-09T17:46:15Z"
 - **Tray caveats.** The UI app (not the daemon) owns the tray.
   - At startup it checks for `org.kde.StatusNotifierWatcher` on the session bus. If it's missing (stock GNOME), it skips the tray and tells the user to install the AppIndicator extension or launch with `--settings`.
   - Because tray-icon #336 fails silently on Plasma 6.7 Wayland, `doctor` reports this explicitly.
-- **systemd user services** may lack `WAYLAND_DISPLAY` and `HYPRLAND_INSTANCE_SIGNATURE`. `service install` writes a unit bound to `graphical-session.target` and also prints compositor snippets (`exec-once = wallpaperd daemon` for Hyprland, `exec wallpaperd daemon` for sway, `spawn-at-startup` for niri). `doctor` warns when the daemon's env lacks the compositor variables.
+- **systemd user services** may lack `WAYLAND_DISPLAY` and `HYPRLAND_INSTANCE_SIGNATURE`. `service install` writes a unit bound to `graphical-session.target` and also prints compositor snippets (`exec-once = kakemono daemon` for Hyprland, `exec kakemono daemon` for sway, `spawn-at-startup` for niri). `doctor` warns when the daemon's env lacks the compositor variables.
 
 ### G. Library choices (one per decision)
 
@@ -295,7 +295,7 @@ Versions are from `docs/research/rust-libraries.md` (crates.io, 2026-11-09). Tas
 | HTML | **scraper 0.29** | goquery-like CSS selectors. tl has weak selector support; lol_html is a streaming rewriter. |
 | Config | **toml 1.2 + serde** for reads; **toml_edit 0.25** for writes from the UI, detection and `config set` | figment and config-rs give layering we don't need. Go rewrote the whole file and lost comments; toml_edit keeps them. |
 | Durations | Own `config::duration::parse_go` (about 40 LOC) | humantime rejects Go forms like `1.5h` and `1h30m0s`. Compatibility with existing `interval` strings matters. |
-| Paths | **etcetera 0.11** `choose_base_strategy` | Keeps `~/.config/wallpaperd` on macOS, which is required for compatibility. `directories` and `dirs` move it to `~/Library/Application Support`. |
+| Paths | **etcetera 0.11** `choose_base_strategy` | Gives `~/.config/kakemono` on macOS too (the legacy `~/.config/wallpaperd/config.toml` is a read-only fallback). `directories` and `dirs` move it to `~/Library/Application Support`. |
 | Time | **chrono** (serde) | Go's `time.Time` RFC 3339 output, including the zero value `0001-01-01T00:00:00Z`, round-trips. jiff would also work, but chrono is already in Tauri's tree. |
 | CLI | **clap 4.6** derive (+ `clap_complete`) | Standard. bpaf and argh are fine but less familiar. |
 | IPC | **interprocess 2.4** local sockets, `tokio` feature | One API for Unix sockets and named pipes. Hand-rolling means two adapters and more code. Its "maintenance: passive" status is acceptable: the API surface we use is small, and the fallback (tokio UnixListener plus `named_pipe`) is about 150 LOC behind `protocol::endpoint`. |
@@ -306,7 +306,7 @@ Versions are from `docs/research/rust-libraries.md` (crates.io, 2026-11-09). Tas
 | Windows | **windows 0.62** | windows-sys has no COM interface wrappers, which `IDesktopWallpaper` needs. winapi is unmaintained. |
 | `wallpaper` crate | **Rejected** | 3.2.0 dates from 2021, uses `osascript` on macOS, has no per-monitor support and no Hyprland, niri or awww. more-wallpapers 0.4 is barely used and wraps it. |
 | Errors | **thiserror 2** in libraries (`SetError`, `EngineError`, `ProviderError`), **anyhow** in binaries | Errors cross IPC as strings, as in Go. |
-| Logging | **tracing + tracing-subscriber (env-filter) + tracing-appender 0.2** with daily rotation and `max_log_files(7)` | Log dirs: `~/Library/Logs/wallpaperd`, `$XDG_STATE_HOME/wallpaperd`, `%LOCALAPPDATA%\wallpaperd\logs`. Foreground mode logs to stderr. |
+| Logging | **tracing + tracing-subscriber (env-filter) + tracing-appender 0.2** with daily rotation and `max_log_files(7)` | Log dirs: `~/Library/Logs/kakemono`, `$XDG_STATE_HOME/kakemono`, `%LOCALAPPDATA%\kakemono\logs`. Foreground mode logs to stderr. |
 | Autostart (daemon) | **auto-launch 0.6** for macOS (LaunchAgent mode) and Windows (HKCU Run). **Own systemd user unit** on Linux | **Disagreement with the research:** auto-launch on Linux writes XDG autostart `.desktop` files, which Hyprland, sway and niri ignore. A systemd unit with `graphical-session.target` plus printed compositor snippets covers both kinds of session. |
 | Autostart (UI) | tauri-plugin-autostart | It already wraps auto-launch. |
 | Single instance | std `File::try_lock` (daemon), tauri-plugin-single-instance (UI) | The `single-instance` crate would be one more dependency for what std now provides. |
@@ -335,9 +335,9 @@ Versions are from `docs/research/rust-libraries.md` (crates.io, 2026-11-09). Tas
 
 **Picker positioning, in tiers:**
 1. **macOS, Windows and X11:** an undecorated, always-on-top window that skips the taskbar and is visible on all workspaces. It is positioned at the configured edge of the monitor under the cursor (`cursor_position` plus `available_monitors`); Go always used the primary monitor. On macOS also use `set_visible_on_all_workspaces` so the picker appears over the current Space.
-2. **Wayland, all compositors (v1):** clients cannot position themselves, and Tauri/tao has no pre-realize hook for layer-shell (tao #1315; PR #15914 was closed). So the window opens centred-bottom wherever the compositor puts it, with a stable app_id/class `wallpaperd-picker`. `doctor` and the docs give one-line window rules:
-   - Hyprland: `windowrulev2 = float, class:wallpaperd-picker` / `move …`
-   - sway: `for_window [app_id="wallpaperd-picker"] floating enable, move position …`
+2. **Wayland, all compositors (v1):** clients cannot position themselves, and Tauri/tao has no pre-realize hook for layer-shell (tao #1315; PR #15914 was closed). So the window opens centred-bottom wherever the compositor puts it, with a stable app_id/class `kakemono-picker`. `doctor` and the docs give one-line window rules:
+   - Hyprland: `windowrulev2 = float, class:kakemono-picker` / `move …`
+   - sway: `for_window [app_id="kakemono-picker"] floating enable, move position …`
    - niri: a `window-rule` block
    - Optional `[picker] force_x11 = true` relaunches the picker process with `GDK_BACKEND=x11` (XWayland). This is UNVERIFIED; it is behind a flag and off by default because of blur under fractional scaling.
 3. **Layer-shell picker** (raw wry plus gtk-layer-shell): out of scope for v1. There is a time-boxed spike task, but no commitment.
@@ -347,8 +347,8 @@ Versions are from `docs/research/rust-libraries.md` (crates.io, 2026-11-09). Tas
 - The window must float on tiling compositors. The documented rules include `float` (Hyprland) and `floating enable` (sway), and `doctor` prints them.
 - **Saving the position** adds `[picker] placement = "edge" | "custom"` and `[picker] custom = { x, y, monitor }` (the monitor is identified by name). When the user drops the window, `placement` becomes `custom`. The "Reset position" item in the tray menu or the context menu sets it back to `edge`.
   - **macOS, Windows, X11:** read the position with Tauri `outer_position()` on `Moved` (debounced 300 ms) and restore it with `set_position()`.
-  - **Hyprland:** apps can't read or set their own position on Wayland, so ask the compositor. On hide, read `hyprctl clients -j` and match `class == "wallpaperd-picker"` to get `at`/`size`. On show, run `hyprctl dispatch movewindowpixel exact X Y,class:wallpaperd-picker`.
-  - **sway:** on hide, read the rect of the `app_id == "wallpaperd-picker"` node from `swaymsg -t get_tree`. On show, run `swaymsg '[app_id="wallpaperd-picker"] move absolute position X Y'`.
+  - **Hyprland:** apps can't read or set their own position on Wayland, so ask the compositor. On hide, read `hyprctl clients -j` and match `class == "kakemono-picker"` to get `at`/`size`. On show, run `hyprctl dispatch movewindowpixel exact X Y,class:kakemono-picker`.
+  - **sway:** on hide, read the rect of the `app_id == "kakemono-picker"` node from `swaymsg -t get_tree`. On show, run `swaymsg '[app_id="kakemono-picker"] move absolute position X Y'`.
   - The placement code lives in `crates/ui/src-tauri/src/picker_place.rs` behind a small `Placer` trait, so `ui` still depends only on `protocol` and `config`. The compositor comes from `HYPRLAND_INSTANCE_SIGNATURE` or `SWAYSOCK`. An injected argv runner lets tests snapshot the commands without running `hyprctl` or `swaymsg`.
   - **GNOME, KDE, niri and others:** the user can drag the window, but it isn't remembered, and it opens centred each time. The docs point KDE users to a "Remember position" window rule.
 - If the saved monitor is gone, or the saved rect is off every screen, fall back to `edge` placement.
@@ -378,14 +378,14 @@ Versions are from `docs/research/rust-libraries.md` (crates.io, 2026-11-09). Tas
 - New optional sections: `[desktop]`, `[hooks]`, `[ui]`. New keys: `[daemon] rotate_on_theme_change` (default true) and `reapply_on_space_change` (default false); `[picker] force_x11`, `close_on_blur`, `placement` and `custom`.
 - `socket_path` is honoured if it is set.
 - **Default socket location:**
-  - macOS: `~/.config/wallpaperd/daemon.sock` (as in Go)
-  - Linux: `$XDG_RUNTIME_DIR/wallpaperd/daemon.sock`, falling back to `~/.config/wallpaperd/daemon.sock`
-  - Windows: `\\.\pipe\wallpaperd-<user>`
+  - macOS: `~/.config/kakemono/kakemono.sock`
+  - Linux: `$XDG_RUNTIME_DIR/kakemono/kakemono.sock`, falling back to `~/.config/kakemono/kakemono.sock`
+  - Windows: `\\.\pipe\kakemono-<user>`
   - The socket dir is created 0700 and the socket set to 0600.
 
 **state.json:**
 - Same shape: `current` (nullable), `history`, `history_index` (−1 when empty), `paused`, `last_changed`. `maxHistory = 100`.
-- **Path:** `~/.config/wallpaperd/state.json` (kept, not moved to XDG state).
+- **Path:** `~/.config/kakemono/state.json`. If it is missing and the Go app's `~/.config/wallpaperd/state.json` exists (`paths::legacy_state_file`), read that once and write the new file; never modify the old one.
 - **Write safety:** writes are atomic (temp file plus rename). Go wrote the file in place.
 
 **IPC wire format:**
@@ -429,11 +429,11 @@ Versions are from `docs/research/rust-libraries.md` (crates.io, 2026-11-09). Tas
 - Ubuntu installs `libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev`.
 - A frontend job runs `npm ci && npm run typecheck && npm run build && npm test`.
 - `cargo deny check` runs.
-- A nightly job runs provider live smoke tests (`cargo test -p wallpaperd-sources --features live -- --ignored`). It is allowed to fail.
+- A nightly job runs provider live smoke tests (`cargo test -p kakemono-sources --features live -- --ignored`). It is allowed to fail.
 
 **Local cross-checks** (no linking needed; `platform` has no C dependencies):
 - `rustup target add x86_64-unknown-linux-gnu x86_64-pc-windows-msvc`
-- `cargo check -p wallpaperd-platform -p wallpaperd --target …`
+- `cargo check -p kakemono-platform -p kakemono --target …`
 
 ## Risks and unknowns
 
@@ -462,13 +462,13 @@ Ranked by likelihood × impact.
 11. **GPL contamination.** `variety-reference/` (Variety, GPL-3) is reference only: implement from public API docs and don't copy code. `cargo deny` blocks GPL crates.
 12. **Compatibility details:** the Go-duration grammar, the `omitempty` asymmetry and Go's zero time. All are covered by golden tests in Tasks 1, 3, 5 and 16.
 13. **interprocess has passive maintenance.** The endpoint module isolates it (about 150 LOC to replace).
-14. **Repository hygiene.** The folder is not a git repo, and there is a stray `~/` directory and committed binaries (`wallpaperd`, `gui/build/bin`, `coverage.out`). Task 1 creates the repo and a `.gitignore` before anything else.
+14. **Repository hygiene.** The folder is not a git repo, and there is a stray `~/` directory and committed binaries (`kakemono`, `gui/build/bin`, `coverage.out`). Task 1 creates the repo and a `.gitignore` before anything else.
 
 **Open questions for the user** (defaults are chosen, so none of them block):
 - (a) Auto-rotate on theme change: default yes.
 - Answered in the synthesis: re-applying on macOS Space change is opt-in (default off); the Wayland picker is centred with a spike only; the picker can be dragged and its position is remembered where the OS allows; 7 crates; Tauri bundler plus a CI matrix.
 - (b) A Linux-only "set the same image on the lock screen" option (GNOME `org.gnome.desktop.screensaver picture-uri`): default no.
-- (c) App identifier `dev.rielj.wallpaperd`: confirm it.
+- (c) App identifier `dev.rielj.kakemono`: decided.
 - (d) Whether to ship Homebrew, AUR or winget manifests in v1: default no.
 
 ## What we're NOT doing
@@ -578,7 +578,7 @@ Ranked by likelihood × impact.
   4. Add `platform` features `fake` and `sources` feature `live`.
   5. Write the CI workflow from §J.
   6. Make `lib.rs` declare all modules, e.g. `pub mod bing; pub mod apod; …`, with cfg-gated `mod macos;`, `mod windows;` and `mod linux;`.
-- **Automated verification:** `cargo build --workspace && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings && cargo check -p wallpaperd-platform --target x86_64-unknown-linux-gnu && cargo check -p wallpaperd-platform --target x86_64-pc-windows-msvc && cargo deny check`
+- **Automated verification:** `cargo build --workspace && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings && cargo check -p kakemono-platform --target x86_64-unknown-linux-gnu && cargo check -p kakemono-platform --target x86_64-pc-windows-msvc && cargo deny check`
 - **Manual verification:** push to GitHub and confirm the CI matrix is green on all 3 OSes
 
 ## Task 3: protocol types + golden compatibility tests (contract)
@@ -595,7 +595,7 @@ Ranked by likelihood × impact.
      - `Event { event: String, data }`.
   3. Derive `ts_rs::TS` on all types.
   4. Implement `unknown_command_error(name)`, which reproduces `unknown command: "x"`.
-- **Automated verification:** `cargo test -p wallpaperd-protocol golden`
+- **Automated verification:** `cargo test -p kakemono-protocol golden`
 - **Manual verification:** none
 
 ## Task 4: protocol codec, endpoint naming, async client
@@ -608,7 +608,7 @@ Ranked by likelihood × impact.
   3. `Client::connect(&Endpoint).await`, `request(Request) -> Result<Response>`, and `subscribe() -> impl Stream<Item=Event>`.
   4. Map connection-refused or not-found to `ClientError::DaemonNotRunning`, whose message matches Go's `daemonNotRunning` hint.
   5. Write a test that starts an in-test interprocess listener echoing canned responses.
-- **Automated verification:** `cargo test -p wallpaperd-protocol`
+- **Automated verification:** `cargo test -p kakemono-protocol`
 - **Manual verification:** none
 
 ## Task 5: config schema, defaults, load, Go-duration parser (contract)
@@ -623,7 +623,7 @@ Ranked by likelihood × impact.
   5. Write `duration::parse_go("1h30m" | "1.5h" | "90s" | "300ms") -> Duration`, with a table test.
   6. `CommandSpec` deserializes from either an array or a string (split with shell-words).
   7. The compat test parses `go_default_template.toml` and asserts that the result equals `defaults()` after expansion.
-- **Automated verification:** `cargo test -p wallpaperd-config`
+- **Automated verification:** `cargo test -p kakemono-config`
 - **Manual verification:** none
 
 ## Task 6: config paths (etcetera), init template, toml_edit writer
@@ -635,7 +635,7 @@ Ranked by likelihood × impact.
   2. `template.toml` is the Go template plus commented `[desktop]` and `[hooks]` sections. `init(path)` refuses to overwrite, with Go's message.
   3. `edit::patch(path, |doc: &mut toml_edit::DocumentMut| …)` writes atomically. Helpers: `set_desktop(&DesktopConfig)` and `apply_patch(serde_json::Value)` for UI saves.
   4. Write an insta test showing that comments survive a patch.
-- **Automated verification:** `cargo test -p wallpaperd-config && cargo insta test -p wallpaperd-config --check`
+- **Automated verification:** `cargo test -p kakemono-config && cargo insta test -p kakemono-config --check`
 - **Manual verification:** none
 
 ## Task 7: platform seam traits, fake, `host()` default impl (contract)
@@ -648,7 +648,7 @@ Ranked by likelihood × impact.
   3. `fake::RecordingSetter` stores calls in `Arc<Mutex<Vec<(PathBuf,Fit)>>>`, can be told to fail the next N calls, and `ManualSignals` has `emit(Signal)` and `set_theme()`.
   4. The default `host()` (non-macOS/Windows path) builds the tokio runtime and `block_on(f(platform))`. The per-OS `open_platform` functions are stubbed `todo`-free, returning `Unconfigured`.
   5. Unit-test the fake.
-- **Automated verification:** `cargo test -p wallpaperd-platform --features fake`
+- **Automated verification:** `cargo test -p kakemono-platform --features fake`
 - **Manual verification:** none
 
 ## Task 8: platform::exec argv templating + CommandRunner
@@ -662,7 +662,7 @@ Ranked by likelihood × impact.
      - paths containing spaces, quotes, `$()`, `;` and leading `-` survive as a single argv element (asserted through the record-argv script)
      - a timeout kills the child
      - the `SetError::Command` stderr capture is correct
-- **Automated verification:** `cargo test -p wallpaperd-platform exec` (Unix); `cargo check -p wallpaperd-platform --target x86_64-pc-windows-msvc`
+- **Automated verification:** `cargo test -p kakemono-platform exec` (Unix); `cargo check -p kakemono-platform --target x86_64-pc-windows-msvc`
 - **Manual verification:** none
 
 ## Task 9: sources Provider trait, http client, retry, download
@@ -678,7 +678,7 @@ Ranked by likelihood × impact.
      - a filename collision gets a suffix
   5. Also port `is_image_file`.
   6. Wiremock tests: a 429 with `Retry-After: 2` is retried after a 2 s paused clock; non-image is rejected; too-small is rejected; the filename is sanitized.
-- **Automated verification:** `cargo test -p wallpaperd-sources -- http download`
+- **Automated verification:** `cargo test -p kakemono-sources -- http download`
 - **Manual verification:** none
 
 ## Task 10: Bing provider
@@ -688,7 +688,7 @@ Ranked by likelihood × impact.
 - **Steps:**
   1. Port `internal/providers/bing/bing.go`: the HPImageArchive JSON with `mkt` from config, and the UHD URL construction. Use an injectable base URL (`Bing::with_base_url`).
   2. Port the cases from `bing_test.go` against wiremock serving `fixtures/bing/*.json`.
-- **Automated verification:** `cargo test -p wallpaperd-sources --test bing`
+- **Automated verification:** `cargo test -p kakemono-sources --test bing`
 - **Manual verification:** none
 
 ## Task 11: APOD provider
@@ -698,7 +698,7 @@ Ranked by likelihood × impact.
 - **Steps:**
   1. Port `apod.go`, skipping `media_type != "image"` and preferring `hdurl`.
   2. Test with wiremock fixtures, including a video day, which should yield an empty result or an error per the Go behaviour.
-- **Automated verification:** `cargo test -p wallpaperd-sources --test apod`
+- **Automated verification:** `cargo test -p kakemono-sources --test apod`
 - **Manual verification:** none
 
 ## Task 12: Reddit provider
@@ -708,7 +708,7 @@ Ranked by likelihood × impact.
 - **Steps:**
   1. Port `reddit.go`: pick a random subreddit, filter for direct image URLs, and HTML-unescape preview URLs if Go did.
   2. Port the `reddit_test.go` cases.
-- **Automated verification:** `cargo test -p wallpaperd-sources --test reddit`
+- **Automated verification:** `cargo test -p kakemono-sources --test reddit`
 - **Manual verification:** none
 
 ## Task 13: Unsplash provider
@@ -719,7 +719,7 @@ Ranked by likelihood × impact.
   1. Port `unsplash.go`. If Go uses the dead keyless Source endpoint, `fetch` without an `access_key` returns `ProviderError::NotConfigured("unsplash requires access_key")`.
   2. With a key, use `/photos/random?query=&orientation=landscape`.
   3. Test with wiremock.
-- **Automated verification:** `cargo test -p wallpaperd-sources --test unsplash`
+- **Automated verification:** `cargo test -p kakemono-sources --test unsplash`
 - **Manual verification:** none
 
 ## Task 14: Wallhaven API mode
@@ -731,7 +731,7 @@ Ranked by likelihood × impact.
   2. The API mode maps `data[].{url,path,uploader.username}`.
   3. `mod.rs` declares `mod scrape;`, which was already stubbed in Task 2.
   4. Port the API cases from `wallhaven_test.go`.
-- **Automated verification:** `cargo test -p wallpaperd-sources --test wallhaven_api`
+- **Automated verification:** `cargo test -p kakemono-sources --test wallhaven_api`
 - **Manual verification:** none
 
 ## Task 15: Wallhaven scrape mode
@@ -743,7 +743,7 @@ Ranked by likelihood × impact.
   2. Fetch up to 3 pages with `scrape_delay`, which is 0 in tests, as in Go's `NewWithSearchURL`.
   3. Build the full-image URL from the thumbnail id the same way Go does.
   4. Test with the HTML fixtures.
-- **Automated verification:** `cargo test -p wallpaperd-sources --test wallhaven_scrape`
+- **Automated verification:** `cargo test -p kakemono-sources --test wallhaven_scrape`
 - **Manual verification:** none
 
 ## Task 16: Local provider
@@ -753,7 +753,7 @@ Ranked by likelihood × impact.
 - **Steps:**
   1. Port `local.go` with recursive walking (std, or the `walkdir` dependency from Task 2), filtering by `is_image_file`. `image_url` is the absolute path.
   2. Use a tempdir tree in the test.
-- **Automated verification:** `cargo test -p wallpaperd-sources --test local`
+- **Automated verification:** `cargo test -p kakemono-sources --test local`
 - **Manual verification:** none
 
 ## Task 17: sources Registry built from config
@@ -764,7 +764,7 @@ Ranked by likelihood × impact.
   1. `Registry::from_config(&Config, http)` registers all six providers.
   2. `candidates(sources:&[String]) -> Vec<Arc<dyn Provider>>` returns the enabled providers in random order. Port the Go `Random` semantics and add ordering for the fallback.
   3. Write tests: an unknown name is ignored; disabled providers are excluded.
-- **Automated verification:** `cargo test -p wallpaperd-sources`
+- **Automated verification:** `cargo test -p kakemono-sources`
 - **Manual verification:** none
 
 ## Task 18: engine State (history) with JSON compatibility
@@ -776,7 +776,7 @@ Ranked by likelihood × impact.
   2. Saving is atomic.
   3. Port all of `state_test.go`.
   4. Add a golden round-trip of `state_empty.json` and `state_populated.json`, including the zero `last_changed`.
-- **Automated verification:** `cargo test -p wallpaperd-engine state`
+- **Automated verification:** `cargo test -p kakemono-engine state`
 - **Manual verification:** none
 
 ## Task 19: Engine core ops (next/prev/set/status) against fakes
@@ -789,7 +789,7 @@ Ranked by likelihood × impact.
   3. The engine creates download, trash and favorites dirs on construction.
   4. Port the relevant `manager_test.go` cases using `RecordingSetter` and `StaticProvider` (serving a local wiremock image).
   5. Test that `status()` doesn't block while `next()` is awaiting a slow provider.
-- **Automated verification:** `cargo test -p wallpaperd-engine engine_core`
+- **Automated verification:** `cargo test -p kakemono-engine engine_core`
 - **Manual verification:** none
 
 ## Task 20: Engine favorite/trash/cache trim
@@ -801,7 +801,7 @@ Ranked by likelihood × impact.
   2. `Trash` is rename, falling back to copy-then-remove across devices, followed by `next`.
   3. `trimCache` keeps the newest `cache_size` files and never deletes the current image or any image referenced in history within the last 2 entries. The second rule is new and protects GNOME's dark-key image.
   4. Wire these into `Engine::{favorite, trash}` through `pub(crate)` functions. `engine.rs` calls `files::…`; the call sites were stubbed in Task 19.
-- **Automated verification:** `cargo test -p wallpaperd-engine files`
+- **Automated verification:** `cargo test -p kakemono-engine files`
 - **Manual verification:** none
 
 ## Task 21: Engine rotation loop, pause/resume, signal reactions
@@ -819,7 +819,7 @@ Ranked by likelihood × impact.
      - `SpaceChanged` does nothing when `reapply_on_space_change = false` (the default)
      - `SpaceChanged` with `reapply_on_space_change = true` re-sets the current path without adding to history
      - `Resumed` after an overdue tick rotates
-- **Automated verification:** `cargo test -p wallpaperd-engine rotation`
+- **Automated verification:** `cargo test -p kakemono-engine rotation`
 - **Manual verification:** none
 
 ## Task 22: Engine events + hooks
@@ -831,7 +831,7 @@ Ranked by likelihood × impact.
   2. `hooks::fire(on_change, info, theme, runner)` renders argv with `platform::exec::render`, runs it with `env_clear()` plus the pass-through list in §I and the `WALLPAPERD_*` env, runs fire-and-forget with a 10 s timeout, and logs failures.
   3. Limit concurrency with a `Semaphore(4)`. A new run for an event whose previous run is still going is dropped and logged at `warn`.
   4. Test with `RecordingRunner`: argv and env after `next()`. `HOME` is passed through, an unrelated parent variable (for example `WPD_SECRET_TEST`) is absent, and five quick `next()` calls with a slow hook record at most 4 in-flight runs.
-- **Automated verification:** `cargo test -p wallpaperd-engine hooks`
+- **Automated verification:** `cargo test -p kakemono-engine hooks`
 - **Manual verification:** none
 
 ## Task 23: Daemon IPC server + instance lock
@@ -846,7 +846,7 @@ Ranked by likelihood × impact.
      - `subscribe`: reply with one `{"ok":true}` line, then event lines (the client expects exactly this handshake; see `.pi/contracts/protocol.md`).
      - Bind via `Endpoint::bind()`. It creates the parent dir with mode 0700 and sets the socket to 0600, but does not remove a stale socket file. The server does that, only while holding the lock (step 2).
   5. Integration test: start the server on a tempdir socket with a fake engine platform and drive it through `protocol::Client` for every command. Snapshot the raw response lines with insta. A second lock attempt fails.
-- **Automated verification:** `cargo test -p wallpaperd --test server`
+- **Automated verification:** `cargo test -p kakemono --test server`
 - **Manual verification:** none
 
 ## Task 24: macOS host + NSWorkspace setter
@@ -859,7 +859,7 @@ Ranked by likelihood × impact.
   2. `MacSetter::set` dispatches to the main queue: for each `NSScreen`, `setDesktopImageURL_forScreen_options_error` with options from `Fit`. A oneshot returns the result.
   3. Confirm the objc2-app-kit 0.3.x signatures and `MainThreadMarker` usage (UNVERIFIED in the research).
   4. Add an `#[ignore]` test that sets a generated PNG and reads it back with `desktopImageURLForScreen`.
-- **Automated verification:** `cargo build -p wallpaperd-platform && cargo test -p wallpaperd-platform --features fake -- --ignored macos_set_roundtrip` (on macOS)
+- **Automated verification:** `cargo build -p kakemono-platform && cargo test -p kakemono-platform --features fake -- --ignored macos_set_roundtrip` (on macOS)
 - **Manual verification:** with two displays, run the ignored test and confirm both screens change and no Automation permission prompt appears
 
 ## Task 25: macOS signals (space, wake, screens) + theme via dark-light
@@ -870,7 +870,7 @@ Ranked by likelihood × impact.
   1. On the main thread, register block observers on `NSWorkspace.notificationCenter` for ActiveSpaceDidChange and DidWake, and on `NSNotificationCenter.defaultCenter` for `NSApplicationDidChangeScreenParametersNotification`. Forward each into a `broadcast::Sender<Signal>`.
   2. Theme: start a `dark_light::stream()` task mapped to `ThemeChanged`, deduplicated.
   3. Make `macos::open_platform()` return `Platform`.
-- **Automated verification:** `cargo clippy -p wallpaperd-platform -- -D warnings` (macOS)
+- **Automated verification:** `cargo clippy -p kakemono-platform -- -D warnings` (macOS)
 - **Manual verification:** with a debug `examples/signals.rs` printing signals: switch Space, sleep and wake, toggle Appearance, and plug in a display. Each prints its signal within about 1 s.
 
 ## Task 26: Windows host + IDesktopWallpaper setter
@@ -881,7 +881,7 @@ Ranked by likelihood × impact.
   1. A desktop thread with an STA COM apartment and an mpsc request loop calls `IDesktopWallpaper::SetPosition` and `SetWallpaper(null, path)`, falling back to `SystemParametersInfoW`.
   2. `windows::host` runs the tokio runtime on a worker thread and the message window (Task 27) on the main thread.
   3. Add an `#[ignore]` test that sets an image and reads it back with `GetWallpaper` for monitor 0.
-- **Automated verification:** `cargo check -p wallpaperd-platform --target x86_64-pc-windows-msvc`; on Windows CI, `cargo test -p wallpaperd-platform`
+- **Automated verification:** `cargo check -p kakemono-platform --target x86_64-pc-windows-msvc`; on Windows CI, `cargo test -p kakemono-platform`
 - **Manual verification:** on Windows 10 and 11 with two monitors, run the ignored test and confirm both monitors change
 
 ## Task 27: Windows signals + theme
@@ -892,7 +892,7 @@ Ranked by likelihood × impact.
   1. Create a hidden message-only window; `WM_DISPLAYCHANGE` → `DisplaysChanged` and `WM_POWERBROADCAST` resume → `Resumed`.
   2. Theme: use `dark_light::stream()`. If it turns out not to watch, or reads `AppsUseLightTheme`, write a `RegNotifyChangeKeyValue` watcher on `SystemUsesLightTheme` on a blocking thread instead.
   3. `windows::open_platform()`.
-- **Automated verification:** `cargo check -p wallpaperd-platform --target x86_64-pc-windows-msvc`
+- **Automated verification:** `cargo check -p kakemono-platform --target x86_64-pc-windows-msvc`
 - **Manual verification:** on Windows, toggle Settings → Personalization → Colors → "Choose your mode" and change the display resolution; both print signals in `examples/signals.rs`
 
 ## Task 28: Linux detection env capture + pure resolver
@@ -919,7 +919,7 @@ Ranked by likelihood × impact.
      - an empty environment
      - session drift
   4. The module is cfg-gated to Linux, but `resolve` is pure, so expose it under `cfg(any(target_os="linux", test))` to run the table test on all CI OSes.
-- **Automated verification:** `cargo test -p wallpaperd-platform --test linux_resolve && cargo insta test -p wallpaperd-platform --check`
+- **Automated verification:** `cargo test -p kakemono-platform --test linux_resolve && cargo insta test -p kakemono-platform --check`
 - **Manual verification:** none
 
 ## Task 29: Linux command + preset backends (argv table)
@@ -938,7 +938,7 @@ Ranked by likelihood × impact.
      - pcmanfm-qt and pcmanfm: `--set-wallpaper {path} --wallpaper-mode=…`
   2. `CommandSetter` renders through `exec` and runs it with the runner.
   3. Snapshot every preset's argv. Integration test with `tests/bin/record-argv` symlinked as `awww` on `PATH`.
-- **Automated verification:** `cargo test -p wallpaperd-platform --test linux_presets`
+- **Automated verification:** `cargo test -p kakemono-platform --test linux_presets`
 - **Manual verification:** none
 
 ## Task 30: Linux persistent-process supervisor (swaybg/wbg)
@@ -948,8 +948,8 @@ Ranked by likelihood × impact.
 - **Steps:**
   1. Implement §E: spawn the new process in its own group, wait 300 ms on the paused clock, check the old PID's `/proc/comm`, SIGTERM it (via `nix` or `rustix`, as chosen in Task 2), and write `setter.pid`. On start, adopt an existing PID.
   2. Test with `fake-swaybg`, a script that sleeps: after two sets only the second process is alive, and a PID whose comm doesn't match is not killed.
-- **Automated verification:** `cargo test -p wallpaperd-platform --test linux_persistent` (Linux CI)
-- **Manual verification:** on niri or a wlroots compositor with swaybg, run `wallpaperd next` three times and confirm one swaybg process (`pgrep -c swaybg` = 1) and no black flash
+- **Automated verification:** `cargo test -p kakemono-platform --test linux_persistent` (Linux CI)
+- **Manual verification:** on niri or a wlroots compositor with swaybg, run `kakemono next` three times and confirm one swaybg process (`pgrep -c swaybg` = 1) and no black flash
 
 ## Task 31: Linux gsettings backends (GNOME/Cinnamon/MATE)
 - **Files owned:** `crates/platform/src/linux/backends/gsettings.rs`, `crates/platform/tests/linux_gsettings.rs`
@@ -961,8 +961,8 @@ Ranked by likelihood × impact.
      - Cinnamon: `org.cinnamon.desktop.background picture-uri`
      - MATE: `org.mate.background picture-filename {path}`
   2. Snapshot the argv sequences with `RecordingRunner`, and test with a fake `gsettings` on `PATH`.
-- **Automated verification:** `cargo test -p wallpaperd-platform --test linux_gsettings`
-- **Manual verification:** on GNOME 4x Wayland, run `wallpaperd set img.jpg`, then toggle dark mode; the wallpaper stays the same
+- **Automated verification:** `cargo test -p kakemono-platform --test linux_gsettings`
+- **Manual verification:** on GNOME 4x Wayland, run `kakemono set img.jpg`, then toggle dark mode; the wallpaper stays the same
 
 ## Task 32: Linux KDE Plasma D-Bus backend
 - **Files owned:** `crates/platform/src/linux/backends/kde.rs`, `crates/platform/tests/linux_kde.rs`
@@ -972,7 +972,7 @@ Ranked by likelihood × impact.
   1. `script_for(uri, fit) -> String` produces JS that sets `org.kde.image` on all `desktops()`. The URI is embedded with `serde_json::to_string`.
   2. Call it with zbus: `org.kde.plasmashell` `/PlasmaShell` `org.kde.PlasmaShell.evaluateScript`.
   3. Snapshot the script. An injection test checks that a path containing `"); evil(); ("` stays inside a string literal.
-- **Automated verification:** `cargo test -p wallpaperd-platform --test linux_kde`
+- **Automated verification:** `cargo test -p kakemono-platform --test linux_kde`
 - **Manual verification:** on Plasma 6 (Wayland and X11) with two screens, both change
 
 ## Task 33: Linux XFCE xfconf D-Bus backend
@@ -982,7 +982,7 @@ Ranked by likelihood × impact.
 - **Steps:**
   1. Over zbus `org.xfce.Xfconf`: `GetAllProperties("xfce4-desktop","/backdrop")`, then for every key ending in `/last-image`, `SetProperty(…, path)` and the matching `/image-style` from `Fit`.
   2. Make key selection a pure function and unit-test it with sample property maps.
-- **Automated verification:** `cargo test -p wallpaperd-platform --test linux_xfce`
+- **Automated verification:** `cargo test -p kakemono-platform --test linux_xfce`
 - **Manual verification:** on XFCE 4.18+ with two monitors, both change
 
 ## Task 34: Linux theme/resume signals + `linux::open_platform`
@@ -995,8 +995,8 @@ Ranked by likelihood × impact.
   3. `open_platform(cfg)` runs resolve and constructs the matching backend.
   4. Track consecutive `SetError`s and re-detect in memory (§E) via a wrapper setter, `ResilientSetter`.
   5. Unit-test `ResilientSetter` with fakes.
-- **Automated verification:** `cargo test -p wallpaperd-platform` (Linux CI); `cargo check -p wallpaperd-platform --target x86_64-unknown-linux-gnu` (macOS)
-- **Manual verification:** on GNOME, toggle dark mode; `wallpaperd status` shows the theme flip and the wallpaper rotates
+- **Automated verification:** `cargo test -p kakemono-platform` (Linux CI); `cargo check -p kakemono-platform --target x86_64-unknown-linux-gnu` (macOS)
+- **Manual verification:** on GNOME, toggle dark mode; `kakemono status` shows the theme flip and the wallpaper rotates
 
 ## Task 35: CLI parity commands
 - **Files owned:** `crates/cli/src/main.rs`, `crates/cli/src/cli.rs`, `crates/cli/src/commands/{next,prev,set,favorite,trash,pause,resume,status}.rs`, `crates/cli/src/output.rs`, `crates/cli/tests/cli.rs`
@@ -1008,7 +1008,7 @@ Ranked by likelihood × impact.
   3. `status --json` prints two-space-indented JSON.
   4. `set` canonicalises the path to an absolute path.
   5. assert_cmd tests start the in-process server from Task 23 on a temp socket. `status --json` is compared against `fixtures/status_json.txt` (semantically). Also test that the daemon-not-running message is printed.
-- **Automated verification:** `cargo test -p wallpaperd --test cli`
+- **Automated verification:** `cargo test -p kakemono --test cli`
 - **Manual verification:** none
 
 ## Task 36: `daemon` command wiring (host, logging, shutdown, detach)
@@ -1021,8 +1021,8 @@ Ranked by likelihood × impact.
   3. Without `-f`, re-exec detached (§I).
   4. Logging goes to the file appender, or to stderr in foreground mode.
   5. Write the PID file for compatibility with `daemon.pid`.
-- **Automated verification:** `cargo build -p wallpaperd && cargo test -p wallpaperd` (the CLI tests use the fake platform behind the `fake` feature through `WALLPAPERD_FAKE_PLATFORM=1`, test builds only)
-- **Manual verification:** on each OS, run `wallpaperd daemon -f`, then `wallpaperd next` changes the wallpaper and `Ctrl-C` exits cleanly. On macOS, there's no Dock icon.
+- **Automated verification:** `cargo build -p kakemono && cargo test -p kakemono` (the CLI tests use the fake platform behind the `fake` feature through `WALLPAPERD_FAKE_PLATFORM=1`, test builds only)
+- **Manual verification:** on each OS, run `kakemono daemon -f`, then `kakemono next` changes the wallpaper and `Ctrl-C` exits cleanly. On macOS, there's no Dock icon.
 
 ## Task 37: `detect` / `doctor` / first-run persistence
 - **Files owned:** `crates/cli/src/commands/detect.rs`, `crates/cli/src/commands/doctor.rs`, `crates/cli/src/firstrun.rs`, `crates/cli/tests/detect.rs`
@@ -1043,7 +1043,7 @@ Ranked by likelihood × impact.
    `--apply` re-sets the current image.
   4. On macOS and Windows, `doctor` prints the native backend info.
   5. Tests drive a captured `Env` through a hidden `--env-json` flag, then snapshot the config file after `--write`.
-- **Automated verification:** `cargo test -p wallpaperd --test detect`
+- **Automated verification:** `cargo test -p kakemono --test detect`
 - **Manual verification:** on a Hyprland box, delete `[desktop]`, start the daemon, and confirm `config.toml` gains `[desktop] backend = "hyprpaper"|"awww"` with comments preserved
 
 ## Task 38: platform::open (URL/reveal) + `open` command
@@ -1053,20 +1053,20 @@ Ranked by likelihood × impact.
 - **Steps:**
   1. Write `open_url(&str)` and `reveal(&Path)` per §G.
   2. The `open` command offers `--folder` (download dir), `--favorites`, and by default reveals the current wallpaper (from IPC status), as Go did.
-- **Automated verification:** `cargo clippy --workspace -- -D warnings && cargo check -p wallpaperd-platform --target x86_64-pc-windows-msvc --target x86_64-unknown-linux-gnu`
-- **Manual verification:** `wallpaperd open` selects the file in Finder, Explorer or the Linux file manager
+- **Automated verification:** `cargo clippy --workspace -- -D warnings && cargo check -p kakemono-platform --target x86_64-pc-windows-msvc --target x86_64-unknown-linux-gnu`
+- **Manual verification:** `kakemono open` selects the file in Finder, Explorer or the Linux file manager
 
 ## Task 39: `service install|uninstall|status`
 - **Files owned:** `crates/platform/src/service/{mod.rs,launchd.rs,systemd.rs,windows.rs}`, `crates/cli/src/commands/service.rs`, `crates/platform/tests/service.rs`
 - **Depends on:** Task 36
 - **Mode:** sequential
 - **Steps:**
-  1. macOS uses auto-launch in LaunchAgent mode, or its own plist at `~/Library/LaunchAgents/dev.rielj.wallpaperd.plist` with `RunAtLoad` and `KeepAlive` if auto-launch can't set KeepAlive. The plist runs `wallpaperd daemon -f`.
-  2. Linux uses `~/.config/systemd/user/wallpaperd.service` (`PartOf`/`WantedBy=graphical-session.target`, `Restart=on-failure`), then `systemctl --user enable --now`, and prints the compositor snippets.
-  3. Windows uses auto-launch (HKCU Run) with `wallpaperd.exe daemon`.
+  1. macOS uses auto-launch in LaunchAgent mode, or its own plist at `~/Library/LaunchAgents/dev.rielj.kakemono.plist` with `RunAtLoad` and `KeepAlive` if auto-launch can't set KeepAlive. The plist runs `kakemono daemon -f`.
+  2. Linux uses `~/.config/systemd/user/kakemono.service` (`PartOf`/`WantedBy=graphical-session.target`, `Restart=on-failure`), then `systemctl --user enable --now`, and prints the compositor snippets.
+  3. Windows uses auto-launch (HKCU Run) with `kakemono.exe daemon`.
   4. Snapshot the generated plist and unit with insta.
-- **Automated verification:** `cargo test -p wallpaperd-platform --test service`
-- **Manual verification:** on each OS, install the service, log out and back in, and confirm `wallpaperd status` reports a running daemon
+- **Automated verification:** `cargo test -p kakemono-platform --test service`
+- **Manual verification:** on each OS, install the service, log out and back in, and confirm `kakemono status` reports a running daemon
 
 ## Task 40: Tauri app scaffold + merged frontend + tray
 - **Files owned:** `crates/ui/src-tauri/**` (`Cargo.toml`, `tauri.conf.json`, `capabilities/default.json`, `src/main.rs`, `src/tray.rs`, `src/daemon_link.rs`), `crates/ui/frontend/**` (moved from `gui/frontend` and `picker/frontend`), and the root `Cargo.toml` members line
@@ -1078,8 +1078,8 @@ Ranked by likelihood × impact.
   3. Tauri 2.12: tray-only startup with `prevent_exit`, and plugins single-instance, dialog, opener and autostart.
   4. `daemon_link` holds a shared `protocol::Client`.
   5. Tray menu items call IPC. On Linux, check for the StatusNotifierWatcher and skip the tray if it's missing.
-- **Automated verification:** `cd crates/ui/frontend && npm ci && npm run build && npm run typecheck && cd - && cargo build -p wallpaperd-ui`
-- **Manual verification:** launch `wallpaperd-ui` with the daemon running; the tray shows and Next works (macOS menubar, Windows notification area, KDE)
+- **Automated verification:** `cd crates/ui/frontend && npm ci && npm run build && npm run typecheck && cd - && cargo build -p kakemono-ui`
+- **Manual verification:** launch `kakemono-ui` with the daemon running; the tray shows and Next works (macOS menubar, Windows notification area, KDE)
 
 ## Task 41: Settings window on Tauri commands
 - **Files owned:** `crates/ui/src-tauri/src/commands.rs`, `crates/ui/frontend/src/shared/api.ts`, `crates/ui/frontend/src/settings/**`
@@ -1092,8 +1092,8 @@ Ranked by likelihood × impact.
   4. Port the components: General, Providers (renamed Sources), Themes, Favorites, StatusBar.
   4b. On macOS only, General gets a "Keep wallpaper on every Space" switch bound to `daemon.reapply_on_space_change` (default off). The helper text below it reads: "Re-applies the wallpaper when you switch Spaces. This turns off 'Show on all Spaces' in System Settings."
   5. Add a vitest for interval validation that shares its table with `duration.rs` (a JSON file with cases, read by both).
-- **Automated verification:** `cd crates/ui/frontend && npm test && npm run typecheck && cd - && cargo test -p wallpaperd-config duration`
-- **Manual verification:** change the interval in the UI and save; `config.toml` keeps its comments and `wallpaperd status` shows the new interval without a daemon restart
+- **Automated verification:** `cd crates/ui/frontend && npm test && npm run typecheck && cd - && cargo test -p kakemono-config duration`
+- **Manual verification:** change the interval in the UI and save; `config.toml` keeps its comments and `kakemono status` shows the new interval without a daemon restart
 
 ## Task 42: Settings Desktop + Hooks panels
 - **Files owned:** `crates/ui/frontend/src/settings/DesktopSettings.tsx`, `crates/ui/frontend/src/settings/HooksSettings.tsx`, `crates/ui/src-tauri/src/commands_desktop.rs`
@@ -1111,18 +1111,18 @@ Ranked by likelihood × impact.
 - **Depends on:** Task 40
 - **Mode:** sequential
 - **Steps:**
-  1. Pre-create the picker window hidden (decorations off, always on top, skip taskbar, visible on all workspaces, app_id/class `wallpaperd-picker`).
+  1. Pre-create the picker window hidden (decorations off, always on top, skip taskbar, visible on all workspaces, app_id/class `kakemono-picker`).
   2. `show_picker()` places it on the monitor under the cursor at `[picker] position` (Tier 1). On Wayland it doesn't position, and the size depends on orientation (Tier 2).
   3. Close on blur if configured.
   4. `force_x11` relaunches with `GDK_BACKEND=x11`.
   5. **User placement (§H).** `picker_place::Placer` has `restore(&Custom)` and `capture() -> Option<Custom>`, with these implementations:
      - `TauriPlacer` (macOS, Windows, X11): `outer_position` on `Moved`, debounced 300 ms; `set_position` on show.
-     - `HyprPlacer`: `hyprctl clients -j` and `hyprctl dispatch movewindowpixel exact X Y,class:wallpaperd-picker`.
-     - `SwayPlacer`: `swaymsg -t get_tree` and `swaymsg '[app_id="wallpaperd-picker"] move absolute position X Y'`.
+     - `HyprPlacer`: `hyprctl clients -j` and `hyprctl dispatch movewindowpixel exact X Y,class:kakemono-picker`.
+     - `SwayPlacer`: `swaymsg -t get_tree` and `swaymsg '[app_id="kakemono-picker"] move absolute position X Y'`.
      - `NoopPlacer` (GNOME, KDE, niri, others).
      When the user drops the window, write `placement = "custom"` and `custom` through `config::edit`. `reset_picker_position` sets `placement = "edge"`. If the saved monitor is missing or the rect is off every screen, fall back to `edge`.
   6. **Spike** (time-boxed): build a separate `examples/layer_picker.rs` with raw wry and gtk-layer-shell, and record whether the result is clean in `docs/spikes/layer-shell.md`. Ship nothing from the spike.
-- **Automated verification:** `cargo build -p wallpaperd-ui && cargo clippy -p wallpaperd-ui -- -D warnings && cargo test -p wallpaperd-ui picker_place` (parses fixture `hyprctl clients -j` and `swaymsg get_tree` JSON, snapshots the restore argv, and checks that an off-screen rect falls back to `edge`)
+- **Automated verification:** `cargo build -p kakemono-ui && cargo clippy -p kakemono-ui -- -D warnings && cargo test -p kakemono-ui picker_place` (parses fixture `hyprctl clients -j` and `swaymsg get_tree` JSON, snapshots the restore argv, and checks that an off-screen rect falls back to `edge`)
 - **Manual verification:**
   - macOS: the picker appears at the bottom of the display under the cursor, including over a fullscreen Space. Drag it, close it, reopen it: it reopens where it was dropped.
   - Windows: correct edge, and drag plus reopen keeps the position.
@@ -1141,7 +1141,7 @@ Ranked by likelihood × impact.
   2b. Add a thin drag handle (`data-tauri-drag-region`, cursor `grab`, labelled "Move picker") at the strip's leading edge, and a "Reset position" item in the context menu that calls `reset_picker_position`. Dragging must not start from thumbnails, so click-to-set still works.
   3. Write vitest and testing-library tests for keyboard navigation (arrows, Home/End, Enter calls `set_file`, Esc closes).
   4. Write `docs/ui-checklist.md`, the design-standards checklist from §H, and tick it.
-- **Automated verification:** `cargo test -p wallpaperd-ui thumbs && cd crates/ui/frontend && npm test`
+- **Automated verification:** `cargo test -p kakemono-ui thumbs && cd crates/ui/frontend && npm test`
 - **Manual verification:**
   - VoiceOver (macOS) and Narrator (Windows) read "title — source, selected".
   - Toggle reduce motion; there is no animation.
@@ -1155,31 +1155,31 @@ Ranked by likelihood × impact.
 - **Steps:**
   1. A background task subscribes, reconnects with backoff (0.5 s to 10 s), and emits `wallpaper://changed`, `wallpaper://paused` and `daemon://connection`. The tray menu label (Pause/Resume) updates.
   2. The settings StatusBar and the picker's current-selection highlight subscribe to these events.
-- **Automated verification:** `cargo build -p wallpaperd-ui && cd crates/ui/frontend && npm run typecheck`
-- **Manual verification:** with settings open, run `wallpaperd next` in a terminal; the StatusBar updates in under 1 s. Kill the daemon; the UI shows "Daemon not running" and recovers when it's restarted.
+- **Automated verification:** `cargo build -p kakemono-ui && cd crates/ui/frontend && npm run typecheck`
+- **Manual verification:** with settings open, run `kakemono next` in a terminal; the StatusBar updates in under 1 s. Kill the daemon; the UI shows "Daemon not running" and recovers when it's restarted.
 
 ## Task 46: UI ↔ daemon lifecycle (sidecar spawn, `pick`/`settings` commands)
 - **Files owned:** `crates/cli/src/commands/{pick,settings}.rs`, `crates/ui/src-tauri/src/lifecycle.rs`
 - **Depends on:** Tasks 36, 43, 45
 - **Mode:** sequential
 - **Steps:**
-  1. At startup the UI spawns the sidecar `wallpaperd daemon` if IPC is unavailable. The "Start at login" toggle drives `service install` (daemon) and plugin-autostart (UI).
-  2. `wallpaperd pick` and `wallpaperd settings` locate `wallpaperd-ui`:
+  1. At startup the UI spawns the sidecar `kakemono daemon` if IPC is unavailable. The "Start at login" toggle drives `service install` (daemon) and plugin-autostart (UI).
+  2. `kakemono pick` and `kakemono settings` locate `kakemono-ui`:
      - next to the current exe
      - in the .app `Contents/MacOS`
      - via `WALLPAPERD_UI`
      - on `PATH`
      It spawns the UI with `--picker` or `--settings`. single-instance forwards these flags to the running UI.
   3. If the UI isn't found, print an install hint.
-- **Automated verification:** `cargo test -p wallpaperd --test cli -- pick_missing_ui_hint`
-- **Manual verification:** with the tray running, `wallpaperd pick` shows the picker within 200 ms; from cold, within about 1 s
+- **Automated verification:** `cargo test -p kakemono --test cli -- pick_missing_ui_hint`
+- **Manual verification:** with the tray running, `kakemono pick` shows the picker within 200 ms; from cold, within about 1 s
 
 ## Task 47: Packaging + release workflow
 - **Files owned:** `.github/workflows/release.yml`, `crates/ui/src-tauri/tauri.conf.json` (bundle section), `crates/ui/src-tauri/icons/**`, `scripts/build-sidecar.sh`
 - **Depends on:** Task 46
 - **Mode:** sequential
 - **Steps:**
-  1. Build `wallpaperd` per target triple and copy it to `src-tauri/binaries/wallpaperd-<triple>` for `externalBin`.
+  1. Build `kakemono` per target triple and copy it to `src-tauri/binaries/kakemono-<triple>` for `externalBin`.
   2. Tauri bundles dmg, app, deb, rpm, AppImage, msi and nsis.
   3. CLI tarballs and zips cover macOS (arm64, x64), Linux (x64, arm64 with `cross`) and Windows (x64).
   4. Reuse the Go app icons (`gui/build/appicon.png`).
@@ -1199,7 +1199,7 @@ Ranked by likelihood × impact.
 - **Manual verification:** a human proofreads the docs
 
 ## Task 49: Cutover — delete Go code
-- **Files owned:** deletes `cmd/`, `internal/`, `gui/` (remaining), `picker/` (remaining), `main.go`, `go.mod`, `go.sum`, `coverage.out`, `wallpaperd` (binary), `tools/goldens/`, `~/`. The golden fixtures stay.
+- **Files owned:** deletes `cmd/`, `internal/`, `gui/` (remaining), `picker/` (remaining), `main.go`, `go.mod`, `go.sum`, `coverage.out`, `kakemono` (binary), `tools/goldens/`, `~/`. The golden fixtures stay.
 - **Depends on:** Tasks 1–48
 - **Mode:** sequential
 - **Steps:**

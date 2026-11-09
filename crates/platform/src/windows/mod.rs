@@ -9,7 +9,7 @@ pub mod signals;
 /// Windows `host()` (see `crate::host::host`).
 ///
 /// TODO(task 26): tokio on a worker thread, message window on the main thread. Stub: plain tokio.
-pub fn host<F, Fut>(cfg: &wallpaperd_config::schema::DesktopConfig, f: F) -> anyhow::Result<()>
+pub fn host<F, Fut>(cfg: &kakemono_config::schema::DesktopConfig, f: F) -> anyhow::Result<()>
 where
     F: FnOnce(crate::api::Platform) -> Fut + Send + 'static,
     Fut: std::future::Future<Output = anyhow::Result<()>> + Send,
@@ -20,6 +20,6 @@ where
 /// Build the Windows platform. Polled inside the tokio runtime; must stay `Send`.
 ///
 /// TODO(task 27): IDesktopWallpaper setter plus signals. Stub: unconfigured.
-pub async fn open_platform(cfg: &wallpaperd_config::schema::DesktopConfig) -> crate::api::Platform {
+pub async fn open_platform(cfg: &kakemono_config::schema::DesktopConfig) -> crate::api::Platform {
     crate::api::Platform::unconfigured_for(cfg)
 }

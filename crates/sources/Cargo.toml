@@ -1,6 +1,6 @@
 [package]
-name = "wallpaperd-sources"
-description = "wallpaperd image providers (Bing, APOD, Reddit, Unsplash, Wallhaven, Local), HTTP retry and download helpers"
+name = "kakemono-sources"
+description = "kakemono image providers (Bing, APOD, Reddit, Unsplash, Wallhaven, Local), HTTP retry and download helpers"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,11 +9,11 @@ publish.workspace = true
 [features]
 # Test doubles (`fake::StaticProvider`) for downstream crates' tests.
 fake = []
-# Live provider smoke tests: `cargo test -p wallpaperd-sources --features live -- --ignored`.
+# Live provider smoke tests: `cargo test -p kakemono-sources --features live -- --ignored`.
 live = []
 
 [dependencies]
-wallpaperd-config.workspace = true
+kakemono-config.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
 futures.workspace = true

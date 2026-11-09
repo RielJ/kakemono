@@ -1,6 +1,6 @@
 [package]
-name = "wallpaperd-platform"
-description = "wallpaperd OS seam: wallpaper setters, system signals, main-thread host, argv exec, open/reveal, service install"
+name = "kakemono-platform"
+description = "kakemono OS seam: wallpaper setters, system signals, main-thread host, argv exec, open/reveal, service install"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,10 +10,10 @@ publish.workspace = true
 # Test doubles (`fake::RecordingSetter`, `fake::ManualSignals`) for downstream crates' tests.
 fake = []
 
-# No C-building dependencies here: `cargo check -p wallpaperd-platform --target <other OS>` must work
+# No C-building dependencies here: `cargo check -p kakemono-platform --target <other OS>` must work
 # from any host (plan §J). Keep reqwest/TLS out of this crate.
 [dependencies]
-wallpaperd-config.workspace = true
+kakemono-config.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
 serde.workspace = true

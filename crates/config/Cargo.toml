@@ -1,6 +1,6 @@
 [package]
-name = "wallpaperd-config"
-description = "wallpaperd config schema, defaults, loading, comment-preserving edits, paths and Go-duration parsing"
+name = "kakemono-config"
+description = "kakemono config schema, defaults, loading, comment-preserving edits, paths and Go-duration parsing"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

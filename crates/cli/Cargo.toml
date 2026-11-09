@@ -1,6 +1,6 @@
 [package]
-name = "wallpaperd"
-description = "wallpaperd CLI and headless daemon host"
+name = "kakemono"
+description = "kakemono CLI and headless daemon host"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,19 +8,19 @@ publish.workspace = true
 
 # The library holds the commands and daemon so integration tests (tests/server.rs, tests/cli.rs) can reach them.
 [lib]
-name = "wallpaperd_cli"
+name = "kakemono_cli"
 path = "src/lib.rs"
 
 [[bin]]
-name = "wallpaperd"
+name = "kakemono"
 path = "src/main.rs"
 
 [dependencies]
-wallpaperd-protocol.workspace = true
-wallpaperd-config.workspace = true
-wallpaperd-sources.workspace = true
-wallpaperd-platform.workspace = true
-wallpaperd-engine.workspace = true
+kakemono-protocol.workspace = true
+kakemono-config.workspace = true
+kakemono-sources.workspace = true
+kakemono-platform.workspace = true
+kakemono-engine.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
 anyhow.workspace = true
@@ -40,7 +40,7 @@ nix.workspace = true
 
 [dev-dependencies]
 # Test builds of the binary get the fake platform (WALLPAPERD_FAKE_PLATFORM=1, Task 36).
-wallpaperd-platform = { workspace = true, features = ["fake"] }
+kakemono-platform = { workspace = true, features = ["fake"] }
 tokio = { workspace = true, features = ["test-util"] }
 assert_cmd.workspace = true
 predicates.workspace = true

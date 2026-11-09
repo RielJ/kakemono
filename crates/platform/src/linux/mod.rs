@@ -11,6 +11,6 @@ pub mod theme;
 ///
 /// TODO(task 34): run detection and construct the matching backend. Stub: unconfigured.
 #[cfg(target_os = "linux")]
-pub async fn open_platform(cfg: &wallpaperd_config::schema::DesktopConfig) -> crate::api::Platform {
+pub async fn open_platform(cfg: &kakemono_config::schema::DesktopConfig) -> crate::api::Platform {
     crate::api::Platform::unconfigured_for(cfg)
 }

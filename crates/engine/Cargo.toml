@@ -1,16 +1,16 @@
 [package]
-name = "wallpaperd-engine"
-description = "wallpaperd engine: history state, wallpaper ops, rotation loop, favorites/trash/cache, events and hooks"
+name = "kakemono-engine"
+description = "kakemono engine: history state, wallpaper ops, rotation loop, favorites/trash/cache, events and hooks"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-wallpaperd-protocol.workspace = true
-wallpaperd-config.workspace = true
-wallpaperd-sources.workspace = true
-wallpaperd-platform.workspace = true
+kakemono-protocol.workspace = true
+kakemono-config.workspace = true
+kakemono-sources.workspace = true
+kakemono-platform.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
@@ -22,8 +22,8 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-wallpaperd-platform = { workspace = true, features = ["fake"] }
-wallpaperd-sources = { workspace = true, features = ["fake"] }
+kakemono-platform = { workspace = true, features = ["fake"] }
+kakemono-sources = { workspace = true, features = ["fake"] }
 tokio = { workspace = true, features = ["test-util"] }
 wiremock.workspace = true
 tempfile.workspace = true

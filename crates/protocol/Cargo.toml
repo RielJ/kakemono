@@ -1,6 +1,6 @@
 [package]
-name = "wallpaperd-protocol"
-description = "IPC wire types, newline-JSON codec, endpoint naming and async client for wallpaperd"
+name = "kakemono-protocol"
+description = "IPC wire types, newline-JSON codec, endpoint naming and async client for kakemono"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

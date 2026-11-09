@@ -4,10 +4,10 @@
 use std::path::Path;
 use std::time::Duration;
 
-use wallpaperd_platform::exec::{
+use kakemono_platform::exec::{
     CommandRunner, Invocation, Output, RecordingRunner, RenderError, Vars, validate,
 };
-use wallpaperd_platform::{CommandStatus, Fit, Theme};
+use kakemono_platform::{CommandStatus, Fit, Theme};
 
 fn s(v: &[&str]) -> Vec<String> {
     v.iter().map(|t| (*t).to_owned()).collect()
@@ -45,7 +45,7 @@ fn exec_vars_require_absolute_paths() {
 #[cfg(unix)]
 #[test]
 fn exec_render_substitutes_per_token() {
-    use wallpaperd_platform::exec::render;
+    use kakemono_platform::exec::render;
 
     let vars = Vars::new(Path::new("/w/a b#1.jpg"), Fit::Center, Theme::Dark).unwrap();
     assert_eq!(vars.uri(), "file:///w/a%20b%231.jpg");
@@ -78,10 +78,10 @@ fn exec_render_substitutes_per_token() {
 #[cfg(unix)]
 mod process {
     use super::*;
+    use kakemono_platform::SetError;
+    use kakemono_platform::exec::{TokioRunner, render, run_checked};
     use std::path::PathBuf;
     use std::time::Instant;
-    use wallpaperd_platform::SetError;
-    use wallpaperd_platform::exec::{TokioRunner, render, run_checked};
 
     fn record_argv() -> String {
         Path::new(env!("CARGO_MANIFEST_DIR"))

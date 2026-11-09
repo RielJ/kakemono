@@ -42,10 +42,10 @@ use std::fmt::Display;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use kakemono_sources::WallpaperResult;
+use kakemono_sources::http;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
-use wallpaperd_sources::WallpaperResult;
-use wallpaperd_sources::http;
 use wiremock::{Match, Mock, MockServer, Request, Respond, ResponseTemplate};
 
 /// `tests/fixtures` of this crate.

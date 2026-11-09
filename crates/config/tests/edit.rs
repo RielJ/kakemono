@@ -2,11 +2,11 @@
 
 use std::path::Path;
 
-use serde_json::json;
-use wallpaperd_config::edit::{apply_patch, patch, set_desktop};
-use wallpaperd_config::{
+use kakemono_config::edit::{apply_patch, patch, set_desktop};
+use kakemono_config::{
     Backend, CommandSpec, ConfigError, DesktopConfig, Fit, ManagedBy, load_with_home,
 };
+use serde_json::json;
 
 const COMMENTED: &str = r#"# My wallpaper config — keep this comment
 [daemon]

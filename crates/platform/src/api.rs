@@ -32,8 +32,8 @@ impl Theme {
 
 impl Theme {
     /// The `[desktop] theme` override, if it pins a theme (`auto` returns `None`).
-    pub fn from_override(theme: wallpaperd_config::schema::ThemeOverride) -> Option<Self> {
-        use wallpaperd_config::schema::ThemeOverride;
+    pub fn from_override(theme: kakemono_config::schema::ThemeOverride) -> Option<Self> {
+        use kakemono_config::schema::ThemeOverride;
         match theme {
             ThemeOverride::Auto => None,
             ThemeOverride::Light => Some(Theme::Light),
@@ -64,8 +64,8 @@ impl FromStr for Theme {
 }
 
 /// How the image is scaled onto each display; the only per-set option (no per-monitor images).
-/// Defined in `wallpaperd-config` because `[desktop] fit` uses it; re-exported here as the seam type.
-pub use wallpaperd_config::schema::Fit;
+/// Defined in `kakemono-config` because `[desktop] fit` uses it; re-exported here as the seam type.
+pub use kakemono_config::schema::Fit;
 
 /// Returned by `Theme::from_str` for an unknown name.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -256,7 +256,7 @@ impl Platform {
 
     /// [`Platform::unconfigured`] with [`UNCONFIGURED_HINT`] and the `[desktop] theme` override
     /// (light when `auto`). The fallback when no backend is usable.
-    pub fn unconfigured_for(cfg: &wallpaperd_config::schema::DesktopConfig) -> Self {
+    pub fn unconfigured_for(cfg: &kakemono_config::schema::DesktopConfig) -> Self {
         let theme = Theme::from_override(cfg.theme).unwrap_or(Theme::Light);
         Self::unconfigured(UNCONFIGURED_HINT, theme)
     }
@@ -282,7 +282,7 @@ mod tests {
 
     #[test]
     fn theme_from_override() {
-        use wallpaperd_config::schema::ThemeOverride;
+        use kakemono_config::schema::ThemeOverride;
         assert_eq!(Theme::from_override(ThemeOverride::Auto), None);
         assert_eq!(Theme::from_override(ThemeOverride::Dark), Some(Theme::Dark));
         assert_eq!(

@@ -8,7 +8,7 @@
 use std::future::Future;
 use std::time::Duration;
 
-use wallpaperd_config::schema::DesktopConfig;
+use kakemono_config::schema::DesktopConfig;
 
 use crate::api::Platform;
 

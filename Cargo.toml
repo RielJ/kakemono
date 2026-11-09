@@ -20,11 +20,11 @@ publish = false
 # Versions checked against crates.io on 2026-11-09.
 [workspace.dependencies]
 # Internal crates
-wallpaperd-protocol = { path = "crates/protocol" }
-wallpaperd-config = { path = "crates/config" }
-wallpaperd-sources = { path = "crates/sources" }
-wallpaperd-platform = { path = "crates/platform" }
-wallpaperd-engine = { path = "crates/engine" }
+kakemono-protocol = { path = "crates/protocol" }
+kakemono-config = { path = "crates/config" }
+kakemono-sources = { path = "crates/sources" }
+kakemono-platform = { path = "crates/platform" }
+kakemono-engine = { path = "crates/engine" }
 
 # Async runtime and helpers
 tokio = { version = "1.54.1", features = [

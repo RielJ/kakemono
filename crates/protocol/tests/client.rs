@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 
 use futures::StreamExt;
 use interprocess::local_socket::tokio::prelude::*;
+use kakemono_protocol::client::{self, Client, ClientError};
+use kakemono_protocol::endpoint::Endpoint;
+use kakemono_protocol::types::{Command, Event, Request, Response, StatusData};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::task::JoinHandle;
-use wallpaperd_protocol::client::{self, Client, ClientError};
-use wallpaperd_protocol::endpoint::Endpoint;
-use wallpaperd_protocol::types::{Command, Event, Request, Response, StatusData};
 
 fn wire(name: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))

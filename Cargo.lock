@@ -1437,6 +1437,144 @@ dependencies = [
 ]
 
 [[package]]
+name = "kakemono"
+version = "2.0.0-alpha.0"
+dependencies = [
+ "anyhow",
+ "assert_cmd",
+ "chrono",
+ "clap",
+ "clap_complete",
+ "futures",
+ "insta",
+ "kakemono-config",
+ "kakemono-engine",
+ "kakemono-platform",
+ "kakemono-protocol",
+ "kakemono-sources",
+ "nix",
+ "predicates",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "kakemono-config"
+version = "2.0.0-alpha.0"
+dependencies = [
+ "chrono",
+ "etcetera",
+ "insta",
+ "serde",
+ "serde_json",
+ "shell-words",
+ "tempfile",
+ "thiserror",
+ "toml",
+ "toml_edit",
+ "ts-rs",
+]
+
+[[package]]
+name = "kakemono-engine"
+version = "2.0.0-alpha.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "futures",
+ "insta",
+ "kakemono-config",
+ "kakemono-platform",
+ "kakemono-protocol",
+ "kakemono-sources",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "wiremock",
+]
+
+[[package]]
+name = "kakemono-platform"
+version = "2.0.0-alpha.0"
+dependencies = [
+ "anyhow",
+ "ashpd",
+ "async-trait",
+ "auto-launch",
+ "block2",
+ "dark-light",
+ "dispatch2",
+ "insta",
+ "kakemono-config",
+ "nix",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "percent-encoding",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "url",
+ "which",
+ "windows",
+ "zbus 6.2.1",
+]
+
+[[package]]
+name = "kakemono-protocol"
+version = "2.0.0-alpha.0"
+dependencies = [
+ "chrono",
+ "futures",
+ "insta",
+ "interprocess",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "ts-rs",
+]
+
+[[package]]
+name = "kakemono-sources"
+version = "2.0.0-alpha.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "futures",
+ "httpdate",
+ "insta",
+ "kakemono-config",
+ "rand",
+ "reqwest",
+ "scraper",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "url",
+ "walkdir",
+ "wiremock",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3170,144 +3308,6 @@ checksum = "29790946404f91d9c5d06f9874efddea1dc06c5efe94541a7d6863108e3a5e4b"
 dependencies = [
  "same-file",
  "winapi-util",
-]
-
-[[package]]
-name = "wallpaperd"
-version = "2.0.0-alpha.0"
-dependencies = [
- "anyhow",
- "assert_cmd",
- "chrono",
- "clap",
- "clap_complete",
- "futures",
- "insta",
- "nix",
- "predicates",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "wallpaperd-config",
- "wallpaperd-engine",
- "wallpaperd-platform",
- "wallpaperd-protocol",
- "wallpaperd-sources",
-]
-
-[[package]]
-name = "wallpaperd-config"
-version = "2.0.0-alpha.0"
-dependencies = [
- "chrono",
- "etcetera",
- "insta",
- "serde",
- "serde_json",
- "shell-words",
- "tempfile",
- "thiserror",
- "toml",
- "toml_edit",
- "ts-rs",
-]
-
-[[package]]
-name = "wallpaperd-engine"
-version = "2.0.0-alpha.0"
-dependencies = [
- "async-trait",
- "chrono",
- "futures",
- "insta",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "tokio-util",
- "tracing",
- "wallpaperd-config",
- "wallpaperd-platform",
- "wallpaperd-protocol",
- "wallpaperd-sources",
- "wiremock",
-]
-
-[[package]]
-name = "wallpaperd-platform"
-version = "2.0.0-alpha.0"
-dependencies = [
- "anyhow",
- "ashpd",
- "async-trait",
- "auto-launch",
- "block2",
- "dark-light",
- "dispatch2",
- "insta",
- "nix",
- "objc2",
- "objc2-app-kit",
- "objc2-foundation",
- "percent-encoding",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "tracing",
- "url",
- "wallpaperd-config",
- "which",
- "windows",
- "zbus 6.2.1",
-]
-
-[[package]]
-name = "wallpaperd-protocol"
-version = "2.0.0-alpha.0"
-dependencies = [
- "chrono",
- "futures",
- "insta",
- "interprocess",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "ts-rs",
-]
-
-[[package]]
-name = "wallpaperd-sources"
-version = "2.0.0-alpha.0"
-dependencies = [
- "async-trait",
- "chrono",
- "futures",
- "httpdate",
- "insta",
- "rand",
- "reqwest",
- "scraper",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "tracing",
- "url",
- "walkdir",
- "wallpaperd-config",
- "wiremock",
 ]
 
 [[package]]

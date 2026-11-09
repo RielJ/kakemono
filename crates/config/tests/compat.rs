@@ -2,8 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
-use wallpaperd_config::load::{load_or_default_with_home, load_with_home, parse_str};
-use wallpaperd_config::{
+use kakemono_config::load::{load_or_default_with_home, load_with_home, parse_str};
+use kakemono_config::{
     Backend, CommandSpec, Config, Fit, ManagedBy, PickerPlacement, PickerPosition, ThemeOverride,
     defaults_for_home,
 };
@@ -255,7 +255,7 @@ fn serialized_config_reloads_equal() {
     let mut cfg = defaults_for_home(home());
     cfg.desktop.set_command = Some(CommandSpec::parse("swaybg -i {path}").unwrap());
     cfg.desktop.detected_at = Some("2026-11-09T17:46:15Z".parse().unwrap());
-    cfg.picker.custom = Some(wallpaperd_config::PickerCustom {
+    cfg.picker.custom = Some(kakemono_config::PickerCustom {
         x: 1,
         y: 2,
         monitor: "eDP-1".into(),

@@ -1,5 +1,5 @@
 //! Wiremock tests for the shared retry helper, `download`, and the case-replay helper in
-//! `tests/common`. Run: `cargo test -p wallpaperd-sources -- http download`.
+//! `tests/common`. Run: `cargo test -p kakemono-sources -- http download`.
 //!
 //! Every test name starts with `http_` or `download_` so that filter selects them. Tests use
 //! `#[tokio::test(start_paused = true)]` or `Case::serve` (which pauses), so back-off sleeps
@@ -11,12 +11,12 @@ use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use common::Case;
+use kakemono_config::schema as cfg;
+use kakemono_sources::download::{DownloadError, MIN_IMAGE_BYTES, download};
+use kakemono_sources::http::{self, get_with_retry};
+use kakemono_sources::{Provider, ProviderError, WallpaperResult};
 use reqwest::StatusCode;
 use tokio::time::Instant;
-use wallpaperd_config::schema as cfg;
-use wallpaperd_sources::download::{DownloadError, MIN_IMAGE_BYTES, download};
-use wallpaperd_sources::http::{self, get_with_retry};
-use wallpaperd_sources::{Provider, ProviderError, WallpaperResult};
 use wiremock::matchers::{any, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 

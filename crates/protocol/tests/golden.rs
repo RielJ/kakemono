@@ -1,6 +1,6 @@
 //! Golden compatibility tests against the Go fixtures (plan §I, §J, Task 3).
 //!
-//! Every test lives in `mod golden` so `cargo test -p wallpaperd-protocol golden`
+//! Every test lives in `mod golden` so `cargo test -p kakemono-protocol golden`
 //! selects them all.
 
 mod golden {
@@ -8,13 +8,13 @@ mod golden {
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    use serde::Serialize;
-    use serde::de::DeserializeOwned;
-    use serde_json::Value;
-    use wallpaperd_protocol::types::{
+    use kakemono_protocol::types::{
         Command, Event, Request, RequestError, Response, StatusData, WallpaperInfo,
         unknown_command_error,
     };
+    use serde::Serialize;
+    use serde::de::DeserializeOwned;
+    use serde_json::Value;
 
     fn fixture_dir() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
@@ -442,7 +442,7 @@ mod golden {
 
     fn assert_go_bytes<T: DeserializeOwned + Serialize>(context: &str, line: &str) {
         let value: T = serde_json::from_str(line).expect(context);
-        let bytes = wallpaperd_protocol::codec::to_string_go(&value).expect(context);
+        let bytes = kakemono_protocol::codec::to_string_go(&value).expect(context);
         assert_eq!(bytes, line, "{context}");
     }
 
@@ -491,7 +491,7 @@ mod golden {
                 Response::ok_data(&w)
             }
             .expect("ok_data");
-            let out = wallpaperd_protocol::codec::to_string_go(&typed).expect("ser");
+            let out = kakemono_protocol::codec::to_string_go(&typed).expect("ser");
             assert_eq!(out, line, "{name}");
         }
     }

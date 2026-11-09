@@ -2,10 +2,10 @@
 
 use std::path::{Path, PathBuf};
 
-use wallpaperd_config::paths::{
+use kakemono_config::paths::{
     BaseDirs, ConfigSource, Os, Paths, TEMPLATE, copy_legacy_config, init,
 };
-use wallpaperd_config::{ConfigError, defaults_for_home, load_with_home};
+use kakemono_config::{ConfigError, defaults_for_home, load_with_home};
 
 fn xdg_base(home: &Path) -> BaseDirs {
     BaseDirs {

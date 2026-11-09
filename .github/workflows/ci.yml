@@ -107,4 +107,4 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: cargo test (live)
-        run: cargo test -p wallpaperd-sources --features live -- --ignored
+        run: cargo test -p kakemono-sources --features live -- --ignored
