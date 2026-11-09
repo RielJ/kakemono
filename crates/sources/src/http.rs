@@ -29,15 +29,23 @@ pub const BACKOFF: [Duration; 3] = [
 /// returned to the caller, so a rotation tick never stalls for an hour.
 pub const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
 
-/// Query parameters whose values are secrets (API keys, client ids, tokens). [`redact_url`]
-/// replaces their values; matching ignores ASCII case.
-pub const SECRET_QUERY_PARAMS: [&str; 6] = [
+/// Query parameters whose values are secrets (API keys, client ids, tokens, and the signature
+/// and credential parts of signed image URLs: generic `sig`/`signature`, AWS S3/CloudFront,
+/// Google Cloud Storage). [`redact_url`] replaces their values; matching ignores ASCII case.
+pub const SECRET_QUERY_PARAMS: [&str; 13] = [
     "apikey",
     "api_key",
     "client_id",
     "access_key",
     "key",
     "token",
+    "sig",
+    "signature",
+    "x-amz-signature",
+    "x-amz-credential",
+    "x-amz-security-token",
+    "x-goog-signature",
+    "x-goog-credential",
 ];
 
 /// What [`redact_url`] puts in place of a secret query value.
@@ -308,6 +316,24 @@ mod tests {
              &Client_ID=REDACTED"
         );
         assert!(!redacted.as_str().contains("s3cret"));
+    }
+
+    #[test]
+    fn redact_url_blanks_signed_url_params() {
+        let url = url::Url::parse(
+            "https://cdn.test/i.jpg?w=10&sig=S1&Signature=S2&X-Amz-Signature=S3\
+             &X-Amz-Credential=S4&X-Amz-Security-Token=S5&X-Goog-Signature=S6\
+             &X-Goog-Credential=S7&X-Amz-Expires=60",
+        )
+        .unwrap();
+        let redacted = redact_url(&url);
+        assert_eq!(
+            redacted.as_str(),
+            "https://cdn.test/i.jpg?w=10&sig=REDACTED&Signature=REDACTED\
+             &X-Amz-Signature=REDACTED&X-Amz-Credential=REDACTED\
+             &X-Amz-Security-Token=REDACTED&X-Goog-Signature=REDACTED\
+             &X-Goog-Credential=REDACTED&X-Amz-Expires=60"
+        );
     }
 
     #[test]

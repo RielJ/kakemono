@@ -20,6 +20,8 @@ serde_json.workspace = true
 chrono.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+reqwest.workspace = true
+rand.workspace = true
 
 [dev-dependencies]
 kakemono-platform = { workspace = true, features = ["fake"] }

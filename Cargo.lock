@@ -2456,6 +2456,8 @@ dependencies = [
  "kakemono-platform",
  "kakemono-protocol",
  "kakemono-sources",
+ "rand",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",
