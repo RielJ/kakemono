@@ -2409,6 +2409,7 @@ dependencies = [
  "clap_complete",
  "futures",
  "insta",
+ "interprocess",
  "kakemono-config",
  "kakemono-engine",
  "kakemono-platform",

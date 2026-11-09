@@ -220,3 +220,120 @@ fn template_uses_new_name() {
         "template still says wallpaperd"
     );
 }
+
+// ─── legacy socket rule (Task 23) ───────────────────────────────────────────────────────────────
+
+mod effective_socket_path {
+    use std::path::{Path, PathBuf};
+
+    use kakemono_config::paths::{ConfigSource, SocketPath, legacy_default_socket};
+    use kakemono_config::{Config, load_with_home, parse_str};
+
+    fn home() -> PathBuf {
+        PathBuf::from("/Users/a")
+    }
+
+    fn with_socket(text: &str) -> Config {
+        parse_str(&format!("[daemon]\nsocket_path = {text:?}\n"), &home()).unwrap()
+    }
+
+    fn legacy() -> ConfigSource {
+        ConfigSource::Legacy(home().join(".config/wallpaperd/config.toml"))
+    }
+
+    #[test]
+    fn legacy_default_socket_is_gos_path() {
+        assert_eq!(
+            legacy_default_socket(&home()),
+            PathBuf::from("/Users/a/.config/wallpaperd/daemon.sock")
+        );
+    }
+
+    #[test]
+    fn unset_socket_uses_default_for_every_source() {
+        let cfg = Config::default();
+        for source in [
+            legacy(),
+            ConfigSource::Primary(home().join(".config/kakemono/config.toml")),
+            ConfigSource::Explicit(PathBuf::from("/tmp/c.toml")),
+            ConfigSource::Missing(home().join(".config/kakemono/config.toml")),
+        ] {
+            let got = cfg.effective_socket_path(&source, &home());
+            assert_eq!(got, SocketPath::Default, "{source:?}");
+            assert_eq!(got.override_path(), None);
+            assert_eq!(got.notice(), None);
+        }
+    }
+
+    #[test]
+    fn empty_socket_path_uses_default() {
+        let cfg = with_socket("");
+        assert_eq!(
+            cfg.effective_socket_path(&legacy(), &home()),
+            SocketPath::Default
+        );
+    }
+
+    #[test]
+    fn legacy_config_with_go_default_socket_is_ignored() {
+        let cfg = with_socket("~/.config/wallpaperd/daemon.sock");
+        let got = cfg.effective_socket_path(&legacy(), &home());
+        let go = legacy_default_socket(&home());
+        assert_eq!(got, SocketPath::IgnoredLegacy(&go));
+        assert_eq!(got.override_path(), None);
+        let notice = got.notice().unwrap();
+        assert!(
+            notice.contains("/Users/a/.config/wallpaperd/daemon.sock"),
+            "{notice}"
+        );
+        assert!(notice.contains("legacy wallpaperd config"), "{notice}");
+    }
+
+    #[test]
+    fn legacy_config_with_absolute_go_default_is_ignored() {
+        let cfg = with_socket("/Users/a/.config/wallpaperd/daemon.sock");
+        assert!(matches!(
+            cfg.effective_socket_path(&legacy(), &home()),
+            SocketPath::IgnoredLegacy(_)
+        ));
+    }
+
+    #[test]
+    fn legacy_config_with_custom_socket_is_honoured() {
+        let cfg = with_socket("/tmp/custom.sock");
+        let got = cfg.effective_socket_path(&legacy(), &home());
+        assert_eq!(got, SocketPath::Configured(Path::new("/tmp/custom.sock")));
+        assert_eq!(got.override_path(), Some(Path::new("/tmp/custom.sock")));
+        assert_eq!(got.notice(), None);
+    }
+
+    #[test]
+    fn go_default_socket_from_other_sources_is_honoured() {
+        let cfg = with_socket("~/.config/wallpaperd/daemon.sock");
+        let go = legacy_default_socket(&home());
+        for source in [
+            ConfigSource::Primary(home().join(".config/kakemono/config.toml")),
+            ConfigSource::Explicit(PathBuf::from("/tmp/c.toml")),
+        ] {
+            assert_eq!(
+                cfg.effective_socket_path(&source, &home()),
+                SocketPath::Configured(&go),
+                "{source:?}"
+            );
+        }
+    }
+
+    /// The real Go template, read through the legacy fallback, resolves to the kakemono default.
+    #[test]
+    fn go_template_through_legacy_fallback_is_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let go =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/go_default_template.toml");
+        let cfg = load_with_home(&go, dir.path()).unwrap();
+        let source = ConfigSource::Legacy(go.clone());
+        assert!(matches!(
+            cfg.effective_socket_path(&source, dir.path()),
+            SocketPath::IgnoredLegacy(_)
+        ));
+    }
+}

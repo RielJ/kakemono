@@ -215,6 +215,83 @@ impl ConfigSource {
     }
 }
 
+/// File name of the Go daemon's socket.
+pub const LEGACY_SOCKET_FILE_NAME: &str = "daemon.sock";
+
+/// The Go daemon's default socket, `~/.config/wallpaperd/daemon.sock` (Go `DefaultSocketPath`,
+/// which ignored `XDG_CONFIG_HOME`). The Go config template wrote this value to `socket_path`.
+pub fn legacy_default_socket(home: &Path) -> PathBuf {
+    home.join(".config")
+        .join(LEGACY_APP_NAME)
+        .join(LEGACY_SOCKET_FILE_NAME)
+}
+
+/// How `daemon.socket_path` resolves for a config read from a given [`ConfigSource`]. Returned by
+/// [`Config::effective_socket_path`]; pass [`SocketPath::override_path`] to
+/// `kakemono_protocol::endpoint::default_endpoint`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SocketPath<'a> {
+    /// `socket_path` is unset or empty: use the endpoint precedence (`$KAKEMONO_SOCKET`, then the
+    /// platform default).
+    Default,
+    /// `socket_path` as configured.
+    Configured(&'a Path),
+    /// The config came from the legacy Go location and `socket_path` is the Go default. It is
+    /// ignored so kakemono and a still-running Go daemon don't fight over one socket. Treated like
+    /// [`SocketPath::Default`]. Callers log [`SocketPath::notice`] once at info level.
+    IgnoredLegacy(&'a Path),
+}
+
+impl<'a> SocketPath<'a> {
+    /// The path to pass as the endpoint override, if any.
+    pub fn override_path(&self) -> Option<&'a Path> {
+        match self {
+            SocketPath::Configured(p) => Some(p),
+            SocketPath::Default | SocketPath::IgnoredLegacy(_) => None,
+        }
+    }
+
+    /// The info line to log when the legacy socket was ignored; `None` otherwise.
+    pub fn notice(&self) -> Option<String> {
+        match self {
+            SocketPath::IgnoredLegacy(p) => Some(format!(
+                "ignoring socket_path {} from the legacy wallpaperd config; using the kakemono default",
+                p.display()
+            )),
+            SocketPath::Default | SocketPath::Configured(_) => None,
+        }
+    }
+}
+
+impl Config {
+    /// The one rule the daemon, the CLI client and the UI use to pick the socket from the config.
+    ///
+    /// A config loaded through the legacy fallback ([`ConfigSource::Legacy`]) usually still has
+    /// the Go template's `socket_path = "~/.config/wallpaperd/daemon.sock"`. That value is ignored
+    /// ([`SocketPath::IgnoredLegacy`]). Any other `socket_path`, or the Go default in a config from
+    /// any other source, is honoured. `home` is the home directory the config was expanded with
+    /// (`Paths::home`).
+    pub fn effective_socket_path(&self, source: &ConfigSource, home: &Path) -> SocketPath<'_> {
+        let Some(path) = self
+            .daemon
+            .socket_path
+            .as_deref()
+            .filter(|p| !p.as_os_str().is_empty())
+        else {
+            return SocketPath::Default;
+        };
+        let go_default = legacy_default_socket(home);
+        let unexpanded = Path::new("~/.config")
+            .join(LEGACY_APP_NAME)
+            .join(LEGACY_SOCKET_FILE_NAME);
+        if source.is_legacy() && (path == go_default || path == unexpanded) {
+            SocketPath::IgnoredLegacy(path)
+        } else {
+            SocketPath::Configured(path)
+        }
+    }
+}
+
 /// Copies the legacy Go config to the kakemono path. Refuses to overwrite `to`. Leaves `from` in
 /// place. Only call this when the user agreed.
 pub fn copy_legacy_config(from: &Path, to: &Path) -> Result<(), ConfigError> {
