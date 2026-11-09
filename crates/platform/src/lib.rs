@@ -16,6 +16,9 @@ pub mod linux;
 pub mod macos;
 #[cfg(target_os = "windows")]
 pub mod windows;
+#[cfg(all(test, not(target_os = "windows")))]
+#[path = "windows/logic.rs"]
+mod windows_logic;
 
 pub use api::{
     BackendInfo, CommandStatus, Fit, ParseEnumError, Platform, SetError, Signal, StaticSignals,

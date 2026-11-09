@@ -28,7 +28,9 @@ dark-light.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2.workspace = true
 objc2-foundation.workspace = true
-objc2-app-kit.workspace = true
+# NSCell: `NSImageScaling` for the desktop-image options. NSGraphicsContext: the dummy event that
+# wakes `NSApplication::run` after `stop:`.
+objc2-app-kit = { workspace = true, features = ["NSCell", "NSGraphicsContext"] }
 dispatch2.workspace = true
 block2.workspace = true
 auto-launch.workspace = true
@@ -47,6 +49,13 @@ nix.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tempfile.workspace = true
 insta.workspace = true
+
+# Sets the real wallpaper (then restores it). No libtest harness: AppKit needs the process main
+# thread. `main` is a no-op unless it gets `--ignored` AND KAKEMONO_REAL_DESKTOP_TEST=1:
+# `KAKEMONO_REAL_DESKTOP_TEST=1 cargo test -p kakemono-platform --test macos_set_roundtrip -- --ignored`
+[[test]]
+name = "macos_set_roundtrip"
+harness = false
 
 [lints]
 workspace = true

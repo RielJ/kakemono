@@ -2,7 +2,7 @@
 
 pub mod detect;
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 pub mod backends;
 #[cfg(target_os = "linux")]
 pub mod theme;
