@@ -2,6 +2,8 @@ import { clearMocks, mockIPC } from '@tauri-apps/api/mocks'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
+  desktopBackend,
+  detectDesktop,
   errorMessage,
   favoriteWallpaper,
   isDaemonNotRunning,
@@ -10,6 +12,7 @@ import {
   setFile,
   setStartAtLogin,
   startDaemon,
+  testDesktop,
   trashWallpaper,
 } from './api'
 
@@ -88,6 +91,25 @@ describe('shared/api', () => {
     const calls = recordIPC(() => ({ reloaded: true, reload_error: null }))
     await expect(saveConfig({ daemon: { interval: '1h' } })).resolves.toEqual({ reloaded: true, reload_error: null })
     expect(calls).toEqual([{ cmd: 'save_config', args: { patch: { daemon: { interval: '1h' } } } }])
+  })
+
+  it('calls the desktop commands with their argument shapes', async () => {
+    const report = {
+      version: '2',
+      pid: 1,
+      backend: { name: 'command', detail: 'setbg {path}' },
+      theme: 'dark',
+      apply: { ok: false, path: null, error: 'setbg: exit status 2' },
+    }
+    const calls = recordIPC((cmd) => (cmd === 'detect_desktop' ? 'detected: awww\n' : report))
+    await expect(desktopBackend()).resolves.toEqual(report)
+    await expect(testDesktop()).resolves.toEqual(report)
+    await expect(detectDesktop(true)).resolves.toBe('detected: awww\n')
+    expect(calls).toEqual([
+      { cmd: 'desktop_backend', args: {} },
+      { cmd: 'test_desktop', args: {} },
+      { cmd: 'detect_desktop', args: { write: true } },
+    ])
   })
 
   it('recognises a daemon_not_running command error', () => {

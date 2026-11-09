@@ -1,11 +1,13 @@
-/** Settings sidebar sections. Task 42 adds `desktop` and `hooks`. */
-export type TabId = 'general' | 'sources' | 'themes' | 'favorites'
+/** Settings sidebar sections. */
+export type TabId = 'general' | 'sources' | 'themes' | 'favorites' | 'desktop' | 'hooks'
 
 export const TAB_TITLES: Record<TabId, string> = {
   general: 'General',
   sources: 'Sources',
   themes: 'Themes',
   favorites: 'Favorites',
+  desktop: 'Desktop',
+  hooks: 'Hooks',
 }
 
 /** Wallpaper sources, in the order the Sources section lists them. Keys match `Config`. */

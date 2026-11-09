@@ -1,7 +1,8 @@
 /**
  * Frontend API surface. Every call goes to the Tauri backend (`crates/ui/src-tauri`) with
  * `invoke`, or to a Tauri plugin (dialog, opener). Command names and argument shapes match
- * `src-tauri/src/commands.rs`, `picker.rs` and `lifecycle.rs`; see `.pi/contracts/ui.md`.
+ * `src-tauri/src/commands.rs`, `commands_desktop.rs`, `picker.rs` and `lifecycle.rs`; see
+ * `.pi/contracts/ui.md`.
  *
  * Config and status types are generated from Rust by ts-rs (`./bindings`); do not redeclare
  * them here.
@@ -166,6 +167,55 @@ export function listThumbnails(): Promise<Thumbnail[]> {
 /** The daemon's diagnostics report (IPC `doctor` data). */
 export function doctor(): Promise<unknown> {
   return invoke<unknown>('doctor')
+}
+
+// ── Desktop backend (`commands_desktop.rs`) ─────────────────────────────────
+
+/** The backend the daemon is using (`doctor` data `backend`). */
+export interface BackendReport {
+  /** Short id: `macos`, `windows`, `gnome`, `awww`, `command`, `unconfigured`, … */
+  name: string
+  /** For command backends: the argv joined for display, plus ` (kept running)` when persistent. */
+  detail: string
+}
+
+/** How `doctor` with `apply` went. `error` is the daemon's own text. */
+export interface ApplyReport {
+  ok: boolean
+  path: string | null
+  error: string | null
+}
+
+/** The parts of the daemon's `doctor` data the Desktop panel shows. */
+export interface DoctorReport {
+  version: string
+  pid: number
+  backend: BackendReport
+  theme: string
+  /** Set only by `testDesktop`. */
+  apply: ApplyReport | null
+}
+
+/** IPC `doctor`: the backend the running daemon uses. Rejects `daemon_not_running` when down. */
+export function desktopBackend(): Promise<DoctorReport> {
+  return invoke<DoctorReport>('desktop_backend')
+}
+
+/**
+ * IPC `reload`, then `doctor` with `apply`: the daemon re-sets the current wallpaper with its
+ * setter. A failed re-set resolves with `apply.ok = false` and the daemon's error text; a
+ * failed reload rejects.
+ */
+export function testDesktop(): Promise<DoctorReport> {
+  return invoke<DoctorReport>('test_desktop')
+}
+
+/**
+ * Runs `kakemono detect` (`write`: `detect --write`) and resolves to its report text. A
+ * refused `--write` (pinned or legacy config) rejects `cli_failed` with the CLI's stderr.
+ */
+export function detectDesktop(write: boolean): Promise<string> {
+  return invoke<string>('detect_desktop', { write })
 }
 
 export function daemonRunning(): Promise<boolean> {

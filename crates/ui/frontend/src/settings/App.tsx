@@ -12,6 +12,8 @@ import {
   saveConfig,
   startDaemon,
 } from '../shared/api'
+import DesktopSettings from './DesktopSettings'
+import HooksSettings from './HooksSettings'
 import FavoritesSettings from './components/FavoritesSettings'
 import GeneralSettings from './components/GeneralSettings'
 import Icon from './components/Icon'
@@ -219,6 +221,13 @@ export default function App() {
     setSaveState((s) => (s.kind === 'failed' ? { kind: 'idle' } : s))
   }, [])
 
+  // A change another command already wrote to disk (Pin, detect --write): apply it to the saved
+  // copy and the edited copy, keeping other edits pending.
+  const handleWritten = useCallback((update: (c: Config) => Config) => {
+    setSavedConfig((c) => c && update(c))
+    setConfig((c) => c && update(c))
+  }, [])
+
   // Written to disk immediately, so update the saved copy too and keep other edits pending.
   const handleResetPicker = useCallback(async () => {
     try {
@@ -283,6 +292,24 @@ export default function App() {
         break
       case 'favorites':
         content = <FavoritesSettings config={config} onChange={handleChange} />
+        break
+      case 'desktop':
+        content =
+          savedConfig && appInfo ? (
+            <DesktopSettings
+              config={config}
+              savedConfig={savedConfig}
+              onChange={handleChange}
+              onWritten={handleWritten}
+              os={appInfo.os}
+              commandError={errors.set_command}
+            />
+          ) : (
+            <LoadingPane />
+          )
+        break
+      case 'hooks':
+        content = <HooksSettings config={config} onChange={handleChange} error={errors.on_change} />
         break
       default: {
         const _exhaustive: never = activeTab

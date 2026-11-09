@@ -8,6 +8,7 @@
 //! At startup the UI starts the daemon when it does not answer ([`lifecycle`]).
 
 pub mod commands;
+pub mod commands_desktop;
 pub mod daemon_link;
 pub mod events;
 pub mod lifecycle;
@@ -73,6 +74,9 @@ pub fn run() -> anyhow::Result<()> {
             commands::thumbnails,
             commands::doctor,
             commands::daemon_running,
+            commands_desktop::desktop_backend,
+            commands_desktop::test_desktop,
+            commands_desktop::detect_desktop,
             lifecycle::ensure_daemon,
             lifecycle::start_at_login,
             lifecycle::set_start_at_login,

@@ -12,6 +12,8 @@ const NAV_ITEMS: { id: TabId; icon: IconName }[] = [
   { id: 'sources', icon: 'globe' },
   { id: 'themes', icon: 'sunMoon' },
   { id: 'favorites', icon: 'heart' },
+  { id: 'desktop', icon: 'image' },
+  { id: 'hooks', icon: 'terminal' },
 ]
 
 export default function Sidebar({ activeTab, onTabChange }: SidebarProps) {
