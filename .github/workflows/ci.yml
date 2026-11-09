@@ -68,22 +68,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # crates/ui/frontend arrives in Task 40; until then every step is skipped.
       - uses: actions/setup-node@v4
-        if: hashFiles('crates/ui/frontend/package-lock.json') != ''
         with:
           node-version-file: .node-version
           cache: npm
           cache-dependency-path: crates/ui/frontend/package-lock.json
 
-      - if: hashFiles('crates/ui/frontend/package-lock.json') != ''
-        run: npm ci
-      - if: hashFiles('crates/ui/frontend/package-lock.json') != ''
-        run: npm run typecheck
-      - if: hashFiles('crates/ui/frontend/package-lock.json') != ''
-        run: npm run build
-      - if: hashFiles('crates/ui/frontend/package-lock.json') != ''
-        run: npm test
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
 
   deny:
     name: cargo deny

@@ -1,9 +1,12 @@
 # IPC wire goldens (captured from the Go daemon)
 
-`tools/goldens/replay.sh` writes these files. It builds the Go daemon from the
-`go-final` tree, runs it on a scratch socket with a scratch `HOME` and config,
-and records the raw bytes of each exchange. Do not edit them by hand; re-run
-the script.
+`tools/goldens/replay.sh` wrote these files. It built the Go daemon from the
+`go-final` tree, ran it on a scratch socket with a scratch `HOME` and config,
+and recorded the raw bytes of each exchange. Do not edit them by hand.
+
+The Go code and `tools/goldens/` were deleted at the cutover (Task 49), so the
+files are now frozen. To regenerate them, check out `tools/goldens/` from a
+commit before the cutover, for example `git checkout 8741397 -- tools/goldens`.
 
 ## Files
 

@@ -104,6 +104,8 @@ The snapshot `crates/platform/tests/snapshots/linux_presets__presets.snap` holds
 
 `swaybg` and `wbg` keep running while they show the wallpaper. kakemono starts a new instance for each `set`, waits for it to draw, and then stops the old one. It records the PID in `<runtime dir>/setter.pid` and takes over that process when the daemon restarts.
 
+The list of desktops and commands was checked against [Variety](https://github.com/varietywalls/variety), which supports many of the same desktops. Variety is GPL-3, so kakemono contains none of its code. The backends are written from each desktop's public documentation.
+
 ### Use your own command
 
 Set `backend = "command"` and `set_command`:

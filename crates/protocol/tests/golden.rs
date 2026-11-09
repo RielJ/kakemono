@@ -60,7 +60,7 @@ mod golden {
         round_trip(name, &read(name))
     }
 
-    // ---- marshalled Go values (tools/goldens/main.go) ----
+    // ---- marshalled Go values (tools/goldens/main.go, deleted at the cutover) ----
 
     #[test]
     fn golden_wallpaper_info_full() {

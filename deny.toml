@@ -1,6 +1,6 @@
 # cargo-deny: `cargo deny check` (plan §A, §J, risk 11).
 # Licenses: permissive only. GPL/LGPL/AGPL are blocked by omission from `allow`
-# (variety-reference/ is GPL-3 and must never leak in, not even through a dependency).
+# (Variety, which the Linux backends were modelled on, is GPL-3: no code or dependency from it).
 
 [graph]
 # Check every shipped target, not just the host, so per-OS dependencies are covered.

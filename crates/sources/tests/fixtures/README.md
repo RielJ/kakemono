@@ -1,8 +1,12 @@
 # Provider fixtures (captured from the Go providers)
 
-`go run ./tools/goldens` writes everything here except this README
-(`tools/goldens/providers.go`). Do not edit the files by hand; change the
-generator and re-run it.
+`go run ./tools/goldens` wrote everything here except this README
+(`tools/goldens/providers.go`). Do not edit the files by hand.
+
+The Go code and `tools/goldens/` were deleted at the cutover (Task 49), so the
+files are now frozen. To regenerate them, check out `tools/goldens/` and the Go
+code from a commit before the cutover, for example
+`git checkout 8741397 -- tools/goldens go.mod go.sum internal`.
 
 ## Layout
 
