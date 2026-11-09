@@ -44,11 +44,18 @@ zbus.workspace = true
 ashpd.workspace = true
 which.workspace = true
 nix.workspace = true
+# Consumes zbus signal streams (logind `PrepareForSleep`) and dark-light's `stream()`.
+futures.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 tempfile.workspace = true
 insta.workspace = true
+
+# Fake Plasma / Xfconf / logind services (`#[zbus::interface]`) on a peer-to-peer socket pair in
+# tests, so they never touch a real bus.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+zbus = { workspace = true, features = ["service", "p2p"] }
 
 # Sets the real wallpaper (then restores it). No libtest harness: AppKit needs the process main
 # thread. `main` is a no-op unless it gets `--ignored` AND KAKEMONO_REAL_DESKTOP_TEST=1:

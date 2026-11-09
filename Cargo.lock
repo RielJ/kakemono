@@ -2479,6 +2479,7 @@ dependencies = [
  "block2",
  "dark-light",
  "dispatch2",
+ "futures",
  "insta",
  "kakemono-config",
  "nix",

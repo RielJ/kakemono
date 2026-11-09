@@ -1,0 +1,14 @@
+---
+source: crates/platform/tests/linux_kde.rs
+expression: "script_for(\"file:///home/u/Pictures/a%20b.jpg\", Fit::Fill)"
+---
+var uri = "file:///home/u/Pictures/a%20b.jpg";
+var fillMode = 2;
+var all = desktops();
+for (var i = 0; i < all.length; i++) {
+    var d = all[i];
+    d.wallpaperPlugin = "org.kde.image";
+    d.currentConfigGroup = ["Wallpaper", "org.kde.image", "General"];
+    d.writeConfig("Image", uri);
+    d.writeConfig("FillMode", fillMode);
+}
