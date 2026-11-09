@@ -267,12 +267,17 @@ where
     }
 }
 
+/// Exit status when the reader of stdout goes away (`kakemono doctor | head`): 128 + SIGPIPE (13),
+/// the status a shell reports for `cat`, `ls` or Go's wallpaperd killed by SIGPIPE.
+pub const STDOUT_CLOSED_EXIT: u8 = 128 + 13;
+
 /// Runs a parsed command line. Prints the error (message only, as Go) and returns exit code 1 on
-/// failure.
+/// failure. A closed stdout exits with [`STDOUT_CLOSED_EXIT`] and prints nothing.
 pub fn run(cli: Cli) -> ExitCode {
     let ctx = Context::new(cli.global);
     match dispatch(&ctx, cli.command) {
         Ok(()) => ExitCode::SUCCESS,
+        Err(e) if is_stdout_closed(&e) => ExitCode::from(STDOUT_CLOSED_EXIT),
         Err(e) => {
             eprintln!("{e:#}");
             ExitCode::FAILURE
@@ -280,9 +285,54 @@ pub fn run(cli: Cli) -> ExitCode {
     }
 }
 
+/// The payload of the `io::Error` that [`Stdout`] returns when stdout's reader is gone. Only
+/// stdout gets it, so a broken pipe to the daemon socket or a hook still reports an error.
+#[derive(Debug, thiserror::Error)]
+#[error("stdout was closed")]
+struct StdoutClosed;
+
+/// Stdout for commands. Marks `BrokenPipe` errors with [`StdoutClosed`]; other errors pass
+/// through unchanged.
+struct Stdout<W>(W);
+
+impl<W: Write> Write for Stdout<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.write(buf).map_err(mark_stdout_closed)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush().map_err(mark_stdout_closed)
+    }
+}
+
+fn mark_stdout_closed(e: io::Error) -> io::Error {
+    if e.kind() == io::ErrorKind::BrokenPipe {
+        io::Error::new(io::ErrorKind::BrokenPipe, StdoutClosed)
+    } else {
+        e
+    }
+}
+
+/// True when `e`, or an error in its chain, is the `io::Error` from a write to a closed stdout.
+fn is_stdout_closed(e: &anyhow::Error) -> bool {
+    e.chain().any(|cause| {
+        cause.is::<StdoutClosed>()
+            || cause
+                .downcast_ref::<io::Error>()
+                .and_then(io::Error::get_ref)
+                .is_some_and(|inner| inner.is::<StdoutClosed>())
+    })
+}
+
 fn dispatch(ctx: &Context, command: Commands) -> anyhow::Result<()> {
-    let mut stdout = io::stdout().lock();
-    let out: &mut dyn Write = &mut stdout;
+    let mut stdout = Stdout(io::stdout().lock());
+    run_command(ctx, &mut stdout, command)?;
+    // Text without a final newline is still buffered. Write it now so its error is reported.
+    stdout.flush()?;
+    Ok(())
+}
+
+fn run_command(ctx: &Context, out: &mut dyn Write, command: Commands) -> anyhow::Result<()> {
     match command {
         Commands::Next => block_on(commands::next::run(ctx, out)),
         Commands::Prev => block_on(commands::prev::run(ctx, out)),
@@ -293,7 +343,10 @@ fn dispatch(ctx: &Context, command: Commands) -> anyhow::Result<()> {
         Commands::Pause => block_on(commands::pause::run(ctx, out)),
         Commands::Resume => block_on(commands::resume::run(ctx, out)),
         Commands::Completions { shell } => {
-            clap_complete::generate(shell, &mut Cli::command(), "kakemono", out);
+            // `generate` panics when a write fails, so render to memory first.
+            let mut script = Vec::new();
+            clap_complete::generate(shell, &mut Cli::command(), "kakemono", &mut script);
+            out.write_all(&script)?;
             Ok(())
         }
         Commands::Config { action } => config_command(ctx, out, action),
