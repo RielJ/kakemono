@@ -1,5 +1,6 @@
 # kakemono configuration file
-# Location: ~/.config/kakemono/config.toml
+# Location: ~/.config/kakemono/config.toml ($XDG_CONFIG_HOME/kakemono/config.toml when set;
+# %APPDATA%\kakemono\config.toml on Windows). $KAKEMONO_CONFIG or --config overrides it.
 
 [daemon]
 # Enable or disable automatic wallpaper rotation
@@ -13,9 +14,10 @@ cache_size = 50
 # Directory where trashed wallpapers are moved
 trash_dir = "~/Pictures/Wallpapers/trash"
 # IPC socket path used between the daemon, CLI and UI. Leave unset for the platform default:
-# macOS ~/.config/kakemono/daemon.sock, Linux $XDG_RUNTIME_DIR/kakemono/daemon.sock,
-# Windows a named pipe (this key is ignored there).
-# socket_path = "~/.config/kakemono/daemon.sock"
+# macOS ~/.config/kakemono/kakemono.sock; Linux $XDG_RUNTIME_DIR/kakemono/kakemono.sock
+# (~/.config/kakemono/kakemono.sock without XDG_RUNTIME_DIR); Windows the named pipe
+# \\.\pipe\kakemono-<user> (this key is ignored there). $KAKEMONO_SOCKET overrides the default.
+# socket_path = "~/.config/kakemono/kakemono.sock"
 # Pick a new wallpaper when the system switches between light and dark mode
 # rotate_on_theme_change = true
 # macOS: re-apply the current wallpaper when you switch Spaces
