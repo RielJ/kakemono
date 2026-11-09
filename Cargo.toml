@@ -15,6 +15,8 @@ members = [
 version = "2.0.0-alpha.0"
 edition = "2024"
 rust-version = "1.99"
+license = "MIT"
+repository = "https://github.com/RielJ/kakemono"
 publish = false
 
 # Every third-party version lives here (plan §G). Member crates use `{ workspace = true }`.

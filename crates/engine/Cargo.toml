@@ -3,6 +3,8 @@ name = "kakemono-engine"
 description = "kakemono engine: history state, wallpaper ops, rotation loop, favorites/trash/cache, events and hooks"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 

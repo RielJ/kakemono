@@ -46,7 +46,7 @@ allow = [
 exceptions = []
 
 [licenses.private]
-# Workspace crates are `publish = false` and carry no license field yet.
+# Workspace crates are `publish = false` (MIT, see LICENSE); skip them in the license check.
 ignore = true
 
 [bans]

@@ -229,3 +229,7 @@ cd crates/ui/frontend && npm ci && npm test && npm run build
 | `crates/config` | The config schema, defaults, paths, and editing |
 | `crates/protocol` | The socket protocol and client |
 | `crates/ui` | The Tauri app: tray, picker, and settings |
+
+## License
+
+MIT. See [LICENSE](LICENSE).
