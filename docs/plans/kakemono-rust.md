@@ -1002,6 +1002,7 @@ Ranked by likelihood × impact.
 - **Files owned:** `crates/cli/src/main.rs`, `crates/cli/src/cli.rs`, `crates/cli/src/commands/{next,prev,set,favorite,trash,pause,resume,status}.rs`, `crates/cli/src/output.rs`, `crates/cli/tests/cli.rs`
 - **Depends on:** Task 23
 - **Mode:** sequential
+- **Prerequisite (from Task 18):** add a public indented Go-format writer to `kakemono-protocol::codec` (`to_vec_go_pretty`, matching `json.MarshalIndent` with two spaces and Go escaping). Use it for `status --json`, and switch `engine/state.rs` from its private copy of that printer to this one. The Go fixtures `status_json.txt` and `state_*.json` must still round-trip.
 - **Steps:**
   1. Write the clap derive tree from §I, with global `--config` and `--socket`.
   2. Port `printWallpaperInfo` and the status text exactly.
