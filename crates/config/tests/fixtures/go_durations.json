@@ -1,0 +1,246 @@
+{
+  "_comment": "Go time.ParseDuration cases shared by crates/config (tests/duration_cases.rs) and the settings UI (src/settings/duration.test.ts). nanos is a decimal string because it can exceed 2^53.",
+  "valid": [
+    {
+      "input": "0",
+      "nanos": "0"
+    },
+    {
+      "input": "5s",
+      "nanos": "5000000000"
+    },
+    {
+      "input": "30s",
+      "nanos": "30000000000"
+    },
+    {
+      "input": "1478s",
+      "nanos": "1478000000000"
+    },
+    {
+      "input": "+5s",
+      "nanos": "5000000000"
+    },
+    {
+      "input": "-0",
+      "nanos": "0"
+    },
+    {
+      "input": "+0",
+      "nanos": "0"
+    },
+    {
+      "input": "5.0s",
+      "nanos": "5000000000"
+    },
+    {
+      "input": "5.6s",
+      "nanos": "5600000000"
+    },
+    {
+      "input": "5.s",
+      "nanos": "5000000000"
+    },
+    {
+      "input": ".5s",
+      "nanos": "500000000"
+    },
+    {
+      "input": "1.0s",
+      "nanos": "1000000000"
+    },
+    {
+      "input": "1.00s",
+      "nanos": "1000000000"
+    },
+    {
+      "input": "1.004s",
+      "nanos": "1004000000"
+    },
+    {
+      "input": "1.0040s",
+      "nanos": "1004000000"
+    },
+    {
+      "input": "100.00100s",
+      "nanos": "100001000000"
+    },
+    {
+      "input": "10ns",
+      "nanos": "10"
+    },
+    {
+      "input": "11us",
+      "nanos": "11000"
+    },
+    {
+      "input": "12µs",
+      "nanos": "12000"
+    },
+    {
+      "input": "12μs",
+      "nanos": "12000"
+    },
+    {
+      "input": "13ms",
+      "nanos": "13000000"
+    },
+    {
+      "input": "14s",
+      "nanos": "14000000000"
+    },
+    {
+      "input": "15m",
+      "nanos": "900000000000"
+    },
+    {
+      "input": "16h",
+      "nanos": "57600000000000"
+    },
+    {
+      "input": "3h30m",
+      "nanos": "12600000000000"
+    },
+    {
+      "input": "10.5s4m",
+      "nanos": "250500000000"
+    },
+    {
+      "input": "1h2m3s4ms5us6ns",
+      "nanos": "3723004005006"
+    },
+    {
+      "input": "39h9m14.425s",
+      "nanos": "140954425000000"
+    },
+    {
+      "input": "52763797000ns",
+      "nanos": "52763797000"
+    },
+    {
+      "input": "0.3333333333333333333h",
+      "nanos": "1200000000000"
+    },
+    {
+      "input": "9007199254740993ns",
+      "nanos": "9007199254740993"
+    },
+    {
+      "input": "9223372036854775807ns",
+      "nanos": "9223372036854775807"
+    },
+    {
+      "input": "9223372036854775.807us",
+      "nanos": "9223372036854775807"
+    },
+    {
+      "input": "9223372036s854ms775us807ns",
+      "nanos": "9223372036854775807"
+    },
+    {
+      "input": "0.100000000000000000000h",
+      "nanos": "360000000000"
+    },
+    {
+      "input": "0.830103483285477580700h",
+      "nanos": "2988372539827"
+    },
+    {
+      "input": "30m",
+      "nanos": "1800000000000"
+    },
+    {
+      "input": "1h30m",
+      "nanos": "5400000000000"
+    },
+    {
+      "input": "1h30m0s",
+      "nanos": "5400000000000"
+    },
+    {
+      "input": "1.5h",
+      "nanos": "5400000000000"
+    },
+    {
+      "input": "90s",
+      "nanos": "90000000000"
+    },
+    {
+      "input": "300ms",
+      "nanos": "300000000"
+    }
+  ],
+  "invalid": [
+    {
+      "input": "",
+      "kind": "invalid"
+    },
+    {
+      "input": "3",
+      "kind": "missing_unit"
+    },
+    {
+      "input": "-",
+      "kind": "invalid"
+    },
+    {
+      "input": "s",
+      "kind": "invalid"
+    },
+    {
+      "input": ".",
+      "kind": "invalid"
+    },
+    {
+      "input": "-.",
+      "kind": "invalid"
+    },
+    {
+      "input": ".s",
+      "kind": "invalid"
+    },
+    {
+      "input": "+.s",
+      "kind": "invalid"
+    },
+    {
+      "input": "1d",
+      "kind": "unknown_unit",
+      "unit": "d"
+    },
+    {
+      "input": "30 m",
+      "kind": "unknown_unit",
+      "unit": " m"
+    },
+    {
+      "input": "",
+      "kind": "invalid"
+    },
+    {
+      "input": "9223372036854775808ns",
+      "kind": "invalid"
+    },
+    {
+      "input": "9223372036854775.808us",
+      "kind": "invalid"
+    },
+    {
+      "input": "9223372036854ms775us808ns",
+      "kind": "invalid"
+    },
+    {
+      "input": "-5s",
+      "kind": "negative"
+    },
+    {
+      "input": "1h-30m",
+      "kind": "unknown_unit",
+      "unit": "h-"
+    },
+    {
+      "input": "x",
+      "kind": "invalid"
+    }
+  ]
+}

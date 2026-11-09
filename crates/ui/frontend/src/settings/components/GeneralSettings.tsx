@@ -1,193 +1,268 @@
-import type { Config } from '../types/config'
-import { selectDirectory, openFolder } from '../../shared/api'
+import type { AppInfo, Config } from '../../shared/api'
+import { openFolder, selectDirectory } from '../../shared/api'
+import { fileManagerName } from '../sections'
+import type { ConfigErrors } from '../validate'
+import { Group, Row } from './Group'
+import Toggle from './Toggle'
 
 interface Props {
   config: Config
   onChange: (config: Config) => void
+  errors: ConfigErrors
+  appInfo: AppInfo | null
+  onResetPickerPosition: () => void
 }
 
 const INTERVAL_PRESETS = [
-  { label: '5 minutes',  value: '5m'  },
+  { label: '5 minutes', value: '5m' },
   { label: '15 minutes', value: '15m' },
   { label: '30 minutes', value: '30m' },
-  { label: '1 hour',     value: '1h'  },
-  { label: '2 hours',    value: '2h'  },
-  { label: '6 hours',    value: '6h'  },
-  { label: '12 hours',   value: '12h' },
-  { label: '24 hours',   value: '24h' },
+  { label: '1 hour', value: '1h' },
+  { label: '2 hours', value: '2h' },
+  { label: '6 hours', value: '6h' },
+  { label: '12 hours', value: '12h' },
+  { label: '24 hours', value: '24h' },
 ]
 
-export default function GeneralSettings({ config, onChange }: Props) {
-  const set = <K extends keyof typeof config.daemon>(
-    key: K,
-    value: typeof config.daemon[K],
-  ) => onChange({ ...config, daemon: { ...config.daemon, [key]: value } })
+const POSITIONS = [
+  { label: 'Bottom', value: 'bottom' },
+  { label: 'Top', value: 'top' },
+  { label: 'Left', value: 'left' },
+  { label: 'Right', value: 'right' },
+] as const
 
-  const { daemon } = config
+
+export default function GeneralSettings({ config, onChange, errors, appInfo, onResetPickerPosition }: Props) {
+  const { daemon, picker } = config
+  const setDaemon = <K extends keyof Config['daemon']>(key: K, value: Config['daemon'][K]) =>
+    onChange({ ...config, daemon: { ...daemon, [key]: value } })
+  const setPicker = <K extends keyof Config['picker']>(key: K, value: Config['picker'][K]) =>
+    onChange({ ...config, picker: { ...picker, [key]: value } })
+
+  const isPreset = INTERVAL_PRESETS.some((p) => p.value === daemon.interval)
+  const os = appInfo?.os
+  const fileManager = fileManagerName(os)
+
+  const dirRow = (key: 'download_dir' | 'trash_dir', label: string, hint: string, placeholder: string) => (
+    <Row label={label} hint={hint}>
+      {({ labelId, hintId }) => (
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            value={daemon[key]}
+            onChange={(e) => setDaemon(key, e.target.value)}
+            placeholder={placeholder}
+            aria-labelledby={labelId}
+            aria-describedby={hintId}
+            spellCheck={false}
+            className="form-input w-48 text-xs py-1 font-mono"
+          />
+          <button
+            type="button"
+            onClick={async () => {
+              const p = await selectDirectory()
+              if (p) setDaemon(key, p)
+            }}
+            className="btn-secondary text-xs py-1 px-2"
+          >
+            Browse…
+          </button>
+          <button
+            type="button"
+            onClick={() => void openFolder(daemon[key]).catch(() => {})}
+            className="btn-secondary text-xs py-1 px-2"
+            title={`Open in ${fileManager}`}
+          >
+            Open
+          </button>
+        </div>
+      )}
+    </Row>
+  )
 
   return (
-    <div className="space-y-6 max-w-xl">
-      <div>
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 mb-2">
-          Rotation
-        </h3>
-        <div className="bg-white/80 dark:bg-zinc-800/70 rounded-xl divide-y divide-zinc-100 dark:divide-zinc-700 border border-zinc-200 dark:border-zinc-700">
-          <Row label="Auto-rotate" hint="Automatically change wallpaper on a timer">
-            <label className="cursor-pointer">
-              <input type="checkbox" checked={daemon.rotation_enabled} onChange={e => set('rotation_enabled', e.target.checked)} className="sr-only" />
-              <div className={`relative w-9 h-5 rounded-full transition-colors duration-200 ${daemon.rotation_enabled ? 'bg-accent dark:bg-accent-dark' : 'bg-gray-300 dark:bg-gray-600'}`}>
-                <div className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200 ${daemon.rotation_enabled ? 'translate-x-4' : ''}`} />
-              </div>
-            </label>
+    <div className="space-y-6 max-w-2xl">
+      <Group title="Rotation">
+        <Row label="Change wallpaper automatically" hint="Rotate on a timer.">
+          {({ labelId, hintId }) => (
+            <Toggle
+              enabled={daemon.rotation_enabled}
+              onChange={(v) => setDaemon('rotation_enabled', v)}
+              labelledBy={labelId}
+              describedBy={hintId}
+            />
+          )}
+        </Row>
+        <Row
+          label="Interval"
+          hint="A preset, or a duration such as 45m or 1h30m."
+          error={errors.interval}
+        >
+          {({ labelId, hintId }) => (
+            <div className="flex items-center gap-2">
+              <select
+                value={isPreset ? daemon.interval : '__custom'}
+                onChange={(e) => {
+                  if (e.target.value !== '__custom') setDaemon('interval', e.target.value)
+                }}
+                aria-labelledby={labelId}
+                className="form-input w-36 text-xs py-1"
+                disabled={!daemon.rotation_enabled}
+              >
+                {INTERVAL_PRESETS.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
+                  </option>
+                ))}
+                {!isPreset && <option value="__custom">Custom</option>}
+              </select>
+              <input
+                type="text"
+                value={daemon.interval}
+                onChange={(e) => setDaemon('interval', e.target.value)}
+                placeholder="30m"
+                aria-label="Custom interval"
+                aria-describedby={hintId}
+                aria-invalid={errors.interval ? true : undefined}
+                spellCheck={false}
+                autoComplete="off"
+                className={`form-input w-24 text-xs py-1 font-mono ${errors.interval ? 'border-red-500!' : ''}`}
+                disabled={!daemon.rotation_enabled}
+              />
+            </div>
+          )}
+        </Row>
+        <Row label="Change with light and dark mode" hint="Pick a new wallpaper when the system appearance switches.">
+          {({ labelId, hintId }) => (
+            <Toggle
+              enabled={daemon.rotate_on_theme_change}
+              onChange={(v) => setDaemon('rotate_on_theme_change', v)}
+              labelledBy={labelId}
+              describedBy={hintId}
+            />
+          )}
+        </Row>
+        {os === 'macos' && (
+          <Row
+            label="Keep wallpaper on every Space"
+            hint="Re-applies the wallpaper when you switch Spaces. This turns off 'Show on all Spaces' in System Settings."
+          >
+            {({ labelId, hintId }) => (
+              <Toggle
+                enabled={daemon.reapply_on_space_change}
+                onChange={(v) => setDaemon('reapply_on_space_change', v)}
+                labelledBy={labelId}
+                describedBy={hintId}
+              />
+            )}
           </Row>
-          <div className={daemon.rotation_enabled ? '' : 'opacity-40 pointer-events-none'}>
-            <Row label="Interval" hint="How often to rotate the wallpaper">
-              <div className="flex items-center gap-2">
-                <select
-                  value={INTERVAL_PRESETS.some(p => p.value === daemon.interval) ? daemon.interval : '__custom'}
-                  onChange={e => { if (e.target.value !== '__custom') set('interval', e.target.value) }}
-                  className="form-input w-36 text-xs py-1"
-                  disabled={!daemon.rotation_enabled}
-                >
-                  {INTERVAL_PRESETS.map(p => (
-                    <option key={p.value} value={p.value}>{p.label}</option>
-                  ))}
-                  {!INTERVAL_PRESETS.some(p => p.value === daemon.interval) && (
-                    <option value="__custom">{daemon.interval} (custom)</option>
-                  )}
-                </select>
-                <input
-                  type="text"
-                  value={daemon.interval}
-                  onChange={e => set('interval', e.target.value)}
-                  placeholder="30m"
-                  title="Custom Go duration (e.g. 45m, 1h30m)"
-                  className="form-input w-24 text-xs py-1 font-mono"
-                  disabled={!daemon.rotation_enabled}
-                />
-              </div>
-            </Row>
-          </div>
-          <Row label="Cache size" hint="Max wallpapers to keep downloaded">
+        )}
+        <Row label="Cache size" hint="Downloaded wallpapers to keep.">
+          {({ labelId, hintId }) => (
             <div className="flex items-center gap-2">
               <input
                 type="range"
-                min={10} max={500} step={10}
+                min={10}
+                max={500}
+                step={10}
                 value={daemon.cache_size}
-                onChange={e => set('cache_size', Number(e.target.value))}
-                className="no-drag w-28 accent-accent dark:accent-accent-dark"
+                onChange={(e) => setDaemon('cache_size', Number(e.target.value))}
+                aria-labelledby={labelId}
+                aria-describedby={hintId}
+                className="w-28 accent-accent dark:accent-accent-dark"
               />
-              <span className="text-sm font-medium w-10 text-right tabular-nums">
+              <span className="text-sm w-10 text-right tabular-nums" aria-hidden="true">
                 {daemon.cache_size}
               </span>
             </div>
-          </Row>
-        </div>
-      </div>
+          )}
+        </Row>
+      </Group>
 
-      <div>
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 mb-2">
-          Directories
-        </h3>
-        <div className="bg-white/80 dark:bg-zinc-800/70 rounded-xl divide-y divide-zinc-100 dark:divide-zinc-700 border border-zinc-200 dark:border-zinc-700">
-          <Row label="Download directory" hint="Where cached wallpapers are stored">
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={daemon.download_dir}
-                onChange={e => set('download_dir', e.target.value)}
-                placeholder="~/Pictures/Wallpapers/cache"
-                className="form-input w-44 text-xs py-1 font-mono"
-              />
-              <button onClick={async () => { const p = await selectDirectory(); if (p) set('download_dir', p) }} className="btn-secondary no-drag text-xs py-1 px-2">Browse</button>
-              <button onClick={() => openFolder(daemon.download_dir)} className="btn-secondary no-drag text-xs py-1 px-2" title="Open in Finder">Open</button>
-            </div>
-          </Row>
-          <Row label="Trash directory" hint="Where trashed wallpapers are moved">
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={daemon.trash_dir}
-                onChange={e => set('trash_dir', e.target.value)}
-                placeholder="~/Pictures/Wallpapers/trash"
-                className="form-input w-44 text-xs py-1 font-mono"
-              />
-              <button onClick={async () => { const p = await selectDirectory(); if (p) set('trash_dir', p) }} className="btn-secondary no-drag text-xs py-1 px-2">Browse</button>
-              <button onClick={() => openFolder(daemon.trash_dir)} className="btn-secondary no-drag text-xs py-1 px-2" title="Open in Finder">Open</button>
-            </div>
-          </Row>
-          <Row label="Socket path" hint="Unix socket for daemon IPC">
+      <Group title="Folders">
+        {dirRow('download_dir', 'Downloads', 'Where downloaded wallpapers are cached.', '~/Pictures/Wallpapers/cache')}
+        {dirRow('trash_dir', 'Trash', 'Where trashed wallpapers are moved.', '~/Pictures/Wallpapers/trash')}
+        <Row
+          label="Socket path"
+          hint="Leave empty for the default. Takes effect after the daemon and kakemono restart."
+        >
+          {({ labelId, hintId }) => (
             <input
               type="text"
-              value={daemon.socket_path}
-              onChange={e => set('socket_path', e.target.value)}
-              placeholder="Platform default"
-              className="form-input w-52 text-xs py-1 font-mono"
+              value={daemon.socket_path ?? ''}
+              onChange={(e) => setDaemon('socket_path', e.target.value === '' ? null : e.target.value)}
+              placeholder="Default"
+              aria-labelledby={labelId}
+              aria-describedby={hintId}
+              spellCheck={false}
+              className="form-input w-56 text-xs py-1 font-mono"
             />
-          </Row>
-        </div>
-      </div>
+          )}
+        </Row>
+      </Group>
 
-      <div>
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 mb-2">
-          Picker
-        </h3>
-        <div className="bg-white/80 dark:bg-zinc-800/70 rounded-xl divide-y divide-zinc-100 dark:divide-zinc-700 border border-zinc-200 dark:border-zinc-700">
-          <Row label="Position" hint="Where the floating thumbnail picker appears on screen">
+      <Group title="Picker">
+        <Row label="Screen edge" hint="Where the picker opens, on the display under the pointer.">
+          {({ labelId, hintId }) => (
             <select
-              value={config.picker.position}
-              onChange={e => onChange({ ...config, picker: { ...config.picker, position: e.target.value } })}
+              value={picker.position}
+              onChange={(e) => {
+                const next = POSITIONS.find((p) => p.value === e.target.value)
+                if (next) setPicker('position', next.value)
+              }}
+              aria-labelledby={labelId}
+              aria-describedby={hintId}
               className="form-input w-36 text-xs py-1"
             >
-              <option value="bottom">Bottom</option>
-              <option value="top">Top</option>
-              <option value="left">Left</option>
-              <option value="right">Right</option>
+              {POSITIONS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
+              ))}
             </select>
+          )}
+        </Row>
+        <Row label="Close when it loses focus">
+          {({ labelId }) => (
+            <Toggle
+              enabled={picker.close_on_blur}
+              onChange={(v) => setPicker('close_on_blur', v)}
+              labelledBy={labelId}
+            />
+          )}
+        </Row>
+        {picker.placement === 'custom' && (
+          <Row label="Saved position" hint="The picker reopens where you last dragged it.">
+            {() => (
+              <button type="button" onClick={onResetPickerPosition} className="btn-secondary text-xs py-1 px-2">
+                Reset position
+              </button>
+            )}
           </Row>
-        </div>
-      </div>
+        )}
+        {os === 'linux' && (
+          <Row
+            label="Open the picker through XWayland"
+            hint="Experimental. Lets the picker position itself on Wayland; may look blurry with fractional scaling."
+          >
+            {({ labelId, hintId }) => (
+              <Toggle
+                enabled={picker.force_x11}
+                onChange={(v) => setPicker('force_x11', v)}
+                labelledBy={labelId}
+                describedBy={hintId}
+              />
+            )}
+          </Row>
+        )}
+      </Group>
+
+      {appInfo && (
+        <p className="text-xs text-gray-500 dark:text-gray-400 break-all">
+          Config file: <span className="font-mono select-text">{appInfo.config_path}</span>
+          {appInfo.legacy_config && ' (shared with the old wallpaperd app)'}
+        </p>
+      )}
     </div>
   )
-}
-
-// ── Shared layout primitives (exported for other tabs) ────────────────────────
-
-export function Row({
-  label,
-  hint,
-  children,
-}: {
-  label: string
-  hint?: string
-  children: React.ReactNode
-}) {
-  return (
-    <div className="flex items-center justify-between px-4 py-3 gap-4">
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium">{label}</p>
-        {hint && <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-0.5">{hint}</p>}
-      </div>
-      <div className="shrink-0">{children}</div>
-    </div>
-  )
-}
-
-/** @deprecated Use Row instead */
-export function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400 mb-2">
-        {title}
-      </h3>
-      <div className="bg-white/80 dark:bg-zinc-800/70 rounded-xl divide-y divide-zinc-100 dark:divide-zinc-700 border border-zinc-200 dark:border-zinc-700">
-        {children}
-      </div>
-    </div>
-  )
-}
-
-/** @deprecated Use Row instead */
-export function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return <Row label={label} hint={hint}>{children}</Row>
 }

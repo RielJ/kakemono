@@ -1,18 +1,21 @@
 /**
  * Frontend API surface. Every call goes to the Tauri backend (`crates/ui/src-tauri`) with
- * `invoke`, or to a Tauri plugin (dialog, opener). This replaces the Wails bindings.
+ * `invoke`, or to a Tauri plugin (dialog, opener). Command names and argument shapes match
+ * `src-tauri/src/commands.rs` and `picker.rs`; see `.pi/contracts/ui.md`.
  *
- * Command names follow plan §H. Commands that the backend does not register yet reject
- * with Tauri's "command not found" error; callers already handle rejections.
- * See `.pi/contracts/ui.md` for which commands are wired.
+ * Config and status types are generated from Rust by ts-rs (`./bindings`); do not redeclare
+ * them here.
  */
 
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
-import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
+import { openPath } from '@tauri-apps/plugin-opener'
 
-import type { Config, StatusData } from '../settings/types/config'
+import type { Config } from './bindings/Config'
+import type { StatusData } from './bindings/StatusData'
+
+export type { Config, StatusData }
 
 /** One picker entry, in the Go picker's shape (the `thumbnails` command returns these). */
 export interface Thumbnail {
@@ -20,19 +23,88 @@ export interface Thumbnail {
   source: string
   title: string
   isCurrent: boolean
+  /** `''` until the `thumb://` protocol lands (Task 44). */
   imageUrl: string
 }
 
-// ── Daemon IPC (through Tauri commands) ─────────────────────────────────────
+/**
+ * A partial config for `save_config`: only the keys that changed. Objects merge into their
+ * TOML tables, `null` removes a key, anything else replaces the value (comments survive).
+ */
+export type ConfigPatch = Patch<Config>
+
+type Patch<T> = T extends readonly unknown[]
+  ? T
+  : T extends object
+    ? { [K in keyof T]?: Patch<T[K]> | null }
+    : T
+
+/** What `save_config` did after writing the file. */
+export interface SaveOutcome {
+  /** The daemon answered IPC `reload`. */
+  reloaded: boolean
+  /** Why the reload failed; `null` when it worked or the daemon is not running. */
+  reload_error: string | null
+}
+
+/** Static facts from `app_info`. */
+export interface AppInfo {
+  /** Rust `std::env::consts::OS`: `macos`, `windows`, `linux`, … */
+  os: string
+  /** The config file being read and edited. */
+  config_path: string
+  /** True when that file is the Go `wallpaperd` config. */
+  legacy_config: boolean
+  version: string
+}
+
+/** How a backend command fails (`CommandError` in `commands.rs`). */
+export interface CommandError {
+  kind: 'daemon_not_running' | 'daemon' | 'config' | 'invalid' | 'io' | 'opener' | 'internal'
+  message: string
+}
+
+function isCommandError(err: unknown): err is CommandError {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'kind' in err &&
+    typeof err.kind === 'string' &&
+    'message' in err &&
+    typeof err.message === 'string'
+  )
+}
+
+/** True when a command failed because nothing listens on the daemon socket. */
+export function isDaemonNotRunning(err: unknown): boolean {
+  return isCommandError(err) && err.kind === 'daemon_not_running'
+}
+
+/** Human-readable text for any rejection from this module. */
+export function errorMessage(err: unknown): string {
+  if (isCommandError(err)) return err.message
+  if (err instanceof Error) return err.message
+  return String(err)
+}
+
+// ── Config ──────────────────────────────────────────────────────────────────
 
 export function getConfig(): Promise<Config> {
   return invoke<Config>('get_config')
 }
 
-export function saveConfig(cfg: Config): Promise<void> {
-  return invoke<void>('save_config', { patch: cfg })
+/** Writes the changed keys to `config.toml` and asks the daemon to reload it. */
+export function saveConfig(patch: ConfigPatch): Promise<SaveOutcome> {
+  return invoke<SaveOutcome>('save_config', { patch })
 }
 
+export function getAppInfo(): Promise<AppInfo> {
+  return invoke<AppInfo>('app_info')
+}
+
+// ── Daemon ──────────────────────────────────────────────────────────────────
+
+/** Rejects with kind `daemon_not_running` when the daemon is down. */
 export function getStatus(): Promise<StatusData> {
   return invoke<StatusData>('status')
 }
@@ -72,15 +144,21 @@ export function listThumbnails(): Promise<Thumbnail[]> {
   return invoke<Thumbnail[]>('thumbnails')
 }
 
-/**
- * Image URL for the current wallpaper. Thumbnails move to the `thumb://` protocol in a
- * later task; until then there is no preview.
- */
-export function getThumbnail(): Promise<string> {
-  return Promise.resolve('')
+/** The daemon's diagnostics report (IPC `doctor` data). */
+export function doctor(): Promise<unknown> {
+  return invoke<unknown>('doctor')
 }
 
-// ── Native dialogs and the file manager (Tauri plugins) ─────────────────────
+export function daemonRunning(): Promise<boolean> {
+  return invoke<boolean>('daemon_running')
+}
+
+/** Starts `kakemono daemon`; resolves to whether it answers within about 3 s. */
+export function startDaemon(): Promise<boolean> {
+  return invoke<boolean>('start_daemon')
+}
+
+// ── Native dialogs, the file manager and the browser ────────────────────────
 
 /** Directory picker. Resolves to `''` when the user cancels, as the Wails version did. */
 export async function selectDirectory(): Promise<string> {
@@ -98,6 +176,7 @@ export async function selectFile(): Promise<string> {
   return picked ?? ''
 }
 
+/** Opens a folder in the file manager (opener plugin, scoped to `$HOME/**`). */
 export function openFolder(path: string): Promise<void> {
   return openPath(path)
 }
@@ -107,8 +186,14 @@ export async function openFavoritesFolder(): Promise<void> {
   return openPath(cfg.favorites.dir)
 }
 
+/** Shows the file in Finder, Explorer or the file manager (`reveal` command). */
 export function revealInFinder(path: string): Promise<void> {
-  return revealItemInDir(path)
+  return invoke<void>('reveal', { path })
+}
+
+/** Opens an http(s) URL in the default browser; other schemes are refused. */
+export function openUrl(url: string): Promise<void> {
+  return invoke<void>('open_url', { url })
 }
 
 // ── Windows ─────────────────────────────────────────────────────────────────
@@ -116,4 +201,19 @@ export function revealInFinder(path: string): Promise<void> {
 /** Hides the calling window. The tray app keeps running. */
 export function closeWindow(): Promise<void> {
   return getCurrentWindow().hide()
+}
+
+/** Shows the picker at its saved or edge position. */
+export function showPicker(): Promise<void> {
+  return invoke<void>('show_picker')
+}
+
+/** Hides the picker, saving a dragged position first. */
+export function hidePicker(): Promise<void> {
+  return invoke<void>('hide_picker')
+}
+
+/** Forgets a dragged picker position (`[picker] placement = "edge"`). */
+export function resetPickerPosition(): Promise<void> {
+  return invoke<void>('reset_picker_position')
 }

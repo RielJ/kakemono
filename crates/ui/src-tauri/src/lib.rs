@@ -5,6 +5,7 @@
 //! tray menu, or a Linux session without a tray host). Closing the last window keeps the
 //! app alive; only Quit exits.
 
+pub mod commands;
 pub mod daemon_link;
 pub mod tray;
 pub mod windows;
@@ -45,8 +46,25 @@ pub fn run() -> anyhow::Result<()> {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(link)
-        // Task 41 registers `commands::*` here.
-        .invoke_handler(tauri::generate_handler![])
+        .invoke_handler(tauri::generate_handler![
+            commands::get_config,
+            commands::save_config,
+            commands::status,
+            commands::next,
+            commands::prev,
+            commands::pause,
+            commands::resume,
+            commands::favorite,
+            commands::trash,
+            commands::set_file,
+            commands::thumbnails,
+            commands::doctor,
+            commands::daemon_running,
+            commands::start_daemon,
+            commands::reveal,
+            commands::open_url,
+            commands::app_info,
+        ])
         .setup(setup)
         .build(tauri::generate_context!())?;
 

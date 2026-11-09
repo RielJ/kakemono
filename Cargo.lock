@@ -2541,9 +2541,11 @@ name = "kakemono-ui"
 version = "2.0.0-alpha.0"
 dependencies = [
  "anyhow",
+ "insta",
  "interprocess",
  "kakemono-config",
  "kakemono-protocol",
+ "serde",
  "serde_json",
  "tauri",
  "tauri-build",
