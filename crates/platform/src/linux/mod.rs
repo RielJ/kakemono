@@ -16,7 +16,7 @@ pub mod theme;
 pub use resilient::{Active, Backends, REDETECT_AFTER, ResilientSetter, same_backend};
 
 #[cfg(target_os = "linux")]
-pub use live::{LiveBackends, open_platform, open_platform_in};
+pub use live::{LiveBackends, open_platform, open_platform_in, open_setter};
 
 /// [`ResilientSetter`]: re-detect in memory after repeated `SetError`s (plan §E, "Failure,
 /// fallback and re-detection").
@@ -27,7 +27,11 @@ mod resilient {
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::{Arc, Mutex};
 
-    use crate::api::{BackendInfo, Fit, SetError, UnconfiguredSetter, WallpaperSetter};
+    use kakemono_config::schema::{DesktopConfig, ManagedBy};
+
+    use crate::api::{
+        BackendInfo, Fit, SetError, UNCONFIGURED_HINT, UnconfiguredSetter, WallpaperSetter,
+    };
     use crate::linux::backends::persistent::Supervisor;
     use crate::linux::detect::Resolution;
 
@@ -77,6 +81,10 @@ mod resilient {
         async fn redetect(&self) -> Resolution;
         /// The setter for `resolution`.
         async fn build(&self, resolution: &Resolution) -> Result<Active, SetError>;
+        /// Resolve `desktop` the way startup does (a `reload` with a changed `[desktop]`).
+        async fn resolve(&self, desktop: &DesktopConfig) -> Resolution;
+        /// Re-detect with `desktop`'s settings from now on (after a successful rebuild).
+        fn reconfigure(&self, desktop: &DesktopConfig);
     }
 
     /// True if `a` and `b` would run the same backend the same way.
@@ -89,11 +97,16 @@ mod resilient {
     /// different backend, it retries the same `set` once with it and keeps it on success
     /// (logging a `kakemono detect --write` suggestion). Otherwise the old backend stays and
     /// the original error is returned. Nothing is written to the config.
+    ///
+    /// With `backends` it can also [`rebuild`](WallpaperSetter::rebuild) itself for a changed
+    /// `[desktop]` (Task 37b), whether or not it re-detects.
     pub struct ResilientSetter {
         current: Mutex<Arc<Active>>,
         failures: AtomicU32,
         backends: Option<Arc<dyn Backends>>,
-        /// One re-detection at a time.
+        /// Re-detect after repeated failures (`managed_by = "detect"`); needs `backends`.
+        redetect: bool,
+        /// One re-detection (or rebuild) at a time.
         switching: tokio::sync::Mutex<()>,
     }
 
@@ -102,20 +115,40 @@ mod resilient {
             f.debug_struct("ResilientSetter")
                 .field("active", &self.active())
                 .field("failures", &self.failures.load(Ordering::SeqCst))
-                .field("redetects", &self.backends.is_some())
+                .field("redetects", &(self.redetect && self.backends.is_some()))
                 .finish_non_exhaustive()
         }
     }
 
     impl ResilientSetter {
-        /// `backends: None` turns re-detection off (`managed_by = "user"`).
+        /// Re-detects with `backends`; `None` turns re-detection (and rebuilding) off.
         pub fn new(active: Active, backends: Option<Arc<dyn Backends>>) -> Self {
+            let redetect = backends.is_some();
             Self {
                 current: Mutex::new(Arc::new(active)),
                 failures: AtomicU32::new(0),
                 backends,
+                redetect,
                 switching: tokio::sync::Mutex::new(()),
             }
+        }
+
+        /// The setter `open_platform` builds: it can always rebuild for a new `[desktop]` and
+        /// re-detects only with `managed_by = "detect"`.
+        pub fn for_desktop(
+            active: Active,
+            backends: Arc<dyn Backends>,
+            desktop: &DesktopConfig,
+        ) -> Self {
+            Self {
+                redetect: desktop.managed_by == ManagedBy::Detect,
+                ..Self::new(active, Some(backends))
+            }
+        }
+
+        /// Whether repeated failures re-detect.
+        pub fn redetects(&self) -> bool {
+            self.redetect && self.backends.is_some()
         }
 
         /// The backend in use.
@@ -196,7 +229,7 @@ mod resilient {
             };
             let failures = self.failures.fetch_add(1, Ordering::SeqCst) + 1;
             match &self.backends {
-                Some(backends) if failures >= REDETECT_AFTER => {
+                Some(backends) if self.redetect && failures >= REDETECT_AFTER => {
                     self.redetect_and_retry(backends.as_ref(), active, image, fit, err)
                         .await
                 }
@@ -206,6 +239,52 @@ mod resilient {
 
         fn info(&self) -> BackendInfo {
             self.active().setter.info()
+        }
+
+        /// Resolve and build `desktop`'s backend. On failure nothing changed and this setter
+        /// stays. On success a persistent setter is handed over: the next persistent backend
+        /// shares the one [`Supervisor`] (its first `set` replaces the old process), and any
+        /// other backend gets it stopped here, so `setter.pid` never names a setter nobody
+        /// supervises.
+        async fn rebuild(
+            &self,
+            desktop: &DesktopConfig,
+        ) -> Result<Option<Arc<dyn WallpaperSetter>>, SetError> {
+            let Some(backends) = &self.backends else {
+                return Ok(None);
+            };
+            let _switching = self.switching.lock().await;
+            let resolution = backends.resolve(desktop).await;
+            if !resolution.is_usable() {
+                let hint = resolution.hint.as_deref().unwrap_or(UNCONFIGURED_HINT);
+                return Err(SetError::Unconfigured {
+                    hint: format!("{} backend: {hint}", resolution.backend),
+                });
+            }
+            let candidate = backends.build(&resolution).await?;
+            let old = self.active();
+            if candidate.supervisor.is_none()
+                && let Some(supervisor) = &old.supervisor
+            {
+                tracing::info!(
+                    old = %old.resolution.backend,
+                    new = %resolution.backend,
+                    "stopping the persistent setter for the new backend"
+                );
+                supervisor.stop().await;
+            }
+            backends.reconfigure(desktop);
+            tracing::info!(
+                old = %old.resolution.backend,
+                new = %resolution.backend,
+                reasons = ?resolution.reasons,
+                "wallpaper backend rebuilt for the new [desktop]"
+            );
+            Ok(Some(Arc::new(Self::for_desktop(
+                candidate,
+                Arc::clone(backends),
+                desktop,
+            ))))
         }
     }
 
@@ -278,6 +357,7 @@ mod resilient {
             setters: Mutex<Vec<(BackendKind, Arc<Scripted>)>>,
             redetects: Mutex<u32>,
             builds: Mutex<Vec<BackendKind>>,
+            reconfigured: Mutex<Vec<DesktopConfig>>,
         }
 
         impl FakeBackends {
@@ -317,6 +397,23 @@ mod resilient {
                     .find(|(kind, _)| *kind == resolution.backend)
                     .ok_or_else(|| SetError::Dbus("no session bus".to_owned()))?;
                 Ok(Active::new(resolution.clone(), setter.clone()))
+            }
+
+            async fn resolve(&self, desktop: &DesktopConfig) -> Resolution {
+                crate::linux::detect::resolve(&crate::linux::detect::Env::default(), desktop)
+            }
+
+            fn reconfigure(&self, desktop: &DesktopConfig) {
+                self.reconfigured.lock().unwrap().push(desktop.clone());
+            }
+        }
+
+        /// `[desktop]` pinning `backend` (no detection involved).
+        fn pinned(backend: kakemono_config::schema::Backend) -> DesktopConfig {
+            DesktopConfig {
+                backend,
+                managed_by: ManagedBy::User,
+                ..DesktopConfig::default()
             }
         }
 
@@ -461,6 +558,101 @@ mod resilient {
             assert_eq!(setter.failures(), 0);
         }
 
+        #[tokio::test]
+        async fn rebuild_switches_to_the_new_backend() {
+            use kakemono_config::schema::Backend;
+            let feh = Scripted::new("feh", 0);
+            let awww = Scripted::new("awww", 0);
+            let backends = Arc::new(FakeBackends::default());
+            backends.builds_into(BackendKind::Awww, &awww);
+            let setter = ResilientSetter::for_desktop(
+                Active::new(resolution(BackendKind::Feh), feh.clone()),
+                backends.clone(),
+                &DesktopConfig::default(),
+            );
+            assert!(setter.redetects(), "managed_by = detect by default");
+
+            let new = setter
+                .rebuild(&pinned(Backend::Awww))
+                .await
+                .unwrap()
+                .expect("a new setter");
+            assert_eq!(new.info().name, "awww");
+            new.set(img(), Fit::Fill).await.unwrap();
+            assert_eq!((feh.calls(), awww.calls()), (0, 1));
+            assert_eq!(*backends.builds.lock().unwrap(), [BackendKind::Awww]);
+            assert_eq!(
+                *backends.reconfigured.lock().unwrap(),
+                [pinned(Backend::Awww)]
+            );
+            assert_eq!(
+                setter.info().name,
+                "feh",
+                "the old setter itself is unchanged"
+            );
+        }
+
+        #[tokio::test]
+        async fn rebuild_follows_managed_by() {
+            use kakemono_config::schema::Backend;
+            let feh = Scripted::new("feh", u32::MAX);
+            let backends = Arc::new(FakeBackends::default());
+            backends.builds_into(BackendKind::Feh, &feh);
+            let setter = ResilientSetter::for_desktop(
+                Active::new(resolution(BackendKind::Feh), feh.clone()),
+                backends.clone(),
+                &pinned(Backend::Feh),
+            );
+            assert!(!setter.redetects());
+            let detect = DesktopConfig {
+                managed_by: ManagedBy::Detect,
+                ..pinned(Backend::Feh)
+            };
+            let new = setter.rebuild(&detect).await.unwrap().unwrap();
+            new.set(img(), Fit::Fill).await.unwrap_err();
+            backends.detects(resolution(BackendKind::Feh));
+            new.set(img(), Fit::Fill).await.unwrap_err();
+            assert_eq!(backends.redetects(), 1, "the rebuilt setter re-detects");
+        }
+
+        #[tokio::test]
+        async fn rebuild_that_cannot_resolve_or_build_keeps_the_old_setter() {
+            use kakemono_config::schema::Backend;
+            let feh = Scripted::new("feh", 0);
+            let backends = Arc::new(FakeBackends::default());
+            let setter = ResilientSetter::for_desktop(
+                Active::new(resolution(BackendKind::Feh), feh.clone()),
+                backends.clone(),
+                &DesktopConfig::default(),
+            );
+
+            // `backend = "command"` without `set_command` does not resolve to a usable backend.
+            let Err(err) = setter.rebuild(&pinned(Backend::Command)).await else {
+                panic!("rebuilt without a set_command");
+            };
+            assert!(matches!(err, SetError::Unconfigured { .. }), "{err:?}");
+            assert!(err.to_string().starts_with("command backend: "), "{err}");
+            assert!(backends.builds.lock().unwrap().is_empty(), "nothing built");
+
+            // KDE resolves but cannot be built (FakeBackends has no session bus).
+            let Err(err) = setter.rebuild(&pinned(Backend::Kde)).await else {
+                panic!("built KDE without a session bus");
+            };
+            assert_eq!(err.to_string(), "D-Bus: no session bus", "{err:?}");
+
+            assert!(backends.reconfigured.lock().unwrap().is_empty());
+            setter.set(img(), Fit::Fill).await.unwrap();
+            assert_eq!(feh.calls(), 1, "the old setter still works");
+        }
+
+        #[tokio::test]
+        async fn without_backends_rebuild_keeps_the_setter() {
+            let feh = Scripted::new("feh", 0);
+            let setter = setter_with(BackendKind::Feh, &feh, None);
+            let rebuilt = setter.rebuild(&DesktopConfig::default()).await.unwrap();
+            assert!(rebuilt.is_none());
+        }
+
         #[test]
         fn same_backend_compares_kind_command_and_persistence() {
             let a = resolution(BackendKind::Command);
@@ -485,7 +677,7 @@ mod live {
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
-    use kakemono_config::schema::{Backend, DesktopConfig, ManagedBy};
+    use kakemono_config::schema::{Backend, DesktopConfig};
 
     use super::backends::command::{CommandSetter, ThemeSource, render_error};
     use super::backends::gsettings::GsettingsSetter;
@@ -504,8 +696,11 @@ mod live {
     /// connection (KDE, XFCE) and the one persistent-setter [`Supervisor`] (there is a single
     /// `setter.pid`).
     pub struct LiveBackends {
-        /// `[desktop]` with `backend = "auto"` and no saved session, for re-detection.
-        redetect_cfg: DesktopConfig,
+        /// `[desktop]` with `backend = "auto"` and no saved session, for re-detection. Replaced
+        /// when a reload rebuilds the setter.
+        redetect_cfg: Mutex<DesktopConfig>,
+        /// The environment to resolve against instead of probing this session (tests).
+        fixed_env: Option<detect::Env>,
         runner: Arc<dyn CommandRunner>,
         processes: Arc<dyn ProcessControl>,
         theme: ThemeSource,
@@ -546,18 +741,29 @@ mod live {
             runtime_dir: Option<PathBuf>,
         ) -> Self {
             Self {
-                redetect_cfg: DesktopConfig {
-                    backend: Backend::Auto,
-                    detected_session: None,
-                    detected_at: None,
-                    ..cfg.clone()
-                },
+                redetect_cfg: Mutex::new(redetect_cfg(cfg)),
+                fixed_env: None,
                 runner,
                 processes,
                 theme,
                 runtime_dir,
                 session_bus: tokio::sync::OnceCell::new(),
                 supervisor: Mutex::new(None),
+            }
+        }
+
+        /// Resolve against `env` instead of probing the session (tests).
+        #[must_use]
+        pub fn with_env(mut self, env: detect::Env) -> Self {
+            self.fixed_env = Some(env);
+            self
+        }
+
+        /// The session environment: probed (with D-Bus), or the fixed one.
+        async fn env(&self) -> detect::Env {
+            match &self.fixed_env {
+                Some(env) => env.clone(),
+                None => detect::env::capture_with_dbus().await,
             }
         }
 
@@ -638,8 +844,13 @@ mod live {
     #[async_trait::async_trait]
     impl Backends for LiveBackends {
         async fn redetect(&self) -> Resolution {
-            let env = detect::env::capture_with_dbus().await;
-            let resolution = detect::resolve(&env, &self.redetect_cfg);
+            let env = self.env().await;
+            let cfg = self
+                .redetect_cfg
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            let resolution = detect::resolve(&env, &cfg);
             tracing::info!(
                 backend = %resolution.backend,
                 reasons = ?resolution.reasons,
@@ -683,6 +894,32 @@ mod live {
             };
             Ok(Active::new(resolution.clone(), setter))
         }
+
+        async fn resolve(&self, desktop: &DesktopConfig) -> Resolution {
+            let resolution = detect::resolve(&self.env().await, desktop);
+            tracing::info!(
+                backend = %resolution.backend,
+                origin = ?resolution.origin,
+                session = %resolution.session_key,
+                reasons = ?resolution.reasons,
+                "wallpaper backend for the reloaded [desktop]"
+            );
+            resolution
+        }
+
+        fn reconfigure(&self, desktop: &DesktopConfig) {
+            *self.redetect_cfg.lock().unwrap_or_else(|e| e.into_inner()) = redetect_cfg(desktop);
+        }
+    }
+
+    /// `cfg` with `backend = "auto"` and no saved session: what re-detection resolves.
+    fn redetect_cfg(cfg: &DesktopConfig) -> DesktopConfig {
+        DesktopConfig {
+            backend: Backend::Auto,
+            detected_session: None,
+            detected_at: None,
+            ..cfg.clone()
+        }
     }
 
     fn no_command(resolution: &Resolution) -> SetError {
@@ -717,7 +954,17 @@ mod live {
     pub async fn open_platform_in(cfg: &DesktopConfig, runtime_dir: Option<PathBuf>) -> Platform {
         let signals = Arc::new(LinuxSignals::start(cfg).await);
         let backends = Arc::new(LiveBackends::new(cfg, signals.theme_source(), runtime_dir));
-        let env = detect::env::capture_with_dbus().await;
+        Platform {
+            setter: Arc::new(open_setter(backends, cfg).await),
+            signals,
+        }
+    }
+
+    /// The setter for `cfg` at startup: resolve, build (or an unconfigured setter that says
+    /// why), stop a persistent setter an earlier run left if this backend replaces it, and wrap
+    /// it in a [`ResilientSetter`] that can rebuild itself on reload.
+    pub async fn open_setter(backends: Arc<LiveBackends>, cfg: &DesktopConfig) -> ResilientSetter {
+        let env = backends.env().await;
         let resolution = detect::resolve(&env, cfg);
         tracing::info!(
             backend = %resolution.backend,
@@ -728,12 +975,7 @@ mod live {
         );
         let active = backends.build_or_unconfigured(resolution).await;
         backends.stop_stale_setter_if_replaced(&active).await;
-        let redetect = (cfg.managed_by == ManagedBy::Detect)
-            .then(|| Arc::clone(&backends) as Arc<dyn Backends>);
-        Platform {
-            setter: Arc::new(ResilientSetter::new(active, redetect)),
-            signals,
-        }
+        ResilientSetter::for_desktop(active, backends, cfg)
     }
 
     #[cfg(test)]
@@ -750,11 +992,12 @@ mod live {
         use crate::linux::backends::persistent::{Record, write_record};
         use crate::linux::detect::Origin;
 
-        /// Fake process table: `comm` answers from `live`, `terminate` records and removes. No
-        /// real process is ever signalled.
+        /// Fake process table: `spawn` adds a live entry (PIDs from 1000), `comm` answers from
+        /// `live`, `terminate` records and removes. No real process is ever started or signalled.
         #[derive(Debug, Default)]
         struct FakeProcesses {
             live: StdMutex<HashMap<u32, String>>,
+            spawned: StdMutex<Vec<Vec<String>>>,
             terminated: StdMutex<Vec<u32>>,
         }
 
@@ -771,12 +1014,23 @@ mod live {
             fn terminated(&self) -> Vec<u32> {
                 self.terminated.lock().unwrap().clone()
             }
+
+            fn live_pids(&self) -> Vec<u32> {
+                let mut pids: Vec<u32> = self.live.lock().unwrap().keys().copied().collect();
+                pids.sort_unstable();
+                pids
+            }
         }
 
         #[async_trait::async_trait]
         impl ProcessControl for FakeProcesses {
-            fn spawn(&self, _argv: &[String]) -> io::Result<u32> {
-                unreachable!("these tests never spawn")
+            fn spawn(&self, argv: &[String]) -> io::Result<u32> {
+                let mut spawned = self.spawned.lock().unwrap();
+                spawned.push(argv.to_vec());
+                let pid = 999 + u32::try_from(spawned.len()).unwrap();
+                let comm = crate::linux::backends::persistent::expected_comm(&argv[0]);
+                self.live.lock().unwrap().insert(pid, comm);
+                Ok(pid)
             }
 
             fn comm(&self, pid: u32) -> Option<String> {
@@ -996,6 +1250,107 @@ mod live {
             assert!(err.unwrap_err().to_string().contains("runtime directory"));
         }
 
+        /// `[desktop]` pinning `backend` (and `set_command`), so resolving needs no session.
+        fn pinned(backend: Backend, set_command: Option<&[&str]>) -> DesktopConfig {
+            DesktopConfig {
+                backend,
+                managed_by: kakemono_config::schema::ManagedBy::User,
+                set_command: set_command.map(|argv| {
+                    kakemono_config::schema::CommandSpec::new(
+                        argv.iter().map(|s| (*s).to_owned()).collect(),
+                    )
+                    .unwrap()
+                }),
+                ..DesktopConfig::default()
+            }
+        }
+
+        /// Task 37b: a reload hands the one `Supervisor` over. Persistent → persistent: the old
+        /// process runs until the new one replaced it. Persistent → anything else: it is stopped
+        /// and `setter.pid` removed. A `[desktop]` that does not resolve changes nothing.
+        #[tokio::test]
+        async fn reload_swaps_the_persistent_setter_without_leaking_it() {
+            let dir = tempfile::tempdir().unwrap();
+            let pid_file = dir.path().join(PID_FILE);
+            let processes = FakeProcesses::with_live(&[]);
+            let runner = Arc::new(Recorder::default());
+            let live = Arc::new(
+                LiveBackends::with_parts(
+                    &DesktopConfig::default(),
+                    Arc::new(|| Theme::Light),
+                    Arc::clone(&runner) as Arc<dyn CommandRunner>,
+                    Arc::clone(&processes) as Arc<dyn ProcessControl>,
+                    Some(dir.path().to_path_buf()),
+                )
+                .with_env(detect::Env::default()),
+            );
+            let record = || crate::linux::backends::persistent::read_record(&pid_file);
+            let img = |name: &str| PathBuf::from(format!("/w/{name}"));
+
+            let swaybg: Arc<dyn WallpaperSetter> =
+                Arc::new(open_setter(Arc::clone(&live), &pinned(Backend::Swaybg, None)).await);
+            swaybg.set(&img("a.jpg"), Fit::Fill).await.unwrap();
+            let first = record().expect("setter.pid after the first set");
+            assert_eq!(first.argv[0], "swaybg");
+
+            // swaybg → wbg: nothing stops until the new setter replaced the old process.
+            let wbg = swaybg
+                .rebuild(&pinned(Backend::Wbg, None))
+                .await
+                .unwrap()
+                .expect("rebuilt");
+            assert_eq!(wbg.info().name, "wbg");
+            assert!(processes.terminated().is_empty());
+            assert_eq!(
+                record(),
+                Some(first.clone()),
+                "still names the running swaybg"
+            );
+            wbg.set(&img("b.jpg"), Fit::Fill).await.unwrap();
+            let second = record().unwrap();
+            assert_eq!(second.argv[0], "wbg");
+            assert_eq!(processes.terminated(), [first.pid]);
+            assert_eq!(processes.live_pids(), [second.pid]);
+
+            // A `[desktop]` that does not resolve: the error, and nothing stopped.
+            let Err(err) = wbg.rebuild(&pinned(Backend::Command, None)).await else {
+                panic!("rebuilt without a set_command");
+            };
+            assert!(err.to_string().starts_with("command backend: "), "{err}");
+            assert_eq!(processes.live_pids(), [second.pid]);
+            assert_eq!(record(), Some(second.clone()));
+
+            // wbg → a command: the persistent setter is stopped and setter.pid removed.
+            let command = wbg
+                .rebuild(&pinned(Backend::Command, Some(&["setbg", "{path}"])))
+                .await
+                .unwrap()
+                .expect("rebuilt");
+            assert_eq!(processes.terminated(), [first.pid, second.pid]);
+            assert!(processes.live_pids().is_empty(), "nothing leaked");
+            assert!(!pid_file.exists(), "no stale setter.pid");
+            command.set(&img("c.jpg"), Fit::Fill).await.unwrap();
+            assert_eq!(
+                runner.runs.lock().unwrap().last().unwrap(),
+                &["setbg", "/w/c.jpg"]
+            );
+            assert_eq!(command.info().detail, "setbg {path}");
+
+            // Back to swaybg: the same supervisor starts it on the next set.
+            let again = command
+                .rebuild(&pinned(Backend::Swaybg, None))
+                .await
+                .unwrap()
+                .expect("rebuilt");
+            assert!(processes.live_pids().is_empty());
+            again.set(&img("d.jpg"), Fit::Fill).await.unwrap();
+            let third = record().unwrap();
+            assert_eq!(third.argv[0], "swaybg");
+            assert_eq!(processes.live_pids(), [third.pid]);
+            assert!(again.info().detail.ends_with(" (kept running)"));
+            assert_eq!(processes.spawned.lock().unwrap().len(), 3);
+        }
+
         #[test]
         fn redetection_ignores_the_saved_backend() {
             let cfg = DesktopConfig {
@@ -1010,8 +1365,9 @@ mod live {
                 FakeProcesses::with_live(&[]),
                 None,
             );
-            assert_eq!(live.redetect_cfg.backend, Backend::Auto);
-            assert_eq!(live.redetect_cfg.detected_session, None);
+            let redetect = live.redetect_cfg.lock().unwrap().clone();
+            assert_eq!(redetect.backend, Backend::Auto);
+            assert_eq!(redetect.detected_session, None);
         }
     }
 }

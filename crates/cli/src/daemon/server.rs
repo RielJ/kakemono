@@ -342,9 +342,8 @@ impl Server {
         if cfg.daemon.socket_path != old.daemon.socket_path {
             tracing::warn!("reload: socket_path changed; restart the daemon to use it");
         }
-        if cfg.desktop != old.desktop {
-            tracing::warn!("reload: [desktop] changed; restart the daemon to use the new backend");
-        }
+        // A changed `[desktop]` rebuilds the setter inside `Engine::reload` (Task 37b); when it
+        // cannot be used, the reload fails and the old config and setter stay.
         match self.engine.reload(cfg).await {
             Ok(()) => {
                 tracing::info!("config reloaded");

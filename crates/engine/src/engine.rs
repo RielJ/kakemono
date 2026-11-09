@@ -11,7 +11,11 @@
 //!   never wait for the network (Go's single mutex made `status` wait for downloads).
 //! - `Inner::save` (`std::sync::Mutex<()>`) orders writes of `state.json`: the state is cloned
 //!   *inside* it, so the last write always holds the latest state.
-//! - Lock order: `op`, then `save`, then `snap`. Never `.await` while holding `save` or `snap`.
+//! - `Inner::setter` (`std::sync::Mutex<Arc<dyn WallpaperSetter>>`) holds the setter in use.
+//!   Ops clone the `Arc` out; it is only replaced under `op` ([`Engine::reload`] with a changed
+//!   `[desktop]`), so a `set` in flight always finishes on the setter it started with.
+//! - Lock order: `op`, then `save`, then `snap`. Never `.await` while holding `save`, `snap` or
+//!   `setter`.
 //!
 //! History only changes after `WallpaperSetter::set` succeeded (Go moved the history position
 //! first and left it moved when the set failed).
@@ -23,7 +27,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use chrono::{DateTime, FixedOffset, Local, SecondsFormat};
 use kakemono_config::Config;
-use kakemono_platform::api::{Platform, SetError, Theme};
+use kakemono_platform::api::{Platform, SetError, Theme, WallpaperSetter};
 use kakemono_platform::exec::{CommandRunner, TokioRunner};
 use kakemono_protocol::types::{StatusData, WallpaperInfo};
 use kakemono_sources::registry::Registry;
@@ -66,6 +70,10 @@ pub enum EngineError {
     /// The platform setter failed.
     #[error("manager: set wallpaper: {0}")]
     Set(#[source] SetError),
+    /// `reload` with a `[desktop]` that cannot be used (Task 37b). The old config and setter
+    /// stay.
+    #[error("[desktop]: {0}")]
+    Desktop(#[source] SetError),
     /// No provider is enabled for the current theme's sources (nor any other enabled provider).
     #[error(
         "manager: no enabled provider available (theme: {}, sources: {sources})",
@@ -96,7 +104,8 @@ pub enum EngineError {
 /// Everything the engine needs from outside. Cheap to clone.
 #[derive(Clone)]
 pub struct Deps {
-    /// The wallpaper setter and system signals (`signals.theme()` picks the sources).
+    /// The wallpaper setter and system signals (`signals.theme()` picks the sources). The
+    /// setter is the first one; `reload` may replace it ([`Engine::setter`]).
     pub platform: Platform,
     /// Shared HTTP client for providers and downloads (build with
     /// `kakemono_sources::http::client`).
@@ -178,6 +187,8 @@ pub(crate) struct Inner {
     pub(crate) save: Mutex<()>,
     pub(crate) state_path: PathBuf,
     pub(crate) deps: Deps,
+    /// The setter in use. See the module docs.
+    pub(crate) setter: Mutex<Arc<dyn WallpaperSetter>>,
     pub(crate) events: broadcast::Sender<EngineEvent>,
     /// Notified (`notify_one`, so a permit is stored when nobody waits) after every wallpaper
     /// change, pause/resume and reload. The rotation loop (Task 21) recomputes its due time.
@@ -223,6 +234,7 @@ impl Engine {
                 }),
                 save: Mutex::new(()),
                 state_path,
+                setter: Mutex::new(Arc::clone(&deps.platform.setter)),
                 deps,
                 events,
                 reset: Notify::new(),
@@ -369,12 +381,38 @@ impl Engine {
     }
 
     /// Replaces the config: creates its directories, rebuilds the registry, and wakes the
-    /// rotation loop (interval changes take effect here). Waits for a running op. On error
-    /// the old config stays.
+    /// rotation loop (interval changes take effect here). Waits for a running op.
+    ///
+    /// When `[desktop]` changed (ignoring `detected_at`), the setter is rebuilt with
+    /// [`WallpaperSetter::rebuild`] under the op lock, after every other step that can fail, so
+    /// the next apply uses the new backend. An unchanged `[desktop]` rebuilds nothing.
+    ///
+    /// All or nothing: on error ([`EngineError::Desktop`] when the new `[desktop]` cannot be
+    /// used) the old config and the old setter stay.
     pub async fn reload(&self, cfg: Config) -> Result<(), EngineError> {
         let _op = self.inner.op.lock().await;
         create_dirs(&cfg)?;
         let registry = Arc::new((self.inner.deps.registry)(&cfg, &self.inner.deps.http));
+        let old = self.config();
+        if desktop_changed(&old.desktop, &cfg.desktop) {
+            let current = self.setter();
+            match current.rebuild(&cfg.desktop).await {
+                Ok(Some(new)) => {
+                    tracing::info!(
+                        old = %current.info().name,
+                        new = %new.info().name,
+                        detail = %new.info().detail,
+                        "[desktop] changed; wallpaper setter rebuilt"
+                    );
+                    self.swap_setter(new);
+                }
+                Ok(None) => tracing::debug!("[desktop] changed; the setter does not depend on it"),
+                Err(e) => {
+                    tracing::warn!(error = %e, "[desktop] changed but cannot be used; keeping the old config and setter");
+                    return Err(EngineError::Desktop(e));
+                }
+            }
+        }
         {
             let mut snap = self.snap();
             snap.cfg = Arc::new(cfg);
@@ -382,6 +420,17 @@ impl Engine {
         }
         self.inner.reset.notify_one();
         Ok(())
+    }
+
+    /// The setter in use: the platform's, or the one the last `[desktop]` reload built.
+    pub fn setter(&self) -> Arc<dyn WallpaperSetter> {
+        Arc::clone(
+            &self
+                .inner
+                .setter
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        )
     }
 
     /// Receives every event sent after this call.
@@ -404,9 +453,13 @@ impl Engine {
         self.inner.deps.platform.signals.theme()
     }
 
-    /// The platform handed to the engine (Task 21 subscribes to `signals`).
-    pub fn platform(&self) -> &Platform {
-        &self.inner.deps.platform
+    /// The platform in use: the signals handed to the engine and the current
+    /// [`setter`](Self::setter). A snapshot; a later reload may replace the setter.
+    pub fn platform(&self) -> Platform {
+        Platform {
+            setter: self.setter(),
+            signals: Arc::clone(&self.inner.deps.platform.signals),
+        }
     }
 
     // ─── crate-internal extension points (Tasks 20–22) ─────────────────────────────────────
@@ -485,13 +538,19 @@ impl Engine {
     /// Sets `image` with the configured fit.
     async fn set_image(&self, image: &Path) -> Result<(), EngineError> {
         let fit = self.snap().cfg.desktop.fit;
-        self.inner
-            .deps
-            .platform
-            .setter
+        self.setter()
             .set(image, fit)
             .await
             .map_err(EngineError::Set)
+    }
+
+    /// Installs `setter`. Callers hold `Inner::op`.
+    fn swap_setter(&self, setter: Arc<dyn WallpaperSetter>) {
+        *self
+            .inner
+            .setter
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = setter;
     }
 
     /// After every wallpaper change: event, rotation reset, hook.
@@ -687,6 +746,20 @@ fn format_set_at(now: &DateTime<FixedOffset>) -> String {
     now.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
+/// True when `[desktop]` changed in a way the setter could depend on. `detected_at` is only a
+/// timestamp of the last detection, so a re-detection that found the same backend rebuilds
+/// nothing.
+fn desktop_changed(
+    old: &kakemono_config::DesktopConfig,
+    new: &kakemono_config::DesktopConfig,
+) -> bool {
+    let comparable = |d: &kakemono_config::DesktopConfig| kakemono_config::DesktopConfig {
+        detected_at: None,
+        ..d.clone()
+    };
+    comparable(old) != comparable(new)
+}
+
 fn create_dirs(cfg: &Config) -> Result<(), EngineError> {
     for dir in [
         &cfg.daemon.download_dir,
@@ -707,6 +780,21 @@ fn create_dirs(cfg: &Config) -> Result<(), EngineError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detected_at_alone_is_not_a_desktop_change() {
+        let old = kakemono_config::DesktopConfig::default();
+        let stamped = kakemono_config::DesktopConfig {
+            detected_at: Some(chrono::Utc::now()),
+            ..old.clone()
+        };
+        assert!(!desktop_changed(&old, &stamped));
+        let pinned = kakemono_config::DesktopConfig {
+            persistent: true,
+            ..old.clone()
+        };
+        assert!(desktop_changed(&old, &pinned));
+    }
 
     #[test]
     fn go_list_format() {

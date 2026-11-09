@@ -162,6 +162,25 @@ pub trait WallpaperSetter: Send + Sync + 'static {
     /// and on Space change when `reapply_on_space_change` is on).
     async fn set(&self, image: &Path, fit: Fit) -> Result<(), SetError>;
     fn info(&self) -> BackendInfo;
+
+    /// The setter for a changed `[desktop]` (the daemon's `reload`, Task 37b). The engine calls
+    /// it under its op lock, so no `set` on this setter is running or starts meanwhile, and only
+    /// when `[desktop]` differs from the one in use.
+    ///
+    /// - `Ok(None)`: this setter does not depend on `[desktop]` (beyond `fit`, which every `set`
+    ///   receives). Keep it. The default, and what macOS and Windows return.
+    /// - `Ok(Some(new))`: use `new` from now on. Before returning, this setter has released what
+    ///   `new` does not take over (e.g. stopped a persistent setter process), so dropping it
+    ///   leaks nothing.
+    /// - `Err`: `desktop` cannot be used. Nothing was stopped or changed; this setter stays in
+    ///   use.
+    async fn rebuild(
+        &self,
+        desktop: &kakemono_config::schema::DesktopConfig,
+    ) -> Result<Option<Arc<dyn WallpaperSetter>>, SetError> {
+        let _ = desktop;
+        Ok(None)
+    }
 }
 
 /// Reports the current theme and streams OS events.

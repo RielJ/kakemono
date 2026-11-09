@@ -1,4 +1,5 @@
-//! Test doubles for the seam (behind the `fake` feature): `RecordingSetter` and `ManualSignals`.
+//! Test doubles for the seam (behind the `fake` feature): `RecordingSetter`, `ArgvSetter` (a
+//! setter that rebuilds from `[desktop]`) and `ManualSignals`.
 //!
 //! ```
 //! # async fn demo() {
@@ -88,6 +89,110 @@ impl WallpaperSetter for RecordingSetter {
             name: "fake".to_owned(),
             detail: "RecordingSetter".to_owned(),
         }
+    }
+}
+
+/// What an [`ArgvSetter`] did, in order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ArgvEvent {
+    /// A `set` that "ran" this argv (`{path}` and `{fit}` filled in).
+    Ran(Vec<String>),
+    /// A `rebuild` that replaced the setter running `from` with one running `to`.
+    Rebuilt { from: Vec<String>, to: Vec<String> },
+}
+
+/// A command setter built from `[desktop] set_command` that records what it would run instead
+/// of running it. `rebuild` builds a new one from the new `[desktop]` (sharing the log), so it
+/// stands in for a platform whose setter depends on `[desktop]` (Linux). Clones share the log.
+#[derive(Clone, Debug)]
+pub struct ArgvSetter {
+    argv: Vec<String>,
+    log: Arc<Mutex<Vec<ArgvEvent>>>,
+}
+
+impl ArgvSetter {
+    /// A setter for `desktop.set_command`. Fails with `Unconfigured` when there is none, like a
+    /// `[desktop]` that does not resolve.
+    pub fn from_desktop(
+        desktop: &kakemono_config::schema::DesktopConfig,
+    ) -> Result<Self, SetError> {
+        Self::with_log(desktop, Arc::default())
+    }
+
+    fn with_log(
+        desktop: &kakemono_config::schema::DesktopConfig,
+        log: Arc<Mutex<Vec<ArgvEvent>>>,
+    ) -> Result<Self, SetError> {
+        let argv = desktop
+            .set_command
+            .as_ref()
+            .map(|c| c.argv().to_vec())
+            .ok_or_else(|| SetError::Unconfigured {
+                hint: "`[desktop] set_command` is empty".to_owned(),
+            })?;
+        Ok(Self { argv, log })
+    }
+
+    /// The argv template this setter runs.
+    pub fn argv(&self) -> &[String] {
+        &self.argv
+    }
+
+    /// Everything recorded so far, by this setter and every setter rebuilt from it.
+    pub fn events(&self) -> Vec<ArgvEvent> {
+        lock(&self.log).clone()
+    }
+
+    /// The argvs every `set` ran, in order.
+    pub fn runs(&self) -> Vec<Vec<String>> {
+        lock(&self.log)
+            .iter()
+            .filter_map(|e| match e {
+                ArgvEvent::Ran(argv) => Some(argv.clone()),
+                ArgvEvent::Rebuilt { .. } => None,
+            })
+            .collect()
+    }
+
+    /// How many successful `rebuild`s there were.
+    pub fn rebuilds(&self) -> usize {
+        lock(&self.log)
+            .iter()
+            .filter(|e| matches!(e, ArgvEvent::Rebuilt { .. }))
+            .count()
+    }
+}
+
+#[async_trait::async_trait]
+impl WallpaperSetter for ArgvSetter {
+    async fn set(&self, image: &Path, fit: Fit) -> Result<(), SetError> {
+        let path = image.to_string_lossy();
+        let argv = self
+            .argv
+            .iter()
+            .map(|arg| arg.replace("{path}", &path).replace("{fit}", fit.as_str()))
+            .collect();
+        lock(&self.log).push(ArgvEvent::Ran(argv));
+        Ok(())
+    }
+
+    fn info(&self) -> BackendInfo {
+        BackendInfo {
+            name: "command".to_owned(),
+            detail: self.argv.join(" "),
+        }
+    }
+
+    async fn rebuild(
+        &self,
+        desktop: &kakemono_config::schema::DesktopConfig,
+    ) -> Result<Option<Arc<dyn WallpaperSetter>>, SetError> {
+        let new = Self::with_log(desktop, Arc::clone(&self.log))?;
+        lock(&self.log).push(ArgvEvent::Rebuilt {
+            from: self.argv.clone(),
+            to: new.argv.clone(),
+        });
+        Ok(Some(Arc::new(new)))
     }
 }
 
@@ -190,6 +295,46 @@ mod tests {
         assert_eq!(rx.recv().await.unwrap(), Signal::Resumed);
         assert_eq!(rx.try_recv(), Err(TryRecvError::Empty));
         assert_eq!(dyn_signals.theme(), Theme::Dark);
+    }
+
+    #[tokio::test]
+    async fn argv_setter_records_runs_and_rebuilds() {
+        use kakemono_config::schema::{CommandSpec, DesktopConfig};
+        let desktop = |argv: &[&str]| DesktopConfig {
+            set_command: Some(
+                CommandSpec::new(argv.iter().map(|s| (*s).to_owned()).collect()).unwrap(),
+            ),
+            ..DesktopConfig::default()
+        };
+        let setter = ArgvSetter::from_desktop(&desktop(&["a", "{path}", "{fit}"])).unwrap();
+        setter.set(Path::new("/x.jpg"), Fit::Fill).await.unwrap();
+        let new = setter
+            .rebuild(&desktop(&["b", "{path}"]))
+            .await
+            .unwrap()
+            .unwrap();
+        new.set(Path::new("/y.jpg"), Fit::Fill).await.unwrap();
+        assert_eq!(new.info().detail, "b {path}");
+        assert_eq!(
+            setter.runs(),
+            [vec!["a", "/x.jpg", "fill"], vec!["b", "/y.jpg"]]
+        );
+        assert_eq!(setter.rebuilds(), 1);
+
+        let err = setter.rebuild(&DesktopConfig::default()).await;
+        assert!(matches!(err, Err(SetError::Unconfigured { .. })));
+        assert_eq!(setter.rebuilds(), 1, "a failed rebuild records nothing");
+        assert!(ArgvSetter::from_desktop(&DesktopConfig::default()).is_err());
+    }
+
+    #[tokio::test]
+    async fn setters_do_not_rebuild_by_default() {
+        let setter = RecordingSetter::new();
+        let rebuilt = setter
+            .rebuild(&kakemono_config::schema::DesktopConfig::default())
+            .await
+            .unwrap();
+        assert!(rebuilt.is_none());
     }
 
     #[test]
