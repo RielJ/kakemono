@@ -349,17 +349,131 @@ async fn completions_and_unavailable_commands() {
     assert_eq!(out.code, 0);
     assert!(out.stdout.contains("#compdef kakemono"));
 
-    let mut cmd = isolated_cmd(&root);
-    cmd.args(["pick"]);
-    let out = run(cmd).await;
-    assert_eq!(out.code, 1);
-    assert_eq!(
-        out.stderr,
-        "`kakemono pick` is not available in this build yet\n"
-    );
-
     // No subcommand: help on stderr, usage exit code.
     let out = run(isolated_cmd(&root)).await;
     assert_eq!(out.code, 2);
     assert!(out.stderr.contains("Usage: kakemono"), "{}", out.stderr);
+}
+
+// ── pick / settings (Task 46) ───────────────────────────────────────────────
+
+/// `kakemono pick` with no UI anywhere it looks: a copy of the binary in a temp dir (so
+/// `kakemono-ui` beside the real target dir is not found), an empty `PATH` and no
+/// `KAKEMONO_UI`. Never launches anything.
+#[tokio::test]
+async fn pick_missing_ui_hint() {
+    let installed = std::path::Path::new("/Applications/kakemono.app/Contents/MacOS");
+    if cfg!(target_os = "macos") && installed.join("kakemono-ui").exists() {
+        eprintln!("skipped: an installed kakemono.app would be launched");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let bin = root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(root.join("empty")).unwrap();
+    let exe = bin.join(format!("kakemono{}", std::env::consts::EXE_SUFFIX));
+    std::fs::copy(assert_cmd::cargo::cargo_bin("kakemono"), &exe).unwrap();
+
+    let isolated = isolated_cmd(&root);
+    let mut cmd = Command::new(&exe);
+    for (key, value) in isolated.get_envs() {
+        match value {
+            Some(value) => cmd.env(key, value),
+            None => cmd.env_remove(key),
+        };
+    }
+    cmd.current_dir(&root)
+        .env("PATH", root.join("empty"))
+        .env_remove("KAKEMONO_UI")
+        .arg("pick");
+    let out = run(cmd).await;
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    let stderr = out.stderr.replace(root.to_str().unwrap(), "[ROOT]");
+    assert!(
+        stderr.contains("cannot find kakemono-ui (the kakemono tray, picker and settings app)"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("  [ROOT]/bin\n"), "{stderr}");
+    assert!(
+        stderr.contains(
+            "Install the kakemono app, put kakemono-ui on your PATH, or set KAKEMONO_UI to its path."
+        ),
+        "{stderr}"
+    );
+}
+
+#[tokio::test]
+async fn ui_override_that_is_not_a_file_is_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let mut cmd = isolated_cmd(&root);
+    cmd.env("KAKEMONO_UI", root.join("nope")).arg("settings");
+    let out = run(cmd).await;
+    assert_eq!(out.code, 1);
+    assert_eq!(
+        out.stderr.replace(root.to_str().unwrap(), "[ROOT]"),
+        "KAKEMONO_UI is set to [ROOT]/nope, which is not a file; unset it or point it at the \
+         kakemono-ui binary\n"
+    );
+}
+
+/// The real binary launches a fake `kakemono-ui` (a shell script named by `KAKEMONO_UI`) that
+/// records its argv and the forwarded variables, then exits. No real UI or daemon runs.
+#[cfg(unix)]
+#[tokio::test]
+async fn pick_and_settings_launch_the_ui_with_the_page_flag() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let record = root.join("argv.txt");
+    let fake = root.join("fake-ui");
+    std::fs::write(
+        &fake,
+        format!(
+            "#!/bin/sh\nprintf '%s|%s|%s\\n' \"$*\" \"$KAKEMONO_CONFIG\" \"$KAKEMONO_SOCKET\" \
+             > '{0}.tmp'\nmv '{0}.tmp' '{0}'\n",
+            record.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let launch = |args: &[&str]| {
+        let mut cmd = isolated_cmd(&root);
+        cmd.env("KAKEMONO_UI", &fake).args(args);
+        cmd
+    };
+    let recorded = || async {
+        for _ in 0..100 {
+            if let Ok(text) = std::fs::read_to_string(&record) {
+                std::fs::remove_file(&record).unwrap();
+                return text.replace(root.to_str().unwrap(), "[ROOT]");
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("the fake UI never ran");
+    };
+
+    let out = run(launch(&["pick"])).await;
+    assert_eq!(
+        (out.code, out.stdout.as_str(), out.stderr.as_str()),
+        (0, "", "")
+    );
+    assert_eq!(recorded().await, "--picker|[ROOT]/config.toml|\n");
+
+    let out = run(launch(&[
+        "--socket",
+        "run/k.sock",
+        "--config",
+        "other.toml",
+        "settings",
+    ]))
+    .await;
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        recorded().await,
+        "--settings|[ROOT]/other.toml|[ROOT]/run/k.sock\n"
+    );
 }

@@ -8,6 +8,8 @@ import {
   saveConfig,
   selectDirectory,
   setFile,
+  setStartAtLogin,
+  startDaemon,
   trashWallpaper,
 } from './api'
 
@@ -28,6 +30,32 @@ function recordIPC(reply: (cmd: string) => unknown = () => null): Call[] {
 afterEach(() => clearMocks())
 
 describe('shared/api', () => {
+  it('starts the daemon through ensure_daemon', async () => {
+    const calls = recordIPC(() => true)
+    await expect(startDaemon()).resolves.toBe(true)
+    expect(calls).toEqual([{ cmd: 'ensure_daemon', args: {} }])
+  })
+
+  it('sends set_start_at_login with `enabled` and returns the state read back', async () => {
+    const items = {
+      enabled: true,
+      service: { installed: true, running: true, path: '/p.plist' },
+      ui_autostart: true,
+    }
+    const calls = recordIPC(() => items)
+    await expect(setStartAtLogin(true)).resolves.toEqual(items)
+    expect(calls).toEqual([{ cmd: 'set_start_at_login', args: { enabled: true } }])
+  })
+
+  it('shows the CLI stderr from a failed lifecycle command', async () => {
+    mockIPC(() => {
+      throw { kind: 'cli_failed', message: '`kakemono service install` failed: denied' }
+    })
+    const err: unknown = await setStartAtLogin(true).catch((e: unknown) => e)
+    expect(errorMessage(err)).toBe('`kakemono service install` failed: denied')
+    expect(isDaemonNotRunning(err)).toBe(false)
+  })
+
   it('sends set_file with the path', async () => {
     const calls = recordIPC()
     await setFile('/tmp/a.jpg')

@@ -1,7 +1,7 @@
 /**
  * Frontend API surface. Every call goes to the Tauri backend (`crates/ui/src-tauri`) with
  * `invoke`, or to a Tauri plugin (dialog, opener). Command names and argument shapes match
- * `src-tauri/src/commands.rs` and `picker.rs`; see `.pi/contracts/ui.md`.
+ * `src-tauri/src/commands.rs`, `picker.rs` and `lifecycle.rs`; see `.pi/contracts/ui.md`.
  *
  * Config and status types are generated from Rust by ts-rs (`./bindings`); do not redeclare
  * them here.
@@ -58,9 +58,24 @@ export interface AppInfo {
   version: string
 }
 
-/** How a backend command fails (`CommandError` in `commands.rs`). */
+/**
+ * How a backend command fails: `CommandError` in `commands.rs`, plus the `LifecycleError`
+ * kinds from `lifecycle.rs` (`cli_*`, `autostart`). For `cli_failed` the message carries the
+ * CLI's stderr.
+ */
 export interface CommandError {
-  kind: 'daemon_not_running' | 'daemon' | 'config' | 'invalid' | 'io' | 'opener' | 'internal'
+  kind:
+    | 'daemon_not_running'
+    | 'daemon'
+    | 'config'
+    | 'invalid'
+    | 'io'
+    | 'opener'
+    | 'internal'
+    | 'cli_not_found'
+    | 'cli_failed'
+    | 'cli_output'
+    | 'autostart'
   message: string
 }
 
@@ -157,9 +172,43 @@ export function daemonRunning(): Promise<boolean> {
   return invoke<boolean>('daemon_running')
 }
 
-/** Starts `kakemono daemon`; resolves to whether it answers within about 3 s. */
+/**
+ * Starts the daemon unless it answers (`kakemono daemon`, which refuses a second one).
+ * Resolves to `true` once it answers; rejects with the CLI's stderr when it cannot start.
+ */
 export function startDaemon(): Promise<boolean> {
-  return invoke<boolean>('start_daemon')
+  return invoke<boolean>('ensure_daemon')
+}
+
+// ── Start at login ──────────────────────────────────────────────────────────
+
+/** `kakemono service status --json`. */
+export interface ServiceStatus {
+  installed: boolean
+  running: boolean
+  /** Where the unit or plist lives (set even when not installed); `null` where there is no file (Windows). */
+  path: string | null
+}
+
+/** Both halves of "Start at login" (`start_at_login` in `lifecycle.rs`). */
+export interface LoginItems {
+  /** On only when the daemon service is installed and the UI starts at login. */
+  enabled: boolean
+  service: ServiceStatus
+  ui_autostart: boolean
+}
+
+export function getStartAtLogin(): Promise<LoginItems> {
+  return invoke<LoginItems>('start_at_login')
+}
+
+/**
+ * Installs or removes the daemon's login service and the UI's autostart entry together. A
+ * change that fails halfway is undone; the rejection carries the reason. Resolves to the state
+ * read back afterwards.
+ */
+export function setStartAtLogin(enabled: boolean): Promise<LoginItems> {
+  return invoke<LoginItems>('set_start_at_login', { enabled })
 }
 
 // ── Native dialogs, the file manager and the browser ────────────────────────

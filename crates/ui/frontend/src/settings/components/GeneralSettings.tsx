@@ -3,6 +3,7 @@ import { openFolder, selectDirectory } from '../../shared/api'
 import { fileManagerName } from '../sections'
 import type { ConfigErrors } from '../validate'
 import { Group, Row } from './Group'
+import StartAtLogin from './StartAtLogin'
 import Toggle from './Toggle'
 
 interface Props {
@@ -82,6 +83,10 @@ export default function GeneralSettings({ config, onChange, errors, appInfo, onR
 
   return (
     <div className="space-y-6 max-w-2xl">
+      <Group title="Startup">
+        <StartAtLogin />
+      </Group>
+
       <Group title="Rotation">
         <Row label="Change wallpaper automatically" hint="Rotate on a timer.">
           {({ labelId, hintId }) => (

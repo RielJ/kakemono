@@ -4,10 +4,13 @@
 //! Startup is tray-only: no window opens unless asked for (`--settings`, `--picker`, the
 //! tray menu, or a Linux session without a tray host). Closing the last window keeps the
 //! app alive; only Quit exits.
+//!
+//! At startup the UI starts the daemon when it does not answer ([`lifecycle`]).
 
 pub mod commands;
 pub mod daemon_link;
 pub mod events;
+pub mod lifecycle;
 pub mod picker;
 pub mod picker_place;
 pub mod thumbs;
@@ -70,7 +73,9 @@ pub fn run() -> anyhow::Result<()> {
             commands::thumbnails,
             commands::doctor,
             commands::daemon_running,
-            commands::start_daemon,
+            lifecycle::ensure_daemon,
+            lifecycle::start_at_login,
+            lifecycle::set_start_at_login,
             commands::reveal,
             commands::open_url,
             commands::app_info,
@@ -111,8 +116,10 @@ fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Live updates; its own connection, never the shared link.
-    let endpoint = app.state::<Arc<DaemonLink>>().endpoint().clone();
-    events::spawn(&handle, endpoint);
+    let link = app.state::<Arc<DaemonLink>>().inner().clone();
+    events::spawn(&handle, link.endpoint().clone());
+    // Start the daemon if nothing answers; the live-update task connects once it is up.
+    lifecycle::spawn_at_startup(link);
 
     // Pre-create the picker hidden so showing it is instant.
     if let Err(err) = picker::create(&handle) {

@@ -295,8 +295,8 @@ fn dispatch(ctx: &Context, command: Commands) -> anyhow::Result<()> {
         Commands::Open { folder, favorites } => {
             block_on(commands::open::run(ctx, out, folder, favorites))
         }
-        Commands::Pick => not_available("pick"), // Task 46
-        Commands::Settings => not_available("settings"), // Task 46
+        Commands::Pick => commands::pick::run(ctx, out),
+        Commands::Settings => commands::settings::run(ctx, out),
         Commands::Detect { .. } => not_available("detect"), // Task 37
         Commands::Doctor { .. } => not_available("doctor"), // Task 37
         Commands::Service { .. } => not_available("service"), // Task 39
