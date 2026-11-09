@@ -135,7 +135,12 @@ mod tests {
     // `host()` itself takes over the main thread on macOS/Windows, so only exercise it on Linux.
     #[cfg(target_os = "linux")]
     #[test]
+    #[ignore = "runs the real Linux open_platform against this session; also needs KAKEMONO_REAL_DESKTOP_TEST=1"]
     fn host_runs_f_on_linux() {
+        if std::env::var_os("KAKEMONO_REAL_DESKTOP_TEST").is_none_or(|v| v != "1") {
+            eprintln!("skipped: set KAKEMONO_REAL_DESKTOP_TEST=1");
+            return;
+        }
         host(&DesktopConfig::default(), |p| async move {
             let _ = p.setter.info();
             Ok(())
