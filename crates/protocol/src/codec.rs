@@ -5,7 +5,7 @@ use std::io;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serde_json::ser::{CharEscape, Formatter};
+use serde_json::ser::{CharEscape, Formatter, PrettyFormatter};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// Longest accepted line, excluding the trailing `\n`.
@@ -99,6 +99,75 @@ pub fn to_string_go<T: Serialize + ?Sized>(value: &T) -> serde_json::Result<Stri
     String::from_utf8(bytes).map_err(|e| serde::ser::Error::custom(e.to_string()))
 }
 
+/// Serialises like Go's `json.MarshalIndent(v, "", "  ")`: two-space indent, `": "` after keys,
+/// no trailing newline, empty arrays/objects as `[]`/`{}`, and the same escaping as
+/// [`to_vec_go`]. Used for `status --json` and `state.json`.
+pub fn to_vec_go_pretty<T: Serialize + ?Sized>(value: &T) -> serde_json::Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(256);
+    let mut ser = serde_json::Serializer::with_formatter(&mut out, GoPrettyFormatter::new());
+    value.serialize(&mut ser)?;
+    Ok(out)
+}
+
+/// [`to_vec_go_pretty`] as a `String`.
+pub fn to_string_go_pretty<T: Serialize + ?Sized>(value: &T) -> serde_json::Result<String> {
+    let bytes = to_vec_go_pretty(value)?;
+    String::from_utf8(bytes).map_err(|e| serde::ser::Error::custom(e.to_string()))
+}
+
+/// Go's HTML-safe string escaping, shared by both formatters.
+fn write_go_string_fragment<W>(writer: &mut W, fragment: &str) -> io::Result<()>
+where
+    W: ?Sized + io::Write,
+{
+    let mut start = 0;
+    for (i, c) in fragment.char_indices() {
+        let esc: &[u8] = match c {
+            '<' => b"\\u003c",
+            '>' => b"\\u003e",
+            '&' => b"\\u0026",
+            '\u{2028}' => b"\\u2028",
+            '\u{2029}' => b"\\u2029",
+            _ => continue,
+        };
+        writer.write_all(&fragment.as_bytes()[start..i])?;
+        writer.write_all(esc)?;
+        start = i + c.len_utf8();
+    }
+    writer.write_all(&fragment.as_bytes()[start..])
+}
+
+/// Go's control-character escapes. Same as serde_json's default, which already matches Go 1.22+
+/// (`\b`, `\f`, lowercase `\u00xx`). Spelled out so a serde_json change cannot drift silently.
+fn write_go_char_escape<W>(writer: &mut W, char_escape: CharEscape) -> io::Result<()>
+where
+    W: ?Sized + io::Write,
+{
+    let s: &[u8] = match char_escape {
+        CharEscape::Quote => b"\\\"",
+        CharEscape::ReverseSolidus => b"\\\\",
+        CharEscape::Solidus => b"\\/",
+        CharEscape::Backspace => b"\\b",
+        CharEscape::FormFeed => b"\\f",
+        CharEscape::LineFeed => b"\\n",
+        CharEscape::CarriageReturn => b"\\r",
+        CharEscape::Tab => b"\\t",
+        CharEscape::AsciiControl(byte) => {
+            const HEX: &[u8; 16] = b"0123456789abcdef";
+            let buf = [
+                b'\\',
+                b'u',
+                b'0',
+                b'0',
+                HEX[usize::from(byte >> 4)],
+                HEX[usize::from(byte & 0xF)],
+            ];
+            return writer.write_all(&buf);
+        }
+    };
+    writer.write_all(s)
+}
+
 struct GoFormatter;
 
 impl Formatter for GoFormatter {
@@ -106,52 +175,79 @@ impl Formatter for GoFormatter {
     where
         W: ?Sized + io::Write,
     {
-        let mut start = 0;
-        for (i, c) in fragment.char_indices() {
-            let esc: &[u8] = match c {
-                '<' => b"\\u003c",
-                '>' => b"\\u003e",
-                '&' => b"\\u0026",
-                '\u{2028}' => b"\\u2028",
-                '\u{2029}' => b"\\u2029",
-                _ => continue,
-            };
-            writer.write_all(&fragment.as_bytes()[start..i])?;
-            writer.write_all(esc)?;
-            start = i + c.len_utf8();
-        }
-        writer.write_all(&fragment.as_bytes()[start..])
+        write_go_string_fragment(writer, fragment)
     }
 
     fn write_char_escape<W>(&mut self, writer: &mut W, char_escape: CharEscape) -> io::Result<()>
     where
         W: ?Sized + io::Write,
     {
-        // Same as serde_json's default, which already matches Go 1.22+ (`\b`, `\f`,
-        // lowercase `\u00xx`). Spelled out so a serde_json change cannot drift silently.
-        let s: &[u8] = match char_escape {
-            CharEscape::Quote => b"\\\"",
-            CharEscape::ReverseSolidus => b"\\\\",
-            CharEscape::Solidus => b"\\/",
-            CharEscape::Backspace => b"\\b",
-            CharEscape::FormFeed => b"\\f",
-            CharEscape::LineFeed => b"\\n",
-            CharEscape::CarriageReturn => b"\\r",
-            CharEscape::Tab => b"\\t",
-            CharEscape::AsciiControl(byte) => {
-                const HEX: &[u8; 16] = b"0123456789abcdef";
-                let buf = [
-                    b'\\',
-                    b'u',
-                    b'0',
-                    b'0',
-                    HEX[usize::from(byte >> 4)],
-                    HEX[usize::from(byte & 0xF)],
-                ];
-                return writer.write_all(&buf);
-            }
-        };
-        writer.write_all(s)
+        write_go_char_escape(writer, char_escape)
+    }
+}
+
+/// serde_json's two-space pretty printer plus Go's escaping.
+struct GoPrettyFormatter {
+    inner: PrettyFormatter<'static>,
+}
+
+impl GoPrettyFormatter {
+    fn new() -> Self {
+        Self {
+            inner: PrettyFormatter::with_indent(b"  "),
+        }
+    }
+}
+
+impl Formatter for GoPrettyFormatter {
+    fn begin_array<W: ?Sized + io::Write>(&mut self, w: &mut W) -> io::Result<()> {
+        self.inner.begin_array(w)
+    }
+    fn end_array<W: ?Sized + io::Write>(&mut self, w: &mut W) -> io::Result<()> {
+        self.inner.end_array(w)
+    }
+    fn begin_array_value<W: ?Sized + io::Write>(
+        &mut self,
+        w: &mut W,
+        first: bool,
+    ) -> io::Result<()> {
+        self.inner.begin_array_value(w, first)
+    }
+    fn end_array_value<W: ?Sized + io::Write>(&mut self, w: &mut W) -> io::Result<()> {
+        self.inner.end_array_value(w)
+    }
+    fn begin_object<W: ?Sized + io::Write>(&mut self, w: &mut W) -> io::Result<()> {
+        self.inner.begin_object(w)
+    }
+    fn end_object<W: ?Sized + io::Write>(&mut self, w: &mut W) -> io::Result<()> {
+        self.inner.end_object(w)
+    }
+    fn begin_object_key<W: ?Sized + io::Write>(
+        &mut self,
+        w: &mut W,
+        first: bool,
+    ) -> io::Result<()> {
+        self.inner.begin_object_key(w, first)
+    }
+    fn begin_object_value<W: ?Sized + io::Write>(&mut self, w: &mut W) -> io::Result<()> {
+        self.inner.begin_object_value(w)
+    }
+    fn end_object_value<W: ?Sized + io::Write>(&mut self, w: &mut W) -> io::Result<()> {
+        self.inner.end_object_value(w)
+    }
+    fn write_string_fragment<W: ?Sized + io::Write>(
+        &mut self,
+        w: &mut W,
+        fragment: &str,
+    ) -> io::Result<()> {
+        write_go_string_fragment(w, fragment)
+    }
+    fn write_char_escape<W: ?Sized + io::Write>(
+        &mut self,
+        w: &mut W,
+        char_escape: CharEscape,
+    ) -> io::Result<()> {
+        write_go_char_escape(w, char_escape)
     }
 }
 
@@ -243,5 +339,27 @@ mod tests {
             r#""a\u003cb\u003e\u0026c\u2028\u2029\"\\/\n\r\t\b\f\u0001\u001f"#.to_owned()
                 + "\u{7f}é\""
         );
+    }
+
+    #[test]
+    fn pretty_matches_go_marshal_indent() {
+        let v = serde_json::json!({
+            "b": [1, {"x": "<&>"}],
+            "a": {},
+            "c": [],
+            "d": null,
+            "e": "\u{2028}\t"
+        });
+        let got = to_string_go_pretty(&v).unwrap();
+        // Go: json.MarshalIndent(v, "", "  ") with v a map[string]any.
+        let want = "{\n  \"a\": {},\n  \"b\": [\n    1,\n    {\n      \"x\": \"\\u003c\\u0026\\u003e\"\n    }\n  ],\n  \"c\": [],\n  \"d\": null,\n  \"e\": \"\\u2028\\t\"\n}";
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn pretty_status_fixture_round_trips_byte_for_byte() {
+        let fixture = include_str!("../tests/fixtures/status_json.txt");
+        let v: serde_json::Value = serde_json::from_str(fixture).unwrap();
+        assert_eq!(to_string_go_pretty(&v).unwrap(), fixture.trim_end());
     }
 }

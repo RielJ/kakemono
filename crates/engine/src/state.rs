@@ -21,7 +21,6 @@ use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, TimeZone, Timelike
 use kakemono_config::paths::Paths;
 use kakemono_protocol::types::WallpaperInfo;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::ser::{Formatter, PrettyFormatter};
 
 /// Maximum number of history entries kept. Older entries are dropped first.
 pub const MAX_HISTORY: usize = 100;
@@ -174,10 +173,7 @@ impl State {
 
     /// Serialises like Go's `json.MarshalIndent(s, "", "  ")`.
     pub fn to_json_bytes(&self) -> serde_json::Result<Vec<u8>> {
-        let mut out = Vec::with_capacity(256 + self.history.len() * 256);
-        let mut ser = serde_json::Serializer::with_formatter(&mut out, GoPrettyFormatter::new());
-        self.serialize(&mut ser)?;
-        Ok(out)
+        kakemono_protocol::codec::to_vec_go_pretty(self)
     }
 
     /// Appends `info` and makes it current, stamping `last_changed` with `now`.
@@ -425,76 +421,6 @@ pub fn format_go_time<Tz: TimeZone>(t: &DateTime<Tz>) -> Result<String, String> 
         out.push_str(&format!("{sign}{:02}:{:02}", mins / 60, mins % 60));
     }
     Ok(out)
-}
-
-// ---------------------------------------------------------------------------------------------
-// Go `json.MarshalIndent` formatting.
-
-/// serde_json's two-space pretty printer plus Go's HTML-safe string escaping.
-struct GoPrettyFormatter {
-    inner: PrettyFormatter<'static>,
-}
-
-impl GoPrettyFormatter {
-    fn new() -> Self {
-        Self {
-            inner: PrettyFormatter::with_indent(b"  "),
-        }
-    }
-}
-
-impl Formatter for GoPrettyFormatter {
-    fn begin_array<W: ?Sized + Write>(&mut self, w: &mut W) -> io::Result<()> {
-        self.inner.begin_array(w)
-    }
-    fn end_array<W: ?Sized + Write>(&mut self, w: &mut W) -> io::Result<()> {
-        self.inner.end_array(w)
-    }
-    fn begin_array_value<W: ?Sized + Write>(&mut self, w: &mut W, first: bool) -> io::Result<()> {
-        self.inner.begin_array_value(w, first)
-    }
-    fn end_array_value<W: ?Sized + Write>(&mut self, w: &mut W) -> io::Result<()> {
-        self.inner.end_array_value(w)
-    }
-    fn begin_object<W: ?Sized + Write>(&mut self, w: &mut W) -> io::Result<()> {
-        self.inner.begin_object(w)
-    }
-    fn end_object<W: ?Sized + Write>(&mut self, w: &mut W) -> io::Result<()> {
-        self.inner.end_object(w)
-    }
-    fn begin_object_key<W: ?Sized + Write>(&mut self, w: &mut W, first: bool) -> io::Result<()> {
-        self.inner.begin_object_key(w, first)
-    }
-    fn begin_object_value<W: ?Sized + Write>(&mut self, w: &mut W) -> io::Result<()> {
-        self.inner.begin_object_value(w)
-    }
-    fn end_object_value<W: ?Sized + Write>(&mut self, w: &mut W) -> io::Result<()> {
-        self.inner.end_object_value(w)
-    }
-
-    fn write_string_fragment<W: ?Sized + Write>(
-        &mut self,
-        w: &mut W,
-        fragment: &str,
-    ) -> io::Result<()> {
-        let mut start = 0;
-        for (i, c) in fragment.char_indices() {
-            let esc: &[u8] = match c {
-                '<' => b"\\u003c",
-                '>' => b"\\u003e",
-                '&' => b"\\u0026",
-                '\u{2028}' => b"\\u2028",
-                '\u{2029}' => b"\\u2029",
-                _ => continue,
-            };
-            w.write_all(&fragment.as_bytes()[start..i])?;
-            w.write_all(esc)?;
-            start = i + c.len_utf8();
-        }
-        w.write_all(&fragment.as_bytes()[start..])
-    }
-    // `write_char_escape`: serde_json's default already matches Go 1.22+ (`\b`, `\f`,
-    // lowercase `\u00xx`); the protocol crate's `to_vec_go` tests pin that behaviour.
 }
 
 // ---------------------------------------------------------------------------------------------
