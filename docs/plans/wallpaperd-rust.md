@@ -563,7 +563,7 @@ Ranked by likelihood × impact.
      - `status_json.txt` (output of `json.MarshalIndent` with two-space indent)
      - `go_default_template.toml` (from `config.InitConfig` into a temp dir)
   4. Copy the inline JSON and HTML fixture strings from `internal/providers/*/…_test.go` into `crates/sources/tests/fixtures/<provider>/`.
-- **Automated verification:** `go run ./tools/goldens && go test ./... && git status --porcelain | grep -c fixtures`
+- **Automated verification:** `go run ./tools/goldens && go test ./... && bash tools/goldens/replay.sh && git status --porcelain --untracked-files=all | grep -c fixtures`
 - **Manual verification:** none
 
 ## Task 2: Cargo workspace skeleton, pinned deps, CI, stub modules
