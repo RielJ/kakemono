@@ -20,6 +20,9 @@ ignore = [
     { id = "RUSTSEC-2026-0370", reason = "zvariant via dark-light -> zbus 5; no upgrade available" },
     { id = "RUSTSEC-2026-0371", reason = "zbus_names via dark-light -> zbus 5; no upgrade available" },
     { id = "RUSTSEC-2026-0372", reason = "zvariant_derive via dark-light -> zbus 5; no upgrade available" },
+    # Tauri 2 on Linux uses the gtk-rs 0.18 (GTK3) stack, whose glib-macros needs proc-macro-error.
+    # Compile-time only, unmaintained not vulnerable; goes away when Tauri moves to GTK4.
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error via tauri -> gtk 0.18 (Linux); compile-time only, no upgrade" },
 ]
 
 [licenses]

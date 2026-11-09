@@ -1,5 +1,4 @@
-# Stable, at least 1.90 (std File::try_lock is 1.89; tauri-plugin-positioner needs 1.90).
-# The floor is enforced by `rust-version` in Cargo.toml.
+# Latest stable (no Rust LTS). Floor 1.99: AtomicUsize::try_update; enforced by `rust-version` in Cargo.toml.
 [toolchain]
 channel = "stable"
 components = ["rustfmt", "clippy"]
