@@ -21,7 +21,7 @@ describe('commitTrash', () => {
     const trash = vi.fn().mockResolvedValue(undefined)
     const out = await commitTrash('/w/a.jpg', { getStatus: async () => status('/w/a.jpg'), trash })
     expect(out).toEqual({ kind: 'trashed' })
-    expect(trash).toHaveBeenCalledOnce()
+    expect(trash).toHaveBeenCalledExactlyOnceWith('/w/a.jpg')
   })
 
   it('does not trash a wallpaper that rotated in during the undo window', async () => {

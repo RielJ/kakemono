@@ -223,9 +223,11 @@ pub async fn resume<R: Runtime>(
     Ok(())
 }
 
+/// `trash { expected }`: with a path, the daemon trashes only if that is still the current
+/// wallpaper (checked under its op lock), else it fails and trashes nothing.
 #[tauri::command]
-pub async fn trash(link: State<'_, Arc<DaemonLink>>) -> CmdResult<()> {
-    simple(&link, Request::Trash).await
+pub async fn trash(link: State<'_, Arc<DaemonLink>>, expected: Option<String>) -> CmdResult<()> {
+    simple(&link, Request::Trash { expected }).await
 }
 
 /// `favorite { path }`: `null` favourites the current wallpaper through the daemon; a path

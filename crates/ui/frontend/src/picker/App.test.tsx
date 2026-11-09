@@ -213,7 +213,8 @@ describe('trash with undo', () => {
     expect(screen.getByRole('status').textContent).toContain('Moved to Trash')
     expect(api.trashWallpaper).not.toHaveBeenCalled()
     await act(() => vi.advanceTimersByTimeAsync(4000))
-    expect(api.trashWallpaper).toHaveBeenCalledOnce()
+    // The daemon re-checks the path atomically (Task 45b).
+    expect(api.trashWallpaper).toHaveBeenCalledExactlyOnceWith('/w/b.jpg')
   })
 
   it('Undo restores it and never trashes', async () => {

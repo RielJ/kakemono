@@ -229,7 +229,10 @@ mod golden {
                 path: "/tmp/x.png".into(),
             },
             Request::Favorite,
-            Request::Trash,
+            Request::Trash { expected: None },
+            Request::Trash {
+                expected: Some("/tmp/x.png".into()),
+            },
             Request::Pause,
             Request::Resume,
             Request::Status,
@@ -245,6 +248,51 @@ mod golden {
             let back: Command = serde_json::from_str(&json).expect("parse");
             assert_eq!(Request::try_from(back), Ok(req));
         }
+    }
+
+    /// New in Rust: `trash` with `expected` (Task 45b). Fixture written by hand, not by Go.
+    #[test]
+    fn golden_command_trash_expected() {
+        let cmd: Command = round_trip_file("command_trash_expected.json");
+        assert_eq!(
+            Request::try_from(cmd.clone()),
+            Ok(Request::Trash {
+                expected: Some("/Users/golden/Pictures/mountain & lake.jpg".into())
+            })
+        );
+        assert_go_bytes::<Command>(
+            "command_trash_expected.json",
+            read("command_trash_expected.json").trim_end(),
+        );
+        // Request -> Command writes the same args back.
+        assert_eq!(Command::from(Request::try_from(cmd.clone()).unwrap()), cmd);
+    }
+
+    #[test]
+    fn golden_trash_expected_absent_null_or_empty_means_no_check() {
+        for json in [
+            r#"{"cmd":"trash"}"#,
+            r#"{"cmd":"trash","args":null}"#,
+            r#"{"cmd":"trash","args":{"expected":null}}"#,
+            r#"{"cmd":"trash","args":{"expected":""}}"#,
+        ] {
+            let cmd: Command = serde_json::from_str(json).expect("parse");
+            assert_eq!(
+                Request::try_from(cmd),
+                Ok(Request::Trash { expected: None }),
+                "{json}"
+            );
+        }
+        // No `args` written for the unchecked form: same bytes as Go's `{"cmd":"trash"}`.
+        let line =
+            serde_json::to_string(&Command::from(Request::Trash { expected: None })).unwrap();
+        assert_eq!(line, r#"{"cmd":"trash"}"#);
+        let bad: Command =
+            serde_json::from_str(r#"{"cmd":"trash","args":{"expected":7}}"#).unwrap();
+        assert_eq!(
+            Request::try_from(bad).unwrap_err().to_string(),
+            "trash: argument 'expected' must be a string"
+        );
     }
 
     #[test]

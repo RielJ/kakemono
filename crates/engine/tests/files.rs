@@ -291,6 +291,60 @@ mod files {
     }
 
     #[tokio::test]
+    async fn trash_expected_a_stale_path_fails_and_moves_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let next_image = dir.path().join("next.png");
+        fs::write(&next_image, b"next").unwrap();
+        let f = fixture(local_registry(&next_image), 0, |root| {
+            let src = root.join("downloads").join("bad.jpg");
+            fs::write(&src, b"bad").unwrap();
+            state_with(&[&src])
+        });
+        let current = f.downloads().join("bad.jpg");
+
+        let err = f
+            .engine
+            .trash_expected(Some("/elsewhere/old.jpg"))
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "manager: current wallpaper changed: expected /elsewhere/old.jpg, current {}",
+                current.display()
+            )
+        );
+        assert!(current.exists(), "nothing may move");
+        assert!(names(&f.trash()).is_empty());
+        assert!(f.setter.calls().is_empty(), "no next after a refused trash");
+        assert_eq!(f.engine.status().history_count, 1);
+    }
+
+    #[tokio::test]
+    async fn trash_expected_the_current_path_trashes_as_before() {
+        let dir = tempfile::tempdir().unwrap();
+        let next_image = dir.path().join("next.png");
+        fs::write(&next_image, b"next").unwrap();
+        let f = fixture(local_registry(&next_image), 0, |root| {
+            let src = root.join("downloads").join("bad.jpg");
+            fs::write(&src, b"bad").unwrap();
+            state_with(&[&src])
+        });
+        let current = f.downloads().join("bad.jpg");
+
+        let info = f
+            .engine
+            .trash_expected(Some(current.to_str().unwrap()))
+            .await
+            .unwrap();
+
+        assert!(!current.exists(), "source must move");
+        assert_eq!(fs::read(f.trash().join("bad.jpg")).unwrap(), b"bad");
+        assert_eq!(Path::new(&info.path), next_image);
+    }
+
+    #[tokio::test]
     async fn trash_of_a_missing_file_fails_and_does_not_rotate() {
         let dir = tempfile::tempdir().unwrap();
         let next_image = dir.path().join("next.png");

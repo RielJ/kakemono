@@ -116,7 +116,7 @@ fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
         Action::Next => send(app, Request::Next),
         Action::Prev => send(app, Request::Prev),
         Action::Favorite => send(app, Request::Favorite),
-        Action::Trash => send(app, Request::Trash),
+        Action::Trash => send(app, Request::Trash { expected: None }),
         Action::TogglePause => toggle_pause(app.clone()),
         Action::ShowPicker => show_window(app, Page::Picker),
         Action::Settings => show_window(app, Page::Settings),

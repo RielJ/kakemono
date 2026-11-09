@@ -53,6 +53,9 @@ pub enum EngineError {
     /// `favorite`/`trash` with no current wallpaper.
     #[error("manager: no current wallpaper")]
     NoCurrent,
+    /// `trash` with an `expected` path that isn't the current wallpaper (Task 45b).
+    #[error("manager: current wallpaper changed: expected {expected}, current {current}")]
+    NotCurrent { expected: String, current: String },
     /// `prev` at the oldest history entry (or with empty history).
     #[error("manager: already at the beginning of history")]
     AtStart,
@@ -296,10 +299,26 @@ impl Engine {
     /// Moves the current wallpaper to `[daemon] trash_dir` (Task 20), then runs `next` under
     /// the same lock (Go released its lock in between).
     pub async fn trash(&self) -> Result<WallpaperInfo, EngineError> {
+        self.trash_expected(None).await
+    }
+
+    /// [`Engine::trash`], but with `Some(path)` only if the current wallpaper is still `path`.
+    /// The check runs under the op lock, so no rotation can slip in between; a mismatch
+    /// returns [`EngineError::NotCurrent`] and trashes nothing.
+    pub async fn trash_expected(
+        &self,
+        expected: Option<&str>,
+    ) -> Result<WallpaperInfo, EngineError> {
         let _op = self.inner.op.lock().await;
         let (current, dir) = {
             let snap = self.snap();
             let current = snap.state.current().ok_or(EngineError::NoCurrent)?;
+            if let Some(expected) = expected.filter(|e| *e != current.path) {
+                return Err(EngineError::NotCurrent {
+                    expected: expected.to_owned(),
+                    current: current.path.clone(),
+                });
+            }
             (
                 PathBuf::from(&current.path),
                 snap.cfg.daemon.trash_dir.clone(),

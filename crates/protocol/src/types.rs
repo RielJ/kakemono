@@ -60,7 +60,12 @@ pub enum Request {
         path: String,
     },
     Favorite,
-    Trash,
+    /// Trash the current wallpaper and advance. New, optional: with `expected`, the daemon
+    /// trashes only if the current path still equals it (checked under its op lock), else it
+    /// answers `ok:false` and trashes nothing. Wire: `args.expected`, omitted when `None`.
+    Trash {
+        expected: Option<String>,
+    },
     Pause,
     Resume,
     Status,
@@ -82,7 +87,7 @@ impl Request {
             Self::Prev => "prev",
             Self::Set { .. } => "set",
             Self::Favorite => "favorite",
-            Self::Trash => "trash",
+            Self::Trash { .. } => "trash",
             Self::Pause => "pause",
             Self::Resume => "resume",
             Self::Status => "status",
@@ -104,6 +109,9 @@ pub enum RequestError {
     /// `set` with no `path`, a non-string `path`, or `""`.
     #[error("set: missing required argument 'path'")]
     MissingPath,
+    /// `trash` with an `expected` that is neither a string nor `null`.
+    #[error("trash: argument 'expected' must be a string")]
+    InvalidExpected,
 }
 
 impl TryFrom<Command> for Request {
@@ -118,7 +126,14 @@ impl TryFrom<Command> for Request {
                 _ => return Err(RequestError::MissingPath),
             },
             "favorite" => Self::Favorite,
-            "trash" => Self::Trash,
+            // Missing, `null` or `""` = no check, so Go clients and fixtures parse unchanged.
+            "trash" => match cmd.args.get("expected") {
+                None | Some(Value::Null) => Self::Trash { expected: None },
+                Some(Value::String(p)) => Self::Trash {
+                    expected: (!p.is_empty()).then(|| p.clone()),
+                },
+                Some(_) => return Err(RequestError::InvalidExpected),
+            },
             "pause" => Self::Pause,
             "resume" => Self::Resume,
             "status" => Self::Status,
@@ -134,8 +149,16 @@ impl TryFrom<Command> for Request {
 impl From<Request> for Command {
     fn from(req: Request) -> Self {
         let mut out = Command::new(req.name());
-        if let Request::Set { path } = req {
-            out.args.insert("path".into(), Value::String(path));
+        match req {
+            Request::Set { path } => {
+                out.args.insert("path".into(), Value::String(path));
+            }
+            Request::Trash {
+                expected: Some(path),
+            } => {
+                out.args.insert("expected".into(), Value::String(path));
+            }
+            _ => {}
         }
         out
     }

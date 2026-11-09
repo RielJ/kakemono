@@ -1,7 +1,15 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { errorMessage, favoriteWallpaper, isDaemonNotRunning, saveConfig, selectDirectory, setFile } from './api'
+import {
+  errorMessage,
+  favoriteWallpaper,
+  isDaemonNotRunning,
+  saveConfig,
+  selectDirectory,
+  setFile,
+  trashWallpaper,
+} from './api'
 
 interface Call {
   cmd: string
@@ -30,6 +38,16 @@ describe('shared/api', () => {
     const calls = recordIPC()
     await favoriteWallpaper()
     expect(calls).toEqual([{ cmd: 'favorite', args: { path: null } }])
+  })
+
+  it('sends trash with the expected path, or null for no check', async () => {
+    const calls = recordIPC()
+    await trashWallpaper('/w/a.jpg')
+    await trashWallpaper()
+    expect(calls).toEqual([
+      { cmd: 'trash', args: { expected: '/w/a.jpg' } },
+      { cmd: 'trash', args: { expected: null } },
+    ])
   })
 
   it('maps a cancelled directory dialog to an empty string', async () => {

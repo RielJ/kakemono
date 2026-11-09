@@ -8,7 +8,7 @@ use crate::cli::Context;
 use crate::output;
 
 pub async fn run(ctx: &Context, out: &mut dyn Write) -> anyhow::Result<()> {
-    let response = ctx.call(Request::Trash).await?;
+    let response = ctx.call(Request::Trash { expected: None }).await?;
     writeln!(out, "🗑  Wallpaper trashed.  Switching to next…")?;
     // The daemon auto-advances after trash; the response carries the new wallpaper. As Go, an
     // undecodable payload is skipped silently.

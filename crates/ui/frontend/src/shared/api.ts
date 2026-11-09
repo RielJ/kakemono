@@ -122,8 +122,12 @@ export function favoriteWallpaper(path?: string): Promise<void> {
   return invoke<void>('favorite', { path: path ?? null })
 }
 
-export function trashWallpaper(): Promise<void> {
-  return invoke<void>('trash')
+/**
+ * Trashes the current wallpaper. With `expected`, the daemon trashes only if that path is
+ * still current and rejects otherwise (atomic; Task 45b).
+ */
+export function trashWallpaper(expected?: string): Promise<void> {
+  return invoke<void>('trash', { expected: expected ?? null })
 }
 
 export function pauseWallpaper(): Promise<void> {

@@ -278,7 +278,9 @@ impl Server {
                 Ok(()) => Response::ok(),
                 Err(e) => Response::err(e),
             },
-            Request::Trash => data(self.engine.trash().await),
+            Request::Trash { expected } => {
+                data(self.engine.trash_expected(expected.as_deref()).await)
+            }
             Request::Pause => {
                 self.engine.pause();
                 Response::ok()

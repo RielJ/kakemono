@@ -239,8 +239,27 @@ async fn every_command_through_client() {
     assert!(r.error.starts_with("reload: "), "{}", r.error);
     assert_eq!(d.engine.config().daemon.interval, "10m");
 
+    // trash with a stale `expected` is refused and moves nothing (Task 45b).
+    let status: StatusData = ok_data(&c.request(Request::Status).await.unwrap());
+    let current = status.current.unwrap().path;
+    let r = c
+        .request(Request::Trash {
+            expected: Some("/not/the/current.jpg".into()),
+        })
+        .await
+        .unwrap();
+    assert!(!r.ok);
+    assert_eq!(
+        r.error,
+        format!(
+            "manager: current wallpaper changed: expected /not/the/current.jpg, current {current}"
+        )
+    );
+    assert!(Path::new(&current).exists());
+
     // trash moves the current image away and advances.
-    let trashed: WallpaperInfo = ok_data(&c.request(Request::Trash).await.unwrap());
+    let trashed: WallpaperInfo =
+        ok_data(&c.request(Request::Trash { expected: None }).await.unwrap());
     assert_eq!(trashed.source, "local");
     assert!(!Path::new(&first.path).exists() || trashed.path == first.path);
 
