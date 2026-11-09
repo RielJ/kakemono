@@ -29,6 +29,20 @@ pub const BACKOFF: [Duration; 3] = [
 /// returned to the caller, so a rotation tick never stalls for an hour.
 pub const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
 
+/// Query parameters whose values are secrets (API keys, client ids, tokens). [`redact_url`]
+/// replaces their values; matching ignores ASCII case.
+pub const SECRET_QUERY_PARAMS: [&str; 6] = [
+    "apikey",
+    "api_key",
+    "client_id",
+    "access_key",
+    "key",
+    "token",
+];
+
+/// What [`redact_url`] puts in place of a secret query value.
+pub const REDACTED: &str = "REDACTED";
+
 /// The shared client: [`USER_AGENT`] and a [`TIMEOUT`] total timeout.
 ///
 /// Build it once and clone it (a `Client` is an `Arc`); providers take it in their constructor.
@@ -61,15 +75,16 @@ pub async fn get_with_retry(
 /// - A `Retry-After` above [`MAX_RETRY_AFTER`] stops retrying.
 /// - When retries run out or stop, the last 429/503 response is returned as `Ok`, so the
 ///   provider maps the status to its own message (e.g. APOD's rate-limit text).
-/// - Transport errors are returned at once, without retry.
+/// - Transport errors are returned at once, without retry, with their URL passed through
+///   [`redact_url`].
 /// - A request whose body cannot be cloned (a stream) is sent once.
 pub async fn send_with_retry(request: RequestBuilder) -> Result<Response, reqwest::Error> {
     let mut retry = 0;
     loop {
         let Some(attempt) = request.try_clone() else {
-            return request.send().await;
+            return request.send().await.map_err(redact_error);
         };
-        let response = attempt.send().await?;
+        let response = attempt.send().await.map_err(redact_error)?;
         if !is_retryable(response.status()) {
             return Ok(response);
         }
@@ -82,7 +97,7 @@ pub async fn send_with_retry(request: RequestBuilder) -> Result<Response, reqwes
             None => *backoff,
         };
         tracing::debug!(
-            url = %response.url(),
+            url = %redact_url(response.url()),
             status = response.status().as_u16(),
             ?delay,
             retry = retry + 1,
@@ -128,9 +143,55 @@ pub fn url_with_query(base: &str, params: &[(&str, &str)]) -> Result<url::Url, u
     Ok(url)
 }
 
+/// `url` with the value of every [`SECRET_QUERY_PARAMS`] parameter replaced by [`REDACTED`].
+/// Other parameters keep their order and values. A URL without a secret parameter is returned
+/// unchanged; one with a secret has its query re-encoded (`form_urlencoded`, so a space shows
+/// as `+`). For log lines and error texts only, never for requests.
+pub fn redact_url(url: &url::Url) -> url::Url {
+    let is_secret = |k: &str| {
+        SECRET_QUERY_PARAMS
+            .iter()
+            .any(|s| s.eq_ignore_ascii_case(k))
+    };
+    if !url.query_pairs().any(|(k, _)| is_secret(&k)) {
+        return url.clone();
+    }
+    let pairs: Vec<(String, String)> = url
+        .query_pairs()
+        .map(|(k, v)| {
+            let v = if is_secret(&k) {
+                REDACTED.to_owned()
+            } else {
+                v.into_owned()
+            };
+            (k.into_owned(), v)
+        })
+        .collect();
+    let mut redacted = url.clone();
+    redacted.query_pairs_mut().clear().extend_pairs(pairs);
+    redacted
+}
+
+/// `err` with the URL its `Display` shows passed through [`redact_url`]. Errors without a URL,
+/// or whose URL has no secret, are returned as is.
+pub fn redact_error(err: reqwest::Error) -> reqwest::Error {
+    let redacted = match err.url() {
+        Some(url) => {
+            let redacted = redact_url(url);
+            if &redacted == url {
+                return err;
+            }
+            redacted
+        }
+        None => return err,
+    };
+    err.with_url(redacted)
+}
+
 /// Reads the body of `response` and decodes it as JSON.
 ///
-/// Body-read failures become [`ProviderError::Request`] and parse failures
+/// Body-read failures (URL redacted, see [`redact_error`]) become [`ProviderError::Request`] and
+/// parse failures
 /// [`ProviderError::Decode`], both prefixed with `context`. The status is not checked: do that
 /// first, since providers word status errors differently.
 pub async fn read_json<T: DeserializeOwned>(
@@ -140,17 +201,17 @@ pub async fn read_json<T: DeserializeOwned>(
     let body = response
         .bytes()
         .await
-        .map_err(|e| ProviderError::request(context, e))?;
+        .map_err(|e| ProviderError::request(context, redact_error(e)))?;
     serde_json::from_slice(&body).map_err(|e| ProviderError::decode(context, e))
 }
 
-/// Reads the body of `response` as text (for HTML scraping). Failures become
+/// Reads the body of `response` as text (for HTML scraping). Failures (URL redacted) become
 /// [`ProviderError::Request`] prefixed with `context`.
 pub async fn read_text(response: Response, context: &str) -> Result<String, ProviderError> {
     response
         .text()
         .await
-        .map_err(|e| ProviderError::request(context, e))
+        .map_err(|e| ProviderError::request(context, redact_error(e)))
 }
 
 #[cfg(test)]
@@ -230,6 +291,48 @@ mod tests {
         );
         let bare = url_with_query("https://x.test/a", &[]).unwrap();
         assert_eq!(bare.as_str(), "https://x.test/a");
+    }
+
+    #[test]
+    fn redact_url_blanks_every_secret_param() {
+        let url = url::Url::parse(
+            "https://api.unsplash.com/photos/random?client_id=s3cret&count=5&query=red+sky\
+             &apikey=a&api_key=b&access_key=c&key=d&token=e&Client_ID=f",
+        )
+        .unwrap();
+        let redacted = redact_url(&url);
+        assert_eq!(
+            redacted.as_str(),
+            "https://api.unsplash.com/photos/random?client_id=REDACTED&count=5&query=red+sky\
+             &apikey=REDACTED&api_key=REDACTED&access_key=REDACTED&key=REDACTED&token=REDACTED\
+             &Client_ID=REDACTED"
+        );
+        assert!(!redacted.as_str().contains("s3cret"));
+    }
+
+    #[test]
+    fn redact_url_without_secret_is_unchanged() {
+        let url = url::Url::parse("https://x.test/a?q=a%20b&monkey=1&keys=2").unwrap();
+        assert_eq!(redact_url(&url), url);
+        assert_eq!(
+            redact_url(&url).as_str(),
+            "https://x.test/a?q=a%20b&monkey=1&keys=2"
+        );
+    }
+
+    #[tokio::test]
+    async fn transport_error_url_is_redacted() {
+        let port = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        let url = format!("http://127.0.0.1:{port}/p?client_id=s3cret&page=1");
+        let err = get_with_retry(&client_builder().build().unwrap(), url)
+            .await
+            .unwrap_err();
+        let text = format!("{err} {err:?}");
+        assert!(!text.contains("s3cret"), "{text}");
+        assert!(text.contains("client_id=REDACTED&page=1"), "{text}");
     }
 
     #[test]
