@@ -1,0 +1,44 @@
+{
+  "go_test": "bing_test.go TestBingFetch_ParsesJSON",
+  "provider": "bing",
+  "config": {
+    "enabled": true,
+    "market": "en-US"
+  },
+  "query": "",
+  "routes": [
+    {
+      "method": "GET",
+      "host": "www.bing.com",
+      "path": "/HPImageArchive.aspx",
+      "status": 200,
+      "content_type": "application/json",
+      "body_file": "parses_json.json"
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "url": "https://www.bing.com/HPImageArchive.aspx?format=js\u0026idx=0\u0026n=8\u0026mkt=en-US",
+      "user_agent": "Go-http-client/1.1"
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "source_url": "",
+        "image_url": "https://www.bing.com/th?id=OHR.SomePic_UHD.jpg",
+        "title": "Beautiful Landscape",
+        "author": "© Photographer",
+        "source": "bing"
+      },
+      {
+        "source_url": "",
+        "image_url": "https://www.bing.com/th?id=OHR.AnotherPic_UHD.jpg",
+        "title": "City Lights",
+        "author": "© Another",
+        "source": "bing"
+      }
+    ]
+  }
+}

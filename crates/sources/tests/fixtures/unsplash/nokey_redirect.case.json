@@ -1,0 +1,38 @@
+{
+  "go_test": "synthesised (unsplash.go has no tests)",
+  "provider": "unsplash",
+  "config": {
+    "access_key": "",
+    "enabled": true
+  },
+  "query": "ocean waves",
+  "routes": [
+    {
+      "method": "HEAD",
+      "host": "source.unsplash.com",
+      "path": "/random/3840x2160/ocean+waves",
+      "status": 302,
+      "headers": {
+        "Location": "https://images.unsplash.com/photo-zzz999?ixid=nokey\u0026w=3840"
+      }
+    }
+  ],
+  "requests": [
+    {
+      "method": "HEAD",
+      "url": "https://source.unsplash.com/random/3840x2160/ocean+waves",
+      "user_agent": "wallpaperd/1.0"
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "source_url": "https://unsplash.com",
+        "image_url": "https://images.unsplash.com/photo-zzz999?ixid=nokey\u0026w=3840",
+        "title": "",
+        "author": "",
+        "source": "unsplash"
+      }
+    ]
+  }
+}

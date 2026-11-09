@@ -1,0 +1,31 @@
+{
+  "go_test": "reddit_test.go TestReddit_HTTPError",
+  "provider": "reddit",
+  "config": {
+    "enabled": true,
+    "subreddits": [
+      "EarthPorn"
+    ]
+  },
+  "query": "",
+  "routes": [
+    {
+      "method": "GET",
+      "host": "www.reddit.com",
+      "path": "/r/EarthPorn/hot.json",
+      "status": 403,
+      "content_type": "text/plain; charset=utf-8",
+      "body_file": "forbidden.txt"
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "url": "https://www.reddit.com/r/EarthPorn/hot.json?limit=100",
+      "user_agent": "wallpaperd/1.0"
+    }
+  ],
+  "expected": {
+    "error": "reddit: unexpected status 403"
+  }
+}

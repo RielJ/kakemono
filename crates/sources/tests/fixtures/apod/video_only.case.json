@@ -1,0 +1,29 @@
+{
+  "go_test": "synthesised (apod.go has no tests)",
+  "provider": "apod",
+  "config": {
+    "api_key": "DEMO_KEY",
+    "enabled": true
+  },
+  "query": "",
+  "routes": [
+    {
+      "method": "GET",
+      "host": "api.nasa.gov",
+      "path": "/planetary/apod",
+      "status": 200,
+      "content_type": "application/json",
+      "body_file": "video_only.json"
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "url": "https://api.nasa.gov/planetary/apod?api_key=DEMO_KEY\u0026count=5",
+      "user_agent": "wallpaperd/1.0"
+    }
+  ],
+  "expected": {
+    "results": []
+  }
+}

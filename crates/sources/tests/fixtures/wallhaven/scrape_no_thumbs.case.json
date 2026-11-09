@@ -1,0 +1,32 @@
+{
+  "go_test": "wallhaven_test.go TestWallhavenScrape_NoThumbs",
+  "provider": "wallhaven",
+  "config": {
+    "api_key": "",
+    "categories": "",
+    "enabled": true,
+    "purity": "100",
+    "sorting": "random"
+  },
+  "query": "",
+  "routes": [
+    {
+      "method": "GET",
+      "host": "wallhaven.cc",
+      "path": "/search",
+      "status": 200,
+      "content_type": "text/html",
+      "body_file": "scrape_no_thumbs.html"
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "url": "https://wallhaven.cc/search?categories=111\u0026purity=100\u0026sorting=random",
+      "user_agent": "wallpaperd/1.0"
+    }
+  ],
+  "expected": {
+    "results": []
+  }
+}

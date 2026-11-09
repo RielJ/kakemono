@@ -1,0 +1,39 @@
+{
+  "go_test": "reddit_test.go TestReddit_WebpIncluded",
+  "provider": "reddit",
+  "config": {
+    "enabled": true,
+    "subreddits": [
+      "wallpapers"
+    ]
+  },
+  "query": "",
+  "routes": [
+    {
+      "method": "GET",
+      "host": "www.reddit.com",
+      "path": "/r/wallpapers/hot.json",
+      "status": 200,
+      "content_type": "application/json",
+      "body_file": "webp_included.json"
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "url": "https://www.reddit.com/r/wallpapers/hot.json?limit=100",
+      "user_agent": "wallpaperd/1.0"
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "source_url": "https://www.reddit.com/r/w/comments/abc/img/",
+        "image_url": "https://example.com/image.webp",
+        "title": "webp image",
+        "author": "user1",
+        "source": "reddit"
+      }
+    ]
+  }
+}

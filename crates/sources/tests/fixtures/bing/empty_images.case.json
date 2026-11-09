@@ -1,0 +1,29 @@
+{
+  "go_test": "bing_test.go TestBingFetch_EmptyImages",
+  "provider": "bing",
+  "config": {
+    "enabled": true,
+    "market": "en-US"
+  },
+  "query": "",
+  "routes": [
+    {
+      "method": "GET",
+      "host": "www.bing.com",
+      "path": "/HPImageArchive.aspx",
+      "status": 200,
+      "content_type": "application/json",
+      "body_file": "empty_images.json"
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "url": "https://www.bing.com/HPImageArchive.aspx?format=js\u0026idx=0\u0026n=8\u0026mkt=en-US",
+      "user_agent": "Go-http-client/1.1"
+    }
+  ],
+  "expected": {
+    "error": "bing: no images returned from API"
+  }
+}

@@ -1,0 +1,6 @@
+{"cmd":"pause"}
+{"cmd":"status"}
+
+  {"cmd" : "resume"}  
+{"cmd":"bogus"}
+{"cmd":"status"}

@@ -1,0 +1,49 @@
+[daemon]
+  rotation_enabled = true
+  interval = "30m"
+  download_dir = "/home/golden/Pictures/Wallpapers/cache"
+  cache_size = 50
+  trash_dir = "/home/golden/Pictures/Wallpapers/trash"
+  socket_path = "/home/golden/.config/wallpaperd/daemon.sock"
+
+[wallhaven]
+  enabled = false
+  api_key = ""
+  purity = "100"
+  sorting = "random"
+  categories = "111"
+
+[unsplash]
+  enabled = false
+  access_key = ""
+
+[reddit]
+  enabled = false
+  subreddits = ["EarthPorn", "wallpapers"]
+
+[bing]
+  enabled = true
+  market = "en-US"
+
+[apod]
+  enabled = false
+  api_key = "DEMO_KEY"
+
+[local]
+  enabled = false
+  dirs = []
+  recursive = true
+
+[light]
+  sources = ["bing"]
+  queries = ["landscape", "nature"]
+
+[dark]
+  sources = ["bing"]
+  queries = ["space", "night", "dark"]
+
+[favorites]
+  dir = "/home/golden/Pictures/Wallpapers/favorites"
+
+[picker]
+  position = "bottom"
