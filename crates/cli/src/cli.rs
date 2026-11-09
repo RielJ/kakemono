@@ -159,7 +159,11 @@ pub enum ServiceAction {
     /// Stop and remove the login service
     Uninstall,
     /// Show whether the login service is installed and running
-    Status,
+    Status {
+        /// Print {"installed":bool,"running":bool,"path":string|null}
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Subcommand)]
@@ -299,7 +303,7 @@ fn dispatch(ctx: &Context, command: Commands) -> anyhow::Result<()> {
         Commands::Settings => commands::settings::run(ctx, out),
         Commands::Detect { .. } => not_available("detect"), // Task 37
         Commands::Doctor { .. } => not_available("doctor"), // Task 37
-        Commands::Service { .. } => not_available("service"), // Task 39
+        Commands::Service { action } => commands::service::run(ctx, out, action),
     }
 }
 

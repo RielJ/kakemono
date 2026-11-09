@@ -1,0 +1,23 @@
+---
+source: crates/platform/tests/service.rs
+expression: "argvs(&runner, tmp.path())"
+---
+[
+  [
+    "systemctl",
+    "--user",
+    "daemon-reload"
+  ],
+  [
+    "systemctl",
+    "--user",
+    "enable",
+    "kakemono.service"
+  ],
+  [
+    "systemctl",
+    "--user",
+    "restart",
+    "kakemono.service"
+  ]
+]

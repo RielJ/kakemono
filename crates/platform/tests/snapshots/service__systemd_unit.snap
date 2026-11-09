@@ -1,0 +1,17 @@
+---
+source: crates/platform/tests/service.rs
+expression: "systemd::unit(Path::new(\"/home/u/.local/bin/kakemono\"))"
+---
+[Unit]
+Description=kakemono wallpaper daemon
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/home/u/.local/bin/kakemono daemon -f
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target
