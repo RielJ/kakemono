@@ -838,6 +838,7 @@ Ranked by likelihood × impact.
 - **Files owned:** `crates/cli/src/daemon/server.rs`, `crates/cli/src/daemon/lock.rs`, `crates/cli/tests/server.rs`
 - **Depends on:** Tasks 4, 21, 22
 - **Mode:** sequential
+- **Legacy config socket (found in Task 40 smoke run):** a config loaded through the legacy fallback (`ConfigSource::Legacy`) usually has `socket_path = "~/.config/wallpaperd/daemon.sock"` copied from the Go template. If kakemono honoured it, kakemono and a still-running Go daemon would fight over one socket. Rule: when the config source is `Legacy` and `socket_path` equals the Go default, ignore it and use kakemono's default endpoint. Log one info line. Daemon, CLI client and UI all resolve the endpoint through one shared function so they agree. Put it in `kakemono-config` (e.g. `Config::effective_socket_path(&ConfigSource)`), with a test.
 - **Steps:**
   1. `lock::acquire(runtime_dir) -> Result<LockGuard, AlreadyRunning>` uses `File::try_lock`.
   2. Server: unlink the stale socket only after the lock is held. Accept loop; one task per connection; dispatch the typed `Request` onto `Engine`.
