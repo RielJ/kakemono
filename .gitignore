@@ -18,3 +18,6 @@ coverage.out
 
 # OS / editor
 .DS_Store
+
+# Tauri sidecar staged by scripts/build-sidecar.sh (Task 47)
+crates/ui/src-tauri/binaries/
