@@ -7,6 +7,8 @@
 
 pub mod commands;
 pub mod daemon_link;
+pub mod picker;
+pub mod picker_place;
 pub mod tray;
 pub mod windows;
 
@@ -30,6 +32,8 @@ pub fn page_from_args<S: AsRef<str>>(args: &[S]) -> Option<Page> {
 /// Runs the app until Quit.
 pub fn run() -> anyhow::Result<()> {
     init_tracing();
+    // Before Tauri starts: may re-exec under XWayland (`[picker] force_x11`).
+    picker::relaunch_under_x11_if_asked();
 
     let link = Arc::new(DaemonLink::from_environment()?);
     tracing::info!(endpoint = %link.endpoint(), "daemon endpoint");
@@ -46,6 +50,7 @@ pub fn run() -> anyhow::Result<()> {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(link)
+        .manage(picker::PickerState::detect())
         .invoke_handler(tauri::generate_handler![
             commands::get_config,
             commands::save_config,
@@ -64,6 +69,9 @@ pub fn run() -> anyhow::Result<()> {
             commands::reveal,
             commands::open_url,
             commands::app_info,
+            picker::show_picker,
+            picker::hide_picker,
+            picker::reset_picker_position,
         ])
         .setup(setup)
         .build(tauri::generate_context!())?;
@@ -94,6 +102,11 @@ fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
             "no StatusNotifierWatcher on the session bus; running without a tray icon \
              (on GNOME install the AppIndicator extension)"
         );
+    }
+
+    // Pre-create the picker hidden so showing it is instant.
+    if let Err(err) = picker::create(&handle) {
+        tracing::error!(error = %err, "cannot create the picker window");
     }
 
     let argv: Vec<String> = std::env::args().collect();

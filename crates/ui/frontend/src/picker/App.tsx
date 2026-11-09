@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import ThumbnailStrip from './components/ThumbnailStrip'
-import { closeWindow, getConfig } from '../shared/api'
+import { getConfig, hidePicker } from '../shared/api'
 
 export type PickerPosition = 'bottom' | 'top' | 'left' | 'right'
 
@@ -17,31 +17,12 @@ export default function App() {
       .catch(() => {})
   }, [])
 
+  // Hiding on blur is handled in Rust (`picker.rs`, honours `[picker] close_on_blur`).
   useEffect(() => {
-    // Close when window loses focus (click outside)
-    // Delay enabling blur detection to avoid closing immediately on launch
-    let active = false
-    const timer = setTimeout(() => {
-      active = true
-    }, 800)
-
-    const onBlur = () => {
-      if (active) {
-        void closeWindow()
-      }
-    }
-    window.addEventListener('blur', onBlur)
-    return () => {
-      clearTimeout(timer)
-      window.removeEventListener('blur', onBlur)
-    }
-  }, [])
-
-  useEffect(() => {
-    // Close on Escape key
+    // Close on Escape key. `hide_picker` also saves a dragged position.
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        void closeWindow()
+        void hidePicker()
       }
     }
     window.addEventListener('keydown', onKey)

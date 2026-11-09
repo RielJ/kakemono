@@ -1,12 +1,14 @@
 //! Opening the two webview windows on demand.
 //!
-//! The app starts with no windows (`tauri.conf.json` `app.windows` is empty). Each page is
-//! built the first time it is asked for and shown again afterwards. Task 43 replaces the
-//! picker part with a pre-created, positioned window (`picker.rs`).
+//! The settings window is built the first time it is asked for and shown again afterwards.
+//! The picker is pre-created hidden at startup and placed on every show (`picker.rs`).
 
 use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
-/// Window label and app_id/class of the picker. Compositor window rules match on it.
+use crate::picker;
+
+/// Window label of the picker. Also its title, which compositor window rules match
+/// (`picker::TITLE`).
 pub const PICKER_LABEL: &str = "kakemono-picker";
 /// Window label of the settings window.
 pub const SETTINGS_LABEL: &str = "settings";
@@ -35,36 +37,34 @@ impl Page {
     }
 }
 
-/// Shows the page's window, creating it on first use, and focuses it.
+/// Shows the page's window and focuses it. Settings is created on first use; the picker is
+/// placed by [`picker::show`].
 pub fn show<R: Runtime>(app: &AppHandle<R>, page: Page) -> tauri::Result<WebviewWindow<R>> {
-    let window = match app.get_webview_window(page.label()) {
-        Some(window) => window,
-        None => build(app, page)?,
-    };
-    window.show()?;
-    window.unminimize()?;
-    window.set_focus()?;
-    Ok(window)
+    match page {
+        Page::Picker => picker::show(app),
+        Page::Settings => {
+            let window = match app.get_webview_window(SETTINGS_LABEL) {
+                Some(window) => window,
+                None => build_settings(app)?,
+            };
+            window.show()?;
+            window.unminimize()?;
+            window.set_focus()?;
+            Ok(window)
+        }
+    }
 }
 
-fn build<R: Runtime>(app: &AppHandle<R>, page: Page) -> tauri::Result<WebviewWindow<R>> {
-    let builder =
-        WebviewWindowBuilder::new(app, page.label(), WebviewUrl::App(page.entry().into()));
-    let builder = match page {
-        Page::Settings => builder
-            .title("kakemono Settings")
-            .inner_size(760.0, 560.0)
-            .min_inner_size(640.0, 440.0)
-            .center(),
-        Page::Picker => builder
-            .title("kakemono Picker")
-            .inner_size(900.0, 168.0)
-            .decorations(false)
-            .resizable(false)
-            .always_on_top(true)
-            .skip_taskbar(true)
-            .visible_on_all_workspaces(true)
-            .center(),
-    };
-    builder.visible(false).build()
+fn build_settings<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWindow<R>> {
+    WebviewWindowBuilder::new(
+        app,
+        SETTINGS_LABEL,
+        WebviewUrl::App(Page::Settings.entry().into()),
+    )
+    .title("kakemono Settings")
+    .inner_size(760.0, 560.0)
+    .min_inner_size(640.0, 440.0)
+    .center()
+    .visible(false)
+    .build()
 }
