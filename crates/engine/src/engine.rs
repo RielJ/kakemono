@@ -179,6 +179,7 @@ pub(crate) struct Inner {
     /// Notified (`notify_one`, so a permit is stored when nobody waits) after every wallpaper
     /// change, pause/resume and reload. The rotation loop (Task 21) recomputes its due time.
     pub(crate) reset: Notify,
+    pub(crate) hooks: crate::hooks::HookSlots,
 }
 
 /// The wallpaper engine. Cheap to clone; clones share everything.
@@ -222,6 +223,7 @@ impl Engine {
                 deps,
                 events,
                 reset: Notify::new(),
+                hooks: crate::hooks::HookSlots::default(),
             }),
         })
     }
