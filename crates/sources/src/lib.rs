@@ -13,3 +13,6 @@ pub mod reddit;
 pub mod registry;
 pub mod unsplash;
 pub mod wallhaven;
+
+pub use download::{DownloadError, download, is_image_file, sanitize_filename};
+pub use provider::{Provider, ProviderError, WallpaperResult};
