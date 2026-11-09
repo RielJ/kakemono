@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Thumbnail } from '../App'
+import { favoriteWallpaper, listThumbnails, setFile, type Thumbnail } from '../../shared/api'
 import ContextMenu from './ContextMenu'
 
 interface CtxMenu {
@@ -20,7 +20,7 @@ export default function ThumbnailStrip({ vertical = false }: StripProps) {
 
   // Load thumbnails on mount
   useEffect(() => {
-    window.go?.main?.PickerApp?.GetThumbnails()
+    listThumbnails()
       .then((t) => {
         setThumbs(t || [])
         setLoading(false)
@@ -62,7 +62,7 @@ export default function ThumbnailStrip({ vertical = false }: StripProps) {
   }, [vertical])
 
   const handleClick = (thumb: Thumbnail) => {
-    window.go?.main?.PickerApp?.SetWallpaper(thumb.path)
+    void setFile(thumb.path)
     // Optimistically update the current state
     setThumbs((prev) =>
       prev.map((t) => ({
@@ -79,7 +79,7 @@ export default function ThumbnailStrip({ vertical = false }: StripProps) {
 
   const handleFavorite = () => {
     if (ctxMenu) {
-      window.go?.main?.PickerApp?.FavoriteWallpaper(ctxMenu.thumb.path)
+      void favoriteWallpaper(ctxMenu.thumb.path)
       setCtxMenu(null)
     }
   }

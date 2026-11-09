@@ -1,5 +1,5 @@
 import type { Config } from '../types/config'
-import { openFolder, selectDirectory } from '../lib/api'
+import { openFolder, selectDirectory } from '../../shared/api'
 
 interface Props {
   config: Config
@@ -60,7 +60,7 @@ export default function FavoritesSettings({ config, onChange }: Props) {
         <p className="font-medium mb-1">How to favorite a wallpaper</p>
         <ul className="list-disc list-inside space-y-0.5 text-blue-600 dark:text-blue-400">
           <li>Click the ♥ button in the status bar above</li>
-          <li>Run <code className="font-mono bg-blue-100 dark:bg-blue-900 px-1 rounded">wallpaperd favorite</code> in terminal</li>
+          <li>Run <code className="font-mono bg-blue-100 dark:bg-blue-900 px-1 rounded">kakemono favorite</code> in terminal</li>
         </ul>
       </div>
     </div>

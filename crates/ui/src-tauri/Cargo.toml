@@ -1,0 +1,51 @@
+[package]
+name = "kakemono-ui"
+description = "kakemono tray, settings and picker (Tauri 2); a pure IPC client of the daemon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "kakemono_ui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "kakemono-ui"
+path = "src/main.rs"
+# The bin shares the package name; documenting both would collide.
+doc = false
+
+# No `custom-protocol` feature on purpose. A plain `cargo build` loads the Vite dev server
+# (`build.devUrl`) and needs no `frontend/dist`, so `cargo clippy --all-features` in CI works
+# without a frontend build. `cargo tauri build` adds `tauri/custom-protocol` itself and embeds
+# `frontend/dist`; by hand: `cargo build --release --features tauri/custom-protocol`.
+
+[build-dependencies]
+tauri-build = { workspace = true, features = [] }
+
+[dependencies]
+kakemono-protocol.workspace = true
+kakemono-config.workspace = true
+tauri = { workspace = true, features = ["tray-icon"] }
+tauri-plugin-single-instance.workspace = true
+tauri-plugin-autostart.workspace = true
+tauri-plugin-dialog.workspace = true
+tauri-plugin-opener.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus.workspace = true
+
+[dev-dependencies]
+interprocess.workspace = true
+ts-rs.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

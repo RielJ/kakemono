@@ -1,42 +1,19 @@
 import { useEffect, useState } from 'react'
 import ThumbnailStrip from './components/ThumbnailStrip'
-
-// Wails runtime bindings will be generated at build time
-declare global {
-  interface Window {
-    go: {
-      main: {
-        PickerApp: {
-          GetThumbnails(): Promise<Thumbnail[]>
-          GetPosition(): Promise<string>
-          SetWallpaper(path: string): Promise<void>
-          FavoriteWallpaper(path: string): Promise<void>
-          Close(): Promise<void>
-        }
-      }
-    }
-    runtime: {
-      Quit(): void
-    }
-  }
-}
-
-export interface Thumbnail {
-  path: string
-  source: string
-  title: string
-  isCurrent: boolean
-  imageUrl: string
-}
+import { closeWindow, getConfig } from '../shared/api'
 
 export type PickerPosition = 'bottom' | 'top' | 'left' | 'right'
+
+function toPosition(value: string): PickerPosition {
+  return value === 'top' || value === 'left' || value === 'right' ? value : 'bottom'
+}
 
 export default function App() {
   const [position, setPosition] = useState<PickerPosition>('bottom')
 
   useEffect(() => {
-    window.go?.main?.PickerApp?.GetPosition()
-      .then((p) => setPosition((p || 'bottom') as PickerPosition))
+    getConfig()
+      .then((cfg) => setPosition(toPosition(cfg.picker.position)))
       .catch(() => {})
   }, [])
 
@@ -50,7 +27,7 @@ export default function App() {
 
     const onBlur = () => {
       if (active) {
-        window.go?.main?.PickerApp?.Close()
+        void closeWindow()
       }
     }
     window.addEventListener('blur', onBlur)
@@ -64,7 +41,7 @@ export default function App() {
     // Close on Escape key
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        window.go?.main?.PickerApp?.Close()
+        void closeWindow()
       }
     }
     window.addEventListener('keydown', onKey)

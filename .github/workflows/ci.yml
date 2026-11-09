@@ -72,7 +72,7 @@ jobs:
       - uses: actions/setup-node@v4
         if: hashFiles('crates/ui/frontend/package-lock.json') != ''
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: npm
           cache-dependency-path: crates/ui/frontend/package-lock.json
 

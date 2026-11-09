@@ -174,7 +174,7 @@ export default function ThemesSettings({ config, onChange }: Props) {
   return (
     <div className="space-y-4">
       <p className="text-xs text-gray-500 dark:text-gray-400">
-        wallpaperd detects the current macOS appearance and uses the matching provider list and search queries.
+        kakemono detects the current macOS appearance and uses the matching provider list and search queries.
       </p>
 
       <ThemePanel

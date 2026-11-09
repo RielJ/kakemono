@@ -1,5 +1,5 @@
 import type { Config } from '../types/config'
-import { selectDirectory, openFolder } from '../lib/api'
+import { selectDirectory, openFolder } from '../../shared/api'
 
 interface Props {
   config: Config
@@ -121,7 +121,7 @@ export default function GeneralSettings({ config, onChange }: Props) {
               type="text"
               value={daemon.socket_path}
               onChange={e => set('socket_path', e.target.value)}
-              placeholder="~/.config/wallpaperd/daemon.sock"
+              placeholder="Platform default"
               className="form-input w-52 text-xs py-1 font-mono"
             />
           </Row>

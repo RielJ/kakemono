@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { Config, StatusData, TabId } from './types/config'
-import { getConfig, saveConfig, getStatus, getThumbnail } from './lib/api'
+import { getConfig, saveConfig, getStatus, getThumbnail } from '../shared/api'
 
 import Sidebar from './components/Sidebar'
 import StatusBar from './components/StatusBar'

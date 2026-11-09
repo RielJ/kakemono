@@ -1,6 +1,10 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+/* Accent colours used by utilities such as `bg-accent` and `dark:text-accent-dark`. */
+@theme {
+  --color-accent: #007aff;
+  --color-accent-dark: #0a84ff;
+}
 
 /* ── macOS design tokens ─────────────────────────────────────────────────── */
 :root {
@@ -38,12 +42,6 @@ body {
   background: transparent;
   color: var(--mac-text);
 }
-
-/* ── Drag region — Wails v2 uses CSSDragProperty "--wails-draggable" ─────── */
-/* StatusBar.tsx uses .drag-region on the titlebar container.                */
-.drag-region { --wails-draggable: drag;    }
-.drag        { --wails-draggable: drag;    }
-.no-drag     { --wails-draggable: no-drag; }
 
 /* ── Scrollbars ──────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; }

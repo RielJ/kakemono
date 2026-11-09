@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import type { Thumbnail } from '../App'
+import type { Thumbnail } from '../../shared/api'
 
 interface Props {
   x: number

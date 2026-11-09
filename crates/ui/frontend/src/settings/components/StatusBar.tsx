@@ -8,7 +8,7 @@ import {
   pauseWallpaper,
   resumeWallpaper,
   revealInFinder,
-} from '../lib/api'
+} from '../../shared/api'
 
 interface StatusBarProps {
   status: StatusData | null
