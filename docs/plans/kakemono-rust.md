@@ -29,7 +29,7 @@ Where the plans disagreed on a technical point, this plan takes A's position bec
 
 These came from B and C and were merged in:
 
-- **Hooks (B):** at most 4 hooks run at once. Extra hook runs for the same event are dropped and logged. Hooks run with a cleared environment that holds only `PATH`, `HOME`, the session variables (`DISPLAY`, `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`) and `WALLPAPERD_*`. See §I and Task 22.
+- **Hooks (B):** at most 4 hooks run at once. Extra hook runs for the same event are dropped and logged. Hooks run with a cleared environment that holds only `PATH`, `HOME`, the session variables (`DISPLAY`, `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`) and `KAKEMONO_*`. See §I and Task 22.
 - **macOS spike first (C):** Task 24 starts with a 30-line `examples/spike_set.rs` that sets a wallpaper from a plain binary. The daemon is only built on top of it after the spike works.
 - **Go-captured IPC goldens (C):** in addition to A's marshalled goldens, Task 1 also replays every command against a running Go daemon and records the wire bytes.
 - **Tray health (B):** whether the tray is visible never counts toward daemon health. `doctor` reports it separately.
@@ -401,11 +401,11 @@ Versions are from `docs/research/rust-libraries.md` (crates.io, 2026-11-09). Tas
 - **`daemon` with no `-f`:** Go spawns a background child. Keep this on Unix (re-exec with `setsid`). On Windows use `DETACHED_PROCESS` and `CREATE_NO_WINDOW`.
 
 **Hooks:**
-- `[hooks] on_change = ["sketchybar","--trigger","wallpaper_changed"]` with environment variables `WALLPAPERD_PATH`, `WALLPAPERD_SOURCE`, `WALLPAPERD_TITLE`, `WALLPAPERD_AUTHOR`, `WALLPAPERD_SOURCE_URL` and `WALLPAPERD_THEME`.
+- `[hooks] on_change = ["sketchybar","--trigger","wallpaper_changed"]` with environment variables `KAKEMONO_PATH`, `KAKEMONO_SOURCE`, `KAKEMONO_TITLE`, `KAKEMONO_AUTHOR`, `KAKEMONO_SOURCE_URL` and `KAKEMONO_THEME`.
 - Placeholders work as in `set_command`.
 - Hooks are fire-and-forget, with a 10 s timeout, and failures are only logged.
 - At most 4 hooks run at once. If a hook for the same event is still running, the new run is dropped and logged.
-- The environment is cleared first (`env_clear`). Only `PATH`, `HOME`, `DISPLAY`, `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS` (and `SystemRoot` and `USERPROFILE` on Windows) are passed through, plus the `WALLPAPERD_*` variables.
+- The environment is cleared first (`env_clear`). Only `PATH`, `HOME`, `DISPLAY`, `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS` (and `SystemRoot` and `USERPROFILE` on Windows) are passed through, plus the `KAKEMONO_*` variables.
 - The examples move to `contrib/sketchybar` and `contrib/waybar` (a waybar `custom/wallpaper` module with `exec` and `signal`, plus a hook `["pkill","-RTMIN+8","waybar"]`).
 
 ### J. Test strategy
@@ -828,7 +828,7 @@ Ranked by likelihood × impact.
 - **Mode:** sequential
 - **Steps:**
   1. Broadcast `EngineEvent::{Changed, Paused, ThemeChanged}` from ops.
-  2. `hooks::fire(on_change, info, theme, runner)` renders argv with `platform::exec::render`, runs it with `env_clear()` plus the pass-through list in §I and the `WALLPAPERD_*` env, runs fire-and-forget with a 10 s timeout, and logs failures.
+  2. `hooks::fire(on_change, info, theme, runner)` renders argv with `platform::exec::render`, runs it with `env_clear()` plus the pass-through list in §I and the `KAKEMONO_*` env, runs fire-and-forget with a 10 s timeout, and logs failures.
   3. Limit concurrency with a `Semaphore(4)`. A new run for an event whose previous run is still going is dropped and logged at `warn`.
   4. Test with `RecordingRunner`: argv and env after `next()`. `HOME` is passed through, an unrelated parent variable (for example `WPD_SECRET_TEST`) is absent, and five quick `next()` calls with a slow hook record at most 4 in-flight runs.
 - **Automated verification:** `cargo test -p kakemono-engine hooks`
@@ -1023,7 +1023,7 @@ Ranked by likelihood × impact.
   3. Without `-f`, re-exec detached (§I).
   4. Logging goes to the file appender, or to stderr in foreground mode.
   5. Write the PID file for compatibility with `daemon.pid`.
-- **Automated verification:** `cargo build -p kakemono && cargo test -p kakemono` (the CLI tests use the fake platform behind the `fake` feature through `WALLPAPERD_FAKE_PLATFORM=1`, test builds only)
+- **Automated verification:** `cargo build -p kakemono && cargo test -p kakemono` (the CLI tests use the fake platform behind the `fake` feature through `KAKEMONO_FAKE_PLATFORM=1`, test builds only)
 - **Manual verification:** on each OS, run `kakemono daemon -f`, then `kakemono next` changes the wallpaper and `Ctrl-C` exits cleanly. On macOS, there's no Dock icon.
 
 ## Task 37: `detect` / `doctor` / first-run persistence
@@ -1169,7 +1169,7 @@ Ranked by likelihood × impact.
   2. `kakemono pick` and `kakemono settings` locate `kakemono-ui`:
      - next to the current exe
      - in the .app `Contents/MacOS`
-     - via `WALLPAPERD_UI`
+     - via `KAKEMONO_UI`
      - on `PATH`
      It spawns the UI with `--picker` or `--settings`. single-instance forwards these flags to the running UI.
   3. If the UI isn't found, print an install hint.
