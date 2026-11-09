@@ -72,6 +72,21 @@ fn launchd_plist_snapshot() {
 }
 
 #[test]
+fn launchd_plist_sets_a_fixed_path_with_homebrew() {
+    // launchd's default PATH (/usr/bin:/bin:/usr/sbin:/sbin) misses Homebrew, so hooks like
+    // `sketchybar` failed. The value is fixed, never the installing shell's PATH.
+    assert_eq!(
+        launchd::DAEMON_PATH,
+        "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    );
+    let plist = launchd::plist(&fixed_env(Os::MacOs));
+    assert!(plist.contains(&format!(
+        "<key>EnvironmentVariables</key>\n\t<dict>\n\t\t<key>PATH</key>\n\t\t<string>{}</string>",
+        launchd::DAEMON_PATH
+    )));
+}
+
+#[test]
 fn launchd_plist_escapes_xml() {
     let mut env = fixed_env(Os::MacOs);
     env.exe = PathBuf::from("/Apps/R&D <x>/kakemono");

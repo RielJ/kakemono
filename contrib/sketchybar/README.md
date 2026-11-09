@@ -38,22 +38,22 @@ You also need the `kakemono` binary. See the [installation section of the main R
    echo 'source "$HOME/.config/sketchybar/wallpaper.sh"' >> "$HOME/.config/sketchybar/sketchybarrc"
    ```
 
-3. Find the full path of `sketchybar`:
+3. Install the daemon as a login service, if you haven't:
 
    ```sh
-   command -v sketchybar
+   kakemono service install
    ```
 
-   On Apple silicon with Homebrew, the path is `/opt/homebrew/bin/sketchybar`.
+   The service runs the daemon with `/opt/homebrew/bin` and `/usr/local/bin` on its `PATH`, so it finds a Homebrew `sketchybar`. A plist written by an earlier kakemono version has no `PATH`; running `kakemono service install` again rewrites it.
 
 4. Add the hook to your kakemono config. Run `kakemono config path` to see which file kakemono reads, then add:
 
    ```toml
    [hooks]
-   on_change = ["/opt/homebrew/bin/sketchybar", "--trigger", "wallpaper_changed"]
+   on_change = ["sketchybar", "--trigger", "wallpaper_changed"]
    ```
 
-   Use the full path from step 3. The login service that `kakemono service install` creates runs the daemon under launchd, and launchd's `PATH` is `/usr/bin:/bin:/usr/sbin:/sbin`. A bare `"sketchybar"` works only when the daemon was started from a shell that has Homebrew on its `PATH`.
+   If you run the daemon another way (for example `kakemono daemon -f` from a script or another launcher), its `PATH` may not include Homebrew. Then use the full path that `command -v sketchybar` prints, such as `/opt/homebrew/bin/sketchybar`.
 
 5. Restart the daemon so it reads the new `[hooks]` section:
 

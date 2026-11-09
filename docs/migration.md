@@ -54,6 +54,7 @@ The command:
 
 - writes `~/Library/LaunchAgents/dev.rielj.kakemono.daemon.plist` with the label `dev.rielj.kakemono.daemon`;
 - runs `<path to kakemono> daemon -f` at login, and restarts it if it crashes;
+- sets the daemon's `PATH` to `/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`, so hooks find Homebrew tools;
 - loads the service and starts the daemon at once;
 - sends the daemon's log to `~/.local/state/kakemono/launchd.log` (under `$XDG_STATE_HOME` if set).
 
@@ -115,10 +116,10 @@ wallpaperd's `[sketchybar]` section never fired the `wallpaper_changed` event, s
 
 ```toml
 [hooks]
-on_change = ["/opt/homebrew/bin/sketchybar", "--trigger", "wallpaper_changed"]
+on_change = ["sketchybar", "--trigger", "wallpaper_changed"]
 ```
 
-Use the full path that `command -v sketchybar` prints. Under launchd, the daemon's `PATH` is `/usr/bin:/bin:/usr/sbin:/sbin`, which doesn't include Homebrew. After you edit the config, restart the daemon with `launchctl kickstart -k "gui/$(id -u)/dev.rielj.kakemono.daemon"`.
+The service that `kakemono service install` creates puts Homebrew's `bin` directories on the daemon's `PATH`, so a bare `sketchybar` works. A plist written by an earlier kakemono version has no `PATH`; run `kakemono service install` again to rewrite it. If you start the daemon another way (for example `kakemono daemon -f` from a script or another launcher), use the full path that `command -v sketchybar` prints. After you edit the config, restart the daemon with `launchctl kickstart -k "gui/$(id -u)/dev.rielj.kakemono.daemon"`.
 
 The plugin scripts moved from `sketchybar/` to `contrib/sketchybar/` and now call `kakemono`. Copy them over the old ones. [`contrib/sketchybar/README.md`](../contrib/sketchybar/README.md) has the full setup.
 

@@ -5,7 +5,8 @@
 //! the UI's `kakemono` LaunchAgent (tauri-plugin-autostart), so the two never replace each other.
 //! Go's README plist (`com.rielj.wallpaperd`) had `RunAtLoad`, `KeepAlive = true` and logs in
 //! `/tmp`; here `KeepAlive` restarts only after a failed exit (like systemd's `on-failure`) and
-//! stdout/stderr go to `<log_dir>/launchd.log`.
+//! stdout/stderr go to `<log_dir>/launchd.log`. `PATH` is set to [`DAEMON_PATH`] so hooks find
+//! Homebrew tools.
 
 use std::path::{Path, PathBuf};
 
@@ -21,6 +22,12 @@ pub const LABEL: &str = "dev.rielj.kakemono.daemon";
 /// to stderr under `-f`, so this is its log.
 pub const LOG_FILE_NAME: &str = "launchd.log";
 
+/// The daemon's `PATH`. launchd starts jobs with `/usr/bin:/bin:/usr/sbin:/sbin`, so hooks such
+/// as `on_change = ["sketchybar", ...]` would not find Homebrew tools. Fixed (Apple silicon and
+/// Intel Homebrew first, then the system dirs), never the installing shell's `PATH`, so the
+/// plist is the same on every install.
+pub const DAEMON_PATH: &str = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+
 /// `<home>/Library/LaunchAgents/dev.rielj.kakemono.daemon.plist`.
 pub fn plist_path(home: &Path) -> PathBuf {
     home.join("Library")
@@ -33,7 +40,8 @@ pub fn log_path(log_dir: &Path) -> PathBuf {
     log_dir.join(LOG_FILE_NAME)
 }
 
-/// The LaunchAgent plist: runs `<exe> daemon -f` at login, restarts it after a crash.
+/// The LaunchAgent plist: runs `<exe> daemon -f` at login with `PATH` = [`DAEMON_PATH`],
+/// restarts it after a crash.
 pub fn plist(env: &ServiceEnv) -> String {
     let exe = xml_escape(&env.exe.to_string_lossy());
     let log = xml_escape(&log_path(&env.log_dir).to_string_lossy());
@@ -50,6 +58,11 @@ pub fn plist(env: &ServiceEnv) -> String {
 		<string>daemon</string>
 		<string>-f</string>
 	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>{DAEMON_PATH}</string>
+	</dict>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>

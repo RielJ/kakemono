@@ -177,8 +177,9 @@ The hook gets `KAKEMONO_PATH`, `KAKEMONO_SOURCE`, `KAKEMONO_TITLE`, `KAKEMONO_AU
 
 ```toml
 [hooks]
-# sketchybar (macOS). Use the full path: launchd's PATH has no Homebrew.
-on_change = ["/opt/homebrew/bin/sketchybar", "--trigger", "wallpaper_changed"]
+# sketchybar (macOS). The `kakemono service install` daemon has Homebrew on its PATH; from
+# other launchers, use the full path (`command -v sketchybar`).
+on_change = ["sketchybar", "--trigger", "wallpaper_changed"]
 # waybar (Linux)
 # on_change = ["pkill", "-RTMIN+8", "waybar"]
 ```
