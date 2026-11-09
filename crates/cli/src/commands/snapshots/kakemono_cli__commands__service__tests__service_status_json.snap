@@ -1,0 +1,8 @@
+---
+source: crates/cli/src/commands/service.rs
+expression: "[not_installed, running, stopped, windows].concat()"
+---
+{"installed":false,"running":false,"path":null}
+{"installed":true,"running":true,"path":"<tmp>/home/.config/systemd/user/kakemono.service"}
+{"installed":true,"running":false,"path":"<tmp>/home/.config/systemd/user/kakemono.service"}
+{"installed":true,"running":true,"path":null}

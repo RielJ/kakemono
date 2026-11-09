@@ -1,0 +1,27 @@
+[package]
+name = "kakemono-protocol"
+description = "IPC wire types, newline-JSON codec, endpoint naming and async client for kakemono"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+futures.workspace = true
+interprocess.workspace = true
+ts-rs.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+tempfile.workspace = true
+insta.workspace = true
+
+[lints]
+workspace = true

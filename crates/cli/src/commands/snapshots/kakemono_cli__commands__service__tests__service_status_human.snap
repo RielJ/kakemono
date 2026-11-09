@@ -1,0 +1,12 @@
+---
+source: crates/cli/src/commands/service.rs
+expression: "[not_installed, running, not_loaded].join(\"--\\n\")"
+---
+Service: not installed
+Install: kakemono service install
+--
+Service: installed (<tmp>/home/Library/LaunchAgents/dev.rielj.kakemono.daemon.plist)
+State:   running (pid 77)
+--
+Service: installed (<tmp>/home/Library/LaunchAgents/dev.rielj.kakemono.daemon.plist)
+State:   not running (not loaded)

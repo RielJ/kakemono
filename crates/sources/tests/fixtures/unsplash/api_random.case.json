@@ -1,0 +1,51 @@
+{
+  "go_test": "synthesised (unsplash.go has no tests)",
+  "provider": "unsplash",
+  "config": {
+    "access_key": "test-access-key",
+    "enabled": true
+  },
+  "query": "misty forest",
+  "routes": [
+    {
+      "method": "GET",
+      "host": "api.unsplash.com",
+      "path": "/photos/random",
+      "status": 200,
+      "content_type": "application/json",
+      "body_file": "api_random.json"
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "url": "https://api.unsplash.com/photos/random?client_id=test-access-key\u0026count=10\u0026orientation=landscape\u0026query=misty+forest",
+      "user_agent": "wallpaperd/1.0"
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "source_url": "https://unsplash.com/photos/aaa111",
+        "image_url": "https://images.unsplash.com/photo-aaa111?ixid=x1\u0026fm=jpg\u0026q=95\u0026w=3840",
+        "title": "Snowy peaks",
+        "author": "Ann Peak",
+        "source": "unsplash"
+      },
+      {
+        "source_url": "https://unsplash.com/photos/bbb222",
+        "image_url": "https://images.unsplash.com/photo-bbb222?ixid=x2\u0026fm=png",
+        "title": "calm lake at dawn",
+        "author": "Bo Lake",
+        "source": "unsplash"
+      },
+      {
+        "source_url": "https://unsplash.com/photos/ccc333",
+        "image_url": "https://images.unsplash.com/photo-ccc333?ixid=x3\u0026fm=jpg\u0026q=95\u0026w=3840",
+        "title": "",
+        "author": "Cy Full",
+        "source": "unsplash"
+      }
+    ]
+  }
+}

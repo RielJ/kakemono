@@ -1,0 +1,37 @@
+{
+  "go_test": "bing_test.go TestBingFetch_UHDResolution",
+  "provider": "bing",
+  "config": {
+    "enabled": true,
+    "market": "en-US"
+  },
+  "query": "",
+  "routes": [
+    {
+      "method": "GET",
+      "host": "www.bing.com",
+      "path": "/HPImageArchive.aspx",
+      "status": 200,
+      "content_type": "application/json",
+      "body_file": "uhd_resolution.json"
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "url": "https://www.bing.com/HPImageArchive.aspx?format=js\u0026idx=0\u0026n=8\u0026mkt=en-US",
+      "user_agent": "Go-http-client/1.1"
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "source_url": "",
+        "image_url": "https://www.bing.com/th?id=OHR.Test_UHD.jpg",
+        "title": "Test",
+        "author": "",
+        "source": "bing"
+      }
+    ]
+  }
+}

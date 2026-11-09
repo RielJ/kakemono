@@ -1,0 +1,14 @@
+#!/bin/sh
+# Test helper for crates/platform/tests/exec.rs.
+# Writes each argument NUL-terminated to $RECORD_ARGV_OUT, prints $RECORD_ARGV_STDERR to stderr,
+# and exits with $RECORD_ARGV_EXIT (default 0). Never evaluates its arguments.
+if [ -n "${RECORD_ARGV_OUT:-}" ]; then
+  : > "$RECORD_ARGV_OUT"
+  for arg in "$@"; do
+    printf '%s\0' "$arg" >> "$RECORD_ARGV_OUT"
+  done
+fi
+if [ -n "${RECORD_ARGV_STDERR:-}" ]; then
+  printf '%s\n' "$RECORD_ARGV_STDERR" >&2
+fi
+exit "${RECORD_ARGV_EXIT:-0}"

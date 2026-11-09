@@ -1,0 +1,19 @@
+// Add "custom/wallpaper" to one of "modules-left", "modules-center" or "modules-right",
+// then merge this block into your waybar config (~/.config/waybar/config.jsonc).
+{
+  "custom/wallpaper": {
+    "exec": "~/.config/waybar/scripts/kakemono.sh",
+    "return-type": "json",
+    // Titles can contain <, > and &, which Pango markup would reject.
+    "escape": true,
+    // The kakemono hook sends SIGRTMIN+8 after every wallpaper change.
+    "signal": 8,
+    // Poll as well, to catch the daemon starting or stopping.
+    "interval": 60,
+    "on-click": "kakemono next",
+    "on-click-right": "kakemono pick",
+    "on-click-middle": "kakemono favorite",
+    "on-scroll-up": "kakemono prev",
+    "on-scroll-down": "kakemono next"
+  }
+}

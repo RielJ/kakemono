@@ -1,0 +1,39 @@
+{
+  "go_test": "reddit_test.go TestReddit_Source + TestReddit_PermalinkURL",
+  "provider": "reddit",
+  "config": {
+    "enabled": true,
+    "subreddits": [
+      "EarthPorn"
+    ]
+  },
+  "query": "",
+  "routes": [
+    {
+      "method": "GET",
+      "host": "www.reddit.com",
+      "path": "/r/EarthPorn/hot.json",
+      "status": 200,
+      "content_type": "application/json",
+      "body_file": "single_post.json"
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "url": "https://www.reddit.com/r/EarthPorn/hot.json?limit=100",
+      "user_agent": "wallpaperd/1.0"
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "source_url": "https://www.reddit.com/r/EarthPorn/comments/abc/test/",
+        "image_url": "https://example.com/test.jpg",
+        "title": "Test",
+        "author": "user1",
+        "source": "reddit"
+      }
+    ]
+  }
+}

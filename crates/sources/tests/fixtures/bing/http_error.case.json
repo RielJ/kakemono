@@ -1,0 +1,29 @@
+{
+  "go_test": "bing_test.go TestBingFetch_HTTPError",
+  "provider": "bing",
+  "config": {
+    "enabled": true,
+    "market": "en-US"
+  },
+  "query": "",
+  "routes": [
+    {
+      "method": "GET",
+      "host": "www.bing.com",
+      "path": "/HPImageArchive.aspx",
+      "status": 500,
+      "content_type": "text/plain; charset=utf-8",
+      "body_file": "server_error.txt"
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "url": "https://www.bing.com/HPImageArchive.aspx?format=js\u0026idx=0\u0026n=8\u0026mkt=en-US",
+      "user_agent": "Go-http-client/1.1"
+    }
+  ],
+  "expected": {
+    "error": "bing: unexpected status 500"
+  }
+}

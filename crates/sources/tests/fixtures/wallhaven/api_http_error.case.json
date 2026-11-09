@@ -1,0 +1,32 @@
+{
+  "go_test": "wallhaven_test.go TestWallhavenAPI_HTTPError",
+  "provider": "wallhaven",
+  "config": {
+    "api_key": "testkey",
+    "categories": "",
+    "enabled": true,
+    "purity": "100",
+    "sorting": "random"
+  },
+  "query": "",
+  "routes": [
+    {
+      "method": "GET",
+      "host": "wallhaven.cc",
+      "path": "/api/v1/search",
+      "status": 500,
+      "content_type": "text/plain; charset=utf-8",
+      "body_file": "server_error.txt"
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "url": "https://wallhaven.cc/api/v1/search?apikey=testkey\u0026categories=111\u0026purity=100\u0026sorting=random",
+      "user_agent": "wallpaperd/1.0"
+    }
+  ],
+  "expected": {
+    "error": "wallhaven api: unexpected status 500 for https://wallhaven.cc/api/v1/search?apikey=testkey\u0026categories=111\u0026purity=100\u0026sorting=random"
+  }
+}

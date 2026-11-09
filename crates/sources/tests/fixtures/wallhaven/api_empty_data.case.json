@@ -1,0 +1,32 @@
+{
+  "go_test": "wallhaven_test.go TestWallhavenAPI_EmptyData",
+  "provider": "wallhaven",
+  "config": {
+    "api_key": "testkey",
+    "categories": "",
+    "enabled": true,
+    "purity": "100",
+    "sorting": "random"
+  },
+  "query": "",
+  "routes": [
+    {
+      "method": "GET",
+      "host": "wallhaven.cc",
+      "path": "/api/v1/search",
+      "status": 200,
+      "content_type": "application/json",
+      "body_file": "api_empty.json"
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "url": "https://wallhaven.cc/api/v1/search?apikey=testkey\u0026categories=111\u0026purity=100\u0026sorting=random",
+      "user_agent": "wallpaperd/1.0"
+    }
+  ],
+  "expected": {
+    "results": []
+  }
+}

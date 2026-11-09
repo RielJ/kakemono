@@ -1,0 +1,121 @@
+# kakemono configuration file
+# Location: ~/.config/kakemono/config.toml ($XDG_CONFIG_HOME/kakemono/config.toml when set;
+# %APPDATA%\kakemono\config.toml on Windows). $KAKEMONO_CONFIG or --config overrides it.
+
+[daemon]
+# Enable or disable automatic wallpaper rotation
+rotation_enabled = true
+# How often to rotate the wallpaper (Go duration string: "30m", "1h", "2h30m")
+interval = "30m"
+# Directory where downloaded wallpapers are cached
+download_dir = "~/Pictures/Wallpapers/cache"
+# Maximum number of images to keep in the cache directory
+cache_size = 50
+# Directory where trashed wallpapers are moved
+trash_dir = "~/Pictures/Wallpapers/trash"
+# IPC socket path used between the daemon, CLI and UI. Leave unset for the platform default:
+# macOS ~/.config/kakemono/kakemono.sock; Linux $XDG_RUNTIME_DIR/kakemono/kakemono.sock
+# (~/.config/kakemono/kakemono.sock without XDG_RUNTIME_DIR); Windows the named pipe
+# \\.\pipe\kakemono-<user> (this key is ignored there). $KAKEMONO_SOCKET overrides the default.
+# socket_path = "~/.config/kakemono/kakemono.sock"
+# Pick a new wallpaper when the system switches between light and dark mode
+# rotate_on_theme_change = true
+# macOS: re-apply the current wallpaper when you switch Spaces
+# reapply_on_space_change = false
+
+# --- Providers ---
+
+[bing]
+enabled = true
+# Bing market code controlling language/region of results
+market = "en-US"
+
+[wallhaven]
+enabled = false
+# Optional Wallhaven API key — without it the provider falls back to HTML scraping
+api_key = ""
+# Purity filter: "100" = SFW, "110" = SFW+Sketchy, "111" = all
+purity = "100"
+# Sort order: "random", "toplist", "date_added", "relevance", "views", "favorites", "hot"
+sorting = "random"
+# Category filter: 3 bits (general/anime/people), "111" = all
+categories = "111"
+
+[unsplash]
+enabled = false
+# Unsplash API access key
+access_key = ""
+
+[reddit]
+enabled = false
+# List of subreddits to pick from (one is chosen at random per request)
+subreddits = ["EarthPorn", "wallpapers", "spaceporn"]
+
+[apod]
+enabled = false
+# NASA API key — "DEMO_KEY" works for low-volume use
+api_key = "DEMO_KEY"
+
+[local]
+enabled = false
+# Directories to scan for local wallpapers
+dirs = []
+# Whether to scan subdirectories recursively
+recursive = true
+
+# --- Theme-aware provider selection ---
+
+[light]
+# Providers to use in light mode
+sources = ["bing"]
+# Search queries passed to providers that support them
+queries = ["landscape", "nature", "cityscape"]
+
+[dark]
+# Providers to use in dark mode
+sources = ["bing"]
+queries = ["space", "night", "dark minimal", "galaxy"]
+
+# --- Favorites ---
+
+[favorites]
+# Directory where favorited wallpapers are copied
+dir = "~/Pictures/Wallpapers/favorites"
+
+# --- Picker ---
+
+[picker]
+# Position of the floating thumbnail picker: "bottom", "top", "left", "right"
+position = "bottom"
+# Close the picker when it loses focus
+# close_on_blur = true
+# Wayland: run the picker under XWayland so it can be positioned (experimental)
+# force_x11 = false
+
+# --- Desktop backend ---
+# kakemono detects how to set the wallpaper on first run and records the result here.
+# Run `kakemono detect` to see what it found, or `kakemono doctor` if setting fails.
+#
+# [desktop]
+# auto | native | gnome | kde | xfce | cinnamon | mate | sway | hyprpaper | awww | swww | swaybg
+# | wbg | xwallpaper | feh | nitrogen | hsetroot | pcmanfm | pcmanfm-qt | command
+# backend = "auto"
+# For "command" (and to override a preset): an argv list, never run through a shell.
+# Placeholders: {path}, {uri}, {fit}, {theme}. For shell features use ["sh", "-c", "...", "_", "{path}"].
+# set_command = ["awww", "img", "{path}", "--transition-type", "fade"]
+# true = the command keeps running (like swaybg); the previous instance is replaced
+# persistent = false
+# fill | fit | center | stretch | tile
+# fit = "fill"
+# auto | light | dark — override when the system theme can't be read (e.g. bare X11 window managers)
+# theme = "auto"
+# "detect" lets re-detection update this section; "user" means never touch it
+# managed_by = "detect"
+
+# --- Hooks ---
+# Run a command after every wallpaper change (argv list, no shell). It gets KAKEMONO_PATH,
+# KAKEMONO_SOURCE, KAKEMONO_TITLE, KAKEMONO_AUTHOR, KAKEMONO_SOURCE_URL and KAKEMONO_THEME
+# in its environment, and the same placeholders as set_command.
+#
+# [hooks]
+# on_change = ["sketchybar", "--trigger", "wallpaper_changed"]

@@ -1,0 +1,29 @@
+{
+  "go_test": "synthesised (unsplash.go has no tests)",
+  "provider": "unsplash",
+  "config": {
+    "access_key": "test-access-key",
+    "enabled": true
+  },
+  "query": "",
+  "routes": [
+    {
+      "method": "GET",
+      "host": "api.unsplash.com",
+      "path": "/photos/random",
+      "status": 401,
+      "content_type": "application/json",
+      "body_file": "unauthorized.json"
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "url": "https://api.unsplash.com/photos/random?client_id=test-access-key\u0026count=10\u0026orientation=landscape",
+      "user_agent": "wallpaperd/1.0"
+    }
+  ],
+  "expected": {
+    "error": "unsplash api: invalid or revoked access key (status 401)"
+  }
+}

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <!-- Same as the window title (picker::TITLE), which compositor rules match. -->
+    <title>kakemono-picker</title>
+    <!-- Painted before any CSS loads, so the picker never flashes the wrong theme.
+         Same colours as --bg-light / --bg-dark in src/shared/tokens.css. -->
+    <style>
+      :root { color-scheme: light dark; background: #f4f4f5; }
+      @media (prefers-color-scheme: dark) { :root { background: #1e1e20; } }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/picker/main.tsx"></script>
+  </body>
+</html>

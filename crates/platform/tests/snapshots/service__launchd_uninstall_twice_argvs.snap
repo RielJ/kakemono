@@ -1,0 +1,29 @@
+---
+source: crates/platform/tests/service.rs
+expression: "argvs(&runner, tmp.path())"
+---
+[
+  [
+    "id",
+    "-u"
+  ],
+  [
+    "launchctl",
+    "print",
+    "gui/501/dev.rielj.kakemono.daemon"
+  ],
+  [
+    "launchctl",
+    "bootout",
+    "gui/501/dev.rielj.kakemono.daemon"
+  ],
+  [
+    "id",
+    "-u"
+  ],
+  [
+    "launchctl",
+    "print",
+    "gui/501/dev.rielj.kakemono.daemon"
+  ]
+]

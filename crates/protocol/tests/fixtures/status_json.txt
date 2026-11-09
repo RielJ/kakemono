@@ -1,0 +1,18 @@
+{
+  "current": {
+    "author": "© Photographer \"Quoted\"",
+    "height": 2160,
+    "image_url": "https://www.bing.com/th?id=OHR.GoldenHour_UHD.jpg\u0026rf=LaDigue_UHD.jpg",
+    "path": "/Users/golden/Pictures/Wallpapers/cache/OHR.GoldenHour_UHD.jpg",
+    "set_at": "2024-03-15T10:30:00+08:00",
+    "source": "bing",
+    "source_url": "https://www.bing.com/search?q=Golden+Hour\u0026form=hpcapt",
+    "title": "Sunset \u003cGolden Hour\u003e \u0026 Co — café",
+    "width": 3840
+  },
+  "history_count": 3,
+  "history_index": 2,
+  "interval": "1h30m",
+  "paused": true,
+  "theme": "dark"
+}

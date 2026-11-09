@@ -1,0 +1,162 @@
+@import "tailwindcss";
+
+/* Accent colours used by utilities such as `bg-accent` and `dark:text-accent-dark`. */
+@theme {
+  --color-accent: #007aff;
+  --color-accent-dark: #0a84ff;
+}
+
+/* ── macOS design tokens ─────────────────────────────────────────────────── */
+:root {
+  --mac-accent:           #007AFF;
+  --mac-accent-hover:     #0066CC;
+  --mac-bg:               rgba(255, 255, 255, 0.85);
+  --mac-bg-secondary:     rgba(246, 246, 246, 0.85);
+  --mac-bg-tertiary:      rgba(236, 236, 236, 0.85);
+  --mac-text:             #1d1d1f;
+  --mac-text-secondary:   #6e6e73;
+  --mac-border:           rgba(0, 0, 0, 0.12);
+  --mac-separator:        rgba(0, 0, 0, 0.08);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --mac-accent:         #0A84FF;
+    --mac-accent-hover:   #409CFF;
+    --mac-bg:             rgba(28, 28, 30, 0.85);
+    --mac-bg-secondary:   rgba(44, 44, 46, 0.85);
+    --mac-bg-tertiary:    rgba(58, 58, 60, 0.85);
+    --mac-text:           #f5f5f7;
+    --mac-text-secondary: #aeaeb2;
+    --mac-border:         rgba(255, 255, 255, 0.12);
+    --mac-separator:      rgba(255, 255, 255, 0.08);
+  }
+}
+
+/* ── Base ────────────────────────────────────────────────────────────────── */
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  background: transparent;
+  color: var(--mac-text);
+}
+
+/* ── Scrollbars ──────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background-color: var(--mac-border);
+  border-radius: 3px;
+}
+
+/* ── Typography ──────────────────────────────────────────────────────────── */
+.form-label,
+.mac-label {
+  @apply block text-xs font-medium mb-1;
+  color: var(--mac-text-secondary);
+}
+
+/* ── Form controls ───────────────────────────────────────────────────────── */
+.form-input,
+.mac-input {
+  @apply w-full px-3 py-1.5 text-sm rounded-md transition-colors;
+  background: var(--mac-bg-secondary);
+  border: 1px solid var(--mac-border);
+  color: var(--mac-text);
+  outline: none;
+}
+
+.form-input:focus,
+.mac-input:focus {
+  border-color: var(--mac-accent);
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.2);
+}
+
+.form-input::placeholder,
+.mac-input::placeholder {
+  color: var(--mac-text-secondary);
+  opacity: 0.7;
+}
+
+.form-input:disabled,
+.mac-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+select.form-input,
+select.mac-input {
+  @apply appearance-none pr-8 bg-no-repeat;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%236e6e73'%3E%3Cpath fill-rule='evenodd' d='M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z' clip-rule='evenodd'/%3E%3C/svg%3E");
+  background-position: right 0.5rem center;
+  background-size: 1.25rem;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+.btn-primary {
+  @apply inline-flex items-center justify-center px-4 py-1.5 text-sm font-medium rounded-md;
+  @apply text-white transition-opacity;
+  background: var(--mac-accent);
+}
+.btn-primary:hover:not(:disabled)   { opacity: 0.88; }
+.btn-primary:disabled                { opacity: 0.45; cursor: not-allowed; }
+
+.btn-secondary {
+  @apply inline-flex items-center justify-center px-3 py-1.5 text-sm font-medium rounded-md;
+  @apply transition-colors;
+  background: var(--mac-bg-secondary);
+  border: 1px solid var(--mac-border);
+  color: var(--mac-text);
+}
+.btn-secondary:hover:not(:disabled) {
+  background: var(--mac-bg-tertiary);
+}
+.btn-secondary:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.mac-button {
+  @apply inline-flex items-center justify-center px-3 py-1 text-xs font-medium rounded-md;
+  @apply transition-colors;
+  background: var(--mac-bg-secondary);
+  border: 1px solid var(--mac-border);
+  color: var(--mac-text);
+}
+.mac-button:hover:not(:disabled) {
+  background: var(--mac-bg-tertiary);
+}
+.mac-button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ── Chips ───────────────────────────────────────────────────────────────── */
+.mac-chip {
+  @apply inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium;
+  background: rgba(0, 122, 255, 0.1);
+  color: var(--mac-accent);
+}
+
+@media (prefers-color-scheme: dark) {
+  .mac-chip {
+    background: rgba(10, 132, 255, 0.15);
+  }
+}
+
+/* ── Settings row ────────────────────────────────────────────────────────── */
+.settings-row {
+  @apply flex items-center justify-between gap-4 py-3 px-4;
+  border-bottom: 1px solid var(--mac-separator);
+}
+.settings-row:last-child {
+  border-bottom: none;
+}
+
+/* ── Settings group ──────────────────────────────────────────────────────── */
+.settings-group {
+  @apply rounded-lg overflow-hidden;
+  background: var(--mac-bg);
+  border: 1px solid var(--mac-border);
+}
+
+.settings-group-title {
+  @apply text-xs font-semibold uppercase tracking-wider mb-2;
+  color: var(--mac-text-secondary);
+}

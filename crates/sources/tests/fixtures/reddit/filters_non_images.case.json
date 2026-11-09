@@ -1,0 +1,46 @@
+{
+  "go_test": "reddit_test.go TestReddit_FiltersNonImages",
+  "provider": "reddit",
+  "config": {
+    "enabled": true,
+    "subreddits": [
+      "EarthPorn"
+    ]
+  },
+  "query": "",
+  "routes": [
+    {
+      "method": "GET",
+      "host": "www.reddit.com",
+      "path": "/r/EarthPorn/hot.json",
+      "status": 200,
+      "content_type": "application/json",
+      "body_file": "filters_non_images.json"
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "url": "https://www.reddit.com/r/EarthPorn/hot.json?limit=100",
+      "user_agent": "wallpaperd/1.0"
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "source_url": "https://www.reddit.com/r/EarthPorn/comments/abc/mountain/",
+        "image_url": "https://example.com/mountain.jpg",
+        "title": "Mountain",
+        "author": "user1",
+        "source": "reddit"
+      },
+      {
+        "source_url": "https://www.reddit.com/r/EarthPorn/comments/jkl/ocean/",
+        "image_url": "https://example.com/ocean.png",
+        "title": "Ocean",
+        "author": "user4",
+        "source": "reddit"
+      }
+    ]
+  }
+}

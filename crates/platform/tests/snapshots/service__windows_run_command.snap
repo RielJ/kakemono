@@ -1,0 +1,5 @@
+---
+source: crates/platform/tests/service.rs
+expression: "windows::run_command(Path::new(r\"C:\\Program Files\\kakemono\\kakemono.exe\"))"
+---
+"C:\Program Files\kakemono\kakemono.exe" daemon

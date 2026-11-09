@@ -1,0 +1,83 @@
+/*
+ * Design tokens shared by the picker (and, later, Settings). Plan §H "Design standards":
+ * system font, neutral palette, one accent, light and dark, short ease-out motion that is
+ * switched off under reduced motion.
+ *
+ * `--bg-light` and `--bg-dark` are also the picker window's native background colour
+ * (`picker.rs` reads them from this file in a test) and the inline <head> style in
+ * `picker.html`, so the window never flashes the wrong theme. Keep all three in sync.
+ */
+:root {
+  color-scheme: light dark;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI Variable', system-ui, Cantarell, sans-serif;
+  --font-size: 14px;
+  --font-size-sm: 12px;
+
+  --bg-light: #f4f4f5;
+  --bg-dark: #1e1e20;
+
+  --bg: var(--bg-light);
+  --surface: #ffffff;
+  --surface-hover: rgba(0, 0, 0, 0.05);
+  --text: #18181b;
+  --text-muted: #5b5b63;
+  --border: rgba(0, 0, 0, 0.12);
+  --placeholder: #e4e4e7;
+  --shadow-menu: 0 6px 24px rgba(0, 0, 0, 0.16), 0 0 0 1px rgba(0, 0, 0, 0.08);
+
+  /* One accent: the system accent where the webview knows it (WebKit), else a neutral blue. */
+  --accent: #0a64d6;
+  --accent-text: #ffffff;
+
+  --radius-sm: 6px;
+  --radius: 8px;
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --duration-fast: 120ms;
+  --duration: 160ms;
+}
+
+:root[data-os='macos'] {
+  --font-size: 13px;
+  --font-size-sm: 11px;
+}
+
+@supports (color: AccentColor) {
+  :root {
+    --accent: AccentColor;
+    --accent-text: AccentColorText;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: var(--bg-dark);
+    --surface: #2a2a2d;
+    --surface-hover: rgba(255, 255, 255, 0.07);
+    --text: #f4f4f5;
+    --text-muted: #a1a1aa;
+    --border: rgba(255, 255, 255, 0.12);
+    --placeholder: #2f2f33;
+    --shadow-menu: 0 6px 24px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1);
+  }
+  @supports not (color: AccentColor) {
+    :root {
+      --accent: #3b8eea;
+    }
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --border: CanvasText;
+    --text-muted: CanvasText;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration: 0ms;
+  }
+}

@@ -1,0 +1,61 @@
+[package]
+name = "kakemono"
+description = "kakemono CLI and headless daemon host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# The library holds the commands and daemon so integration tests (tests/server.rs, tests/cli.rs) can reach them.
+[lib]
+name = "kakemono_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "kakemono"
+path = "src/main.rs"
+
+[dependencies]
+kakemono-protocol.workspace = true
+kakemono-config.workspace = true
+kakemono-sources.workspace = true
+kakemono-platform.workspace = true
+kakemono-engine.workspace = true
+clap.workspace = true
+clap_complete.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+futures.workspace = true
+interprocess.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+nix.workspace = true
+
+[features]
+# With this feature, KAKEMONO_FAKE_PLATFORM=1 makes `daemon` use the fake platform. Release
+# builds never enable it; `cargo test` does through the self dev-dependency below.
+fake = ["kakemono-platform/fake"]
+
+[dev-dependencies]
+# Test builds of the lib and binary get the `fake` feature (Task 36).
+kakemono = { path = ".", features = ["fake"] }
+kakemono-platform = { workspace = true, features = ["fake"] }
+kakemono-sources = { workspace = true, features = ["fake"] }
+tokio = { workspace = true, features = ["test-util"] }
+assert_cmd.workspace = true
+predicates.workspace = true
+tempfile.workspace = true
+insta.workspace = true
+
+[lints]
+workspace = true

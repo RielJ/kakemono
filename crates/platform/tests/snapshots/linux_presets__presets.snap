@@ -1,0 +1,410 @@
+---
+source: crates/platform/tests/linux_presets.rs
+expression: table
+---
+{
+  "awww": {
+    "center": [
+      "awww",
+      "img",
+      "{path}",
+      "--resize",
+      "no",
+      "--transition-type",
+      "fade"
+    ],
+    "fill": [
+      "awww",
+      "img",
+      "{path}",
+      "--resize",
+      "crop",
+      "--transition-type",
+      "fade"
+    ],
+    "fit": [
+      "awww",
+      "img",
+      "{path}",
+      "--resize",
+      "fit",
+      "--transition-type",
+      "fade"
+    ],
+    "stretch": [
+      "awww",
+      "img",
+      "{path}",
+      "--resize",
+      "stretch",
+      "--transition-type",
+      "fade"
+    ],
+    "tile": [
+      "awww",
+      "img",
+      "{path}",
+      "--resize",
+      "no",
+      "--transition-type",
+      "fade"
+    ]
+  },
+  "feh": {
+    "center": [
+      "feh",
+      "--bg-center",
+      "{path}"
+    ],
+    "fill": [
+      "feh",
+      "--bg-fill",
+      "{path}"
+    ],
+    "fit": [
+      "feh",
+      "--bg-max",
+      "{path}"
+    ],
+    "stretch": [
+      "feh",
+      "--bg-scale",
+      "{path}"
+    ],
+    "tile": [
+      "feh",
+      "--bg-tile",
+      "{path}"
+    ]
+  },
+  "hsetroot": {
+    "center": [
+      "hsetroot",
+      "-center",
+      "{path}"
+    ],
+    "fill": [
+      "hsetroot",
+      "-cover",
+      "{path}"
+    ],
+    "fit": [
+      "hsetroot",
+      "-full",
+      "{path}"
+    ],
+    "stretch": [
+      "hsetroot",
+      "-fill",
+      "{path}"
+    ],
+    "tile": [
+      "hsetroot",
+      "-tile",
+      "{path}"
+    ]
+  },
+  "hyprpaper": {
+    "center": [
+      "hyprctl",
+      "hyprpaper",
+      "wallpaper",
+      ",{path}"
+    ],
+    "fill": [
+      "hyprctl",
+      "hyprpaper",
+      "wallpaper",
+      ",{path}"
+    ],
+    "fit": [
+      "hyprctl",
+      "hyprpaper",
+      "wallpaper",
+      ",contain:{path}"
+    ],
+    "stretch": [
+      "hyprctl",
+      "hyprpaper",
+      "wallpaper",
+      ",{path}"
+    ],
+    "tile": [
+      "hyprctl",
+      "hyprpaper",
+      "wallpaper",
+      ",tile:{path}"
+    ]
+  },
+  "nitrogen": {
+    "center": [
+      "nitrogen",
+      "--set-centered",
+      "--save",
+      "{path}"
+    ],
+    "fill": [
+      "nitrogen",
+      "--set-zoom-fill",
+      "--save",
+      "{path}"
+    ],
+    "fit": [
+      "nitrogen",
+      "--set-zoom",
+      "--save",
+      "{path}"
+    ],
+    "stretch": [
+      "nitrogen",
+      "--set-scaled",
+      "--save",
+      "{path}"
+    ],
+    "tile": [
+      "nitrogen",
+      "--set-tiled",
+      "--save",
+      "{path}"
+    ]
+  },
+  "pcmanfm": {
+    "center": [
+      "pcmanfm",
+      "--set-wallpaper",
+      "{path}",
+      "--wallpaper-mode=center"
+    ],
+    "fill": [
+      "pcmanfm",
+      "--set-wallpaper",
+      "{path}",
+      "--wallpaper-mode=crop"
+    ],
+    "fit": [
+      "pcmanfm",
+      "--set-wallpaper",
+      "{path}",
+      "--wallpaper-mode=fit"
+    ],
+    "stretch": [
+      "pcmanfm",
+      "--set-wallpaper",
+      "{path}",
+      "--wallpaper-mode=stretch"
+    ],
+    "tile": [
+      "pcmanfm",
+      "--set-wallpaper",
+      "{path}",
+      "--wallpaper-mode=tile"
+    ]
+  },
+  "pcmanfm-qt": {
+    "center": [
+      "pcmanfm-qt",
+      "--set-wallpaper",
+      "{path}",
+      "--wallpaper-mode=center"
+    ],
+    "fill": [
+      "pcmanfm-qt",
+      "--set-wallpaper",
+      "{path}",
+      "--wallpaper-mode=zoom"
+    ],
+    "fit": [
+      "pcmanfm-qt",
+      "--set-wallpaper",
+      "{path}",
+      "--wallpaper-mode=fit"
+    ],
+    "stretch": [
+      "pcmanfm-qt",
+      "--set-wallpaper",
+      "{path}",
+      "--wallpaper-mode=stretch"
+    ],
+    "tile": [
+      "pcmanfm-qt",
+      "--set-wallpaper",
+      "{path}",
+      "--wallpaper-mode=tile"
+    ]
+  },
+  "sway": {
+    "center": [
+      "swaymsg",
+      "output",
+      "*",
+      "bg",
+      "{path}",
+      "center"
+    ],
+    "fill": [
+      "swaymsg",
+      "output",
+      "*",
+      "bg",
+      "{path}",
+      "fill"
+    ],
+    "fit": [
+      "swaymsg",
+      "output",
+      "*",
+      "bg",
+      "{path}",
+      "fit"
+    ],
+    "stretch": [
+      "swaymsg",
+      "output",
+      "*",
+      "bg",
+      "{path}",
+      "stretch"
+    ],
+    "tile": [
+      "swaymsg",
+      "output",
+      "*",
+      "bg",
+      "{path}",
+      "tile"
+    ]
+  },
+  "swaybg": {
+    "center": [
+      "swaybg",
+      "-i",
+      "{path}",
+      "-m",
+      "center"
+    ],
+    "fill": [
+      "swaybg",
+      "-i",
+      "{path}",
+      "-m",
+      "fill"
+    ],
+    "fit": [
+      "swaybg",
+      "-i",
+      "{path}",
+      "-m",
+      "fit"
+    ],
+    "stretch": [
+      "swaybg",
+      "-i",
+      "{path}",
+      "-m",
+      "stretch"
+    ],
+    "tile": [
+      "swaybg",
+      "-i",
+      "{path}",
+      "-m",
+      "tile"
+    ]
+  },
+  "swww": {
+    "center": [
+      "swww",
+      "img",
+      "{path}",
+      "--resize",
+      "no",
+      "--transition-type",
+      "fade"
+    ],
+    "fill": [
+      "swww",
+      "img",
+      "{path}",
+      "--resize",
+      "crop",
+      "--transition-type",
+      "fade"
+    ],
+    "fit": [
+      "swww",
+      "img",
+      "{path}",
+      "--resize",
+      "fit",
+      "--transition-type",
+      "fade"
+    ],
+    "stretch": [
+      "swww",
+      "img",
+      "{path}",
+      "--resize",
+      "stretch",
+      "--transition-type",
+      "fade"
+    ],
+    "tile": [
+      "swww",
+      "img",
+      "{path}",
+      "--resize",
+      "no",
+      "--transition-type",
+      "fade"
+    ]
+  },
+  "wbg": {
+    "center": [
+      "wbg",
+      "{path}"
+    ],
+    "fill": [
+      "wbg",
+      "{path}"
+    ],
+    "fit": [
+      "wbg",
+      "{path}"
+    ],
+    "stretch": [
+      "wbg",
+      "{path}"
+    ],
+    "tile": [
+      "wbg",
+      "{path}"
+    ]
+  },
+  "xwallpaper": {
+    "center": [
+      "xwallpaper",
+      "--center",
+      "{path}"
+    ],
+    "fill": [
+      "xwallpaper",
+      "--zoom",
+      "{path}"
+    ],
+    "fit": [
+      "xwallpaper",
+      "--maximize",
+      "{path}"
+    ],
+    "stretch": [
+      "xwallpaper",
+      "--stretch",
+      "{path}"
+    ],
+    "tile": [
+      "xwallpaper",
+      "--tile",
+      "{path}"
+    ]
+  }
+}

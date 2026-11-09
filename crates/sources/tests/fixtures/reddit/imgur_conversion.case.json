@@ -1,0 +1,39 @@
+{
+  "go_test": "reddit_test.go TestReddit_ImgurConversion",
+  "provider": "reddit",
+  "config": {
+    "enabled": true,
+    "subreddits": [
+      "wallpapers"
+    ]
+  },
+  "query": "",
+  "routes": [
+    {
+      "method": "GET",
+      "host": "www.reddit.com",
+      "path": "/r/wallpapers/hot.json",
+      "status": 200,
+      "content_type": "application/json",
+      "body_file": "imgur_conversion.json"
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "url": "https://www.reddit.com/r/wallpapers/hot.json?limit=100",
+      "user_agent": "wallpaperd/1.0"
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "source_url": "https://www.reddit.com/r/w/comments/x/imgur/",
+        "image_url": "https://i.imgur.com/abc123.jpg",
+        "title": "Imgur",
+        "author": "user1",
+        "source": "reddit"
+      }
+    ]
+  }
+}

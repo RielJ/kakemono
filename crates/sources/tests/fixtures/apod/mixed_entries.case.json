@@ -1,0 +1,51 @@
+{
+  "go_test": "synthesised (apod.go has no tests)",
+  "provider": "apod",
+  "config": {
+    "api_key": "DEMO_KEY",
+    "enabled": true
+  },
+  "query": "",
+  "routes": [
+    {
+      "method": "GET",
+      "host": "api.nasa.gov",
+      "path": "/planetary/apod",
+      "status": 200,
+      "content_type": "application/json",
+      "body_file": "count5.json"
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "url": "https://api.nasa.gov/planetary/apod?api_key=DEMO_KEY\u0026count=5",
+      "user_agent": "wallpaperd/1.0"
+    }
+  ],
+  "expected": {
+    "results": [
+      {
+        "source_url": "https://apod.nasa.gov/apod/ap20240315.html",
+        "image_url": "https://apod.nasa.gov/apod/image/2403/galaxy_4096.jpg",
+        "title": "Spiral Galaxy",
+        "author": "Jane Astro",
+        "source": "apod"
+      },
+      {
+        "source_url": "https://apod.nasa.gov/apod/ap20240316.html",
+        "image_url": "https://apod.nasa.gov/apod/image/2403/moon.jpg",
+        "title": "Moon Rise",
+        "author": "",
+        "source": "apod"
+      },
+      {
+        "source_url": "",
+        "image_url": "https://apod.nasa.gov/apod/image/2403/nebula.png",
+        "title": "Nebula",
+        "author": "Odd Date",
+        "source": "apod"
+      }
+    ]
+  }
+}

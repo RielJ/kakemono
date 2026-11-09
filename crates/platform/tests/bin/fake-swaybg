@@ -1,0 +1,10 @@
+#!/bin/sh
+# Stands in for swaybg in tests/linux_persistent.rs: stays running until signalled.
+# Not `exec sleep`: the process name must stay "fake-swaybg" (the supervisor checks it).
+# `fake-swaybg --die` exits at once instead (a setter that dies on start).
+if [ "${1:-}" = "--die" ]; then
+    exit 3
+fi
+while :; do
+    sleep 1
+done

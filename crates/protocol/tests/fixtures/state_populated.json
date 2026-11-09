@@ -1,0 +1,51 @@
+{
+  "current": {
+    "path": "/Users/golden/Pictures/Wallpapers/cache/OHR.GoldenHour_UHD.jpg",
+    "source": "bing",
+    "source_url": "https://www.bing.com/search?q=Golden+Hour\u0026form=hpcapt",
+    "image_url": "https://www.bing.com/th?id=OHR.GoldenHour_UHD.jpg\u0026rf=LaDigue_UHD.jpg",
+    "title": "Sunset \u003cGolden Hour\u003e \u0026 Co — café",
+    "author": "© Photographer \"Quoted\"",
+    "width": 3840,
+    "height": 2160,
+    "set_at": "2024-03-15T10:30:00+08:00"
+  },
+  "history": [
+    {
+      "path": "/Users/golden/Pictures/local/alpha.png",
+      "source": "local",
+      "source_url": "file:///Users/golden/Pictures/local/alpha.png",
+      "image_url": "/Users/golden/Pictures/local/alpha.png",
+      "title": "alpha",
+      "author": "",
+      "width": 0,
+      "height": 0,
+      "set_at": "2024-03-15T10:00:00Z"
+    },
+    {
+      "path": "/Users/golden/Pictures/Wallpapers/cache/OHR.GoldenHour_UHD.jpg",
+      "source": "bing",
+      "source_url": "https://www.bing.com/search?q=Golden+Hour\u0026form=hpcapt",
+      "image_url": "https://www.bing.com/th?id=OHR.GoldenHour_UHD.jpg\u0026rf=LaDigue_UHD.jpg",
+      "title": "Sunset \u003cGolden Hour\u003e \u0026 Co — café",
+      "author": "© Photographer \"Quoted\"",
+      "width": 3840,
+      "height": 2160,
+      "set_at": "2024-03-15T10:30:00+08:00"
+    },
+    {
+      "path": "/Users/golden/Pictures/local/gamma.jpg",
+      "source": "local",
+      "source_url": "file:///Users/golden/Pictures/local/gamma.jpg",
+      "image_url": "/Users/golden/Pictures/local/gamma.jpg",
+      "title": "gamma",
+      "author": "",
+      "width": 0,
+      "height": 0,
+      "set_at": "2024-03-15T11:30:00+08:00"
+    }
+  ],
+  "history_index": 1,
+  "paused": true,
+  "last_changed": "2024-03-15T10:30:00.123456789+08:00"
+}

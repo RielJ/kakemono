@@ -1,0 +1,6 @@
+{"ok":true}
+{"ok":true,"data":{"current":{"path":"/tmp/wpd-goldens-replay/pics/alpha.png","source":"local","source_url":"file:///tmp/wpd-goldens-replay/pics/alpha.png","image_url":"/tmp/wpd-goldens-replay/pics/alpha.png","title":"alpha","author":"","width":0,"height":0,"set_at":"2026-11-10T03:29:31+08:00"},"paused":true,"interval":"30m","theme":"light","history_count":3,"history_index":2}}
+{"ok":false,"error":"invalid JSON: unexpected end of JSON input"}
+{"ok":true}
+{"ok":false,"error":"unknown command: \"bogus\""}
+{"ok":true,"data":{"current":{"path":"/tmp/wpd-goldens-replay/pics/alpha.png","source":"local","source_url":"file:///tmp/wpd-goldens-replay/pics/alpha.png","image_url":"/tmp/wpd-goldens-replay/pics/alpha.png","title":"alpha","author":"","width":0,"height":0,"set_at":"2026-11-10T03:29:31+08:00"},"paused":false,"interval":"30m","theme":"light","history_count":3,"history_index":2}}

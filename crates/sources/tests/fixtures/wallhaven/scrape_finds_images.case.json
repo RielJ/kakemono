@@ -1,0 +1,74 @@
+{
+  "go_test": "wallhaven_test.go TestWallhavenScrape_FindsImages",
+  "provider": "wallhaven",
+  "config": {
+    "api_key": "",
+    "categories": "",
+    "enabled": true,
+    "purity": "100",
+    "sorting": "random"
+  },
+  "query": "nature",
+  "routes": [
+    {
+      "method": "GET",
+      "host": "wallhaven.cc",
+      "path": "/search",
+      "status": 200,
+      "content_type": "text/html",
+      "body_file": "scrape_search.html"
+    },
+    {
+      "method": "GET",
+      "host": "wallhaven.cc",
+      "path": "/w/abc123",
+      "status": 200,
+      "content_type": "text/html",
+      "body_file": "scrape_wallpaper_page.html"
+    },
+    {
+      "method": "GET",
+      "host": "wallhaven.cc",
+      "path": "/w/def456",
+      "status": 200,
+      "content_type": "text/html",
+      "body_file": "scrape_wallpaper_page.html"
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "url": "http://wallhaven.cc/w/abc123",
+      "user_agent": "wallpaperd/1.0"
+    },
+    {
+      "method": "GET",
+      "url": "http://wallhaven.cc/w/def456",
+      "user_agent": "wallpaperd/1.0"
+    },
+    {
+      "method": "GET",
+      "url": "https://wallhaven.cc/search?categories=111\u0026purity=100\u0026q=nature\u0026sorting=random",
+      "user_agent": "wallpaperd/1.0"
+    }
+  ],
+  "sort_results": true,
+  "expected": {
+    "results": [
+      {
+        "source_url": "http://wallhaven.cc/w/abc123",
+        "image_url": "https://w.wallhaven.cc/full/ab/wallhaven-abc123.jpg",
+        "title": "",
+        "author": "",
+        "source": "wallhaven"
+      },
+      {
+        "source_url": "http://wallhaven.cc/w/def456",
+        "image_url": "https://w.wallhaven.cc/full/ab/wallhaven-abc123.jpg",
+        "title": "",
+        "author": "",
+        "source": "wallhaven"
+      }
+    ]
+  }
+}

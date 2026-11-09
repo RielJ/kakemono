@@ -1,330 +1,235 @@
-# wallpaperd
+# kakemono
 
-A macOS wallpaper manager daemon written in Go.
+kakemono is a wallpaper manager for macOS, Linux, and Windows. A small daemon downloads wallpapers from Bing, Wallhaven, Unsplash, Reddit, NASA APOD, or your own folders, and changes the wallpaper on a timer. It picks different sources and search queries for light and dark mode, keeps a history you can step back through, and saves favorites.
 
-Features:
-- **Multiple sources**: Bing Daily, Wallhaven, Unsplash, Reddit, NASA APOD, Local files
-- **Auto-rotation** on a configurable interval
-- **Light/dark mode awareness** — different providers or queries per theme
-- **History navigation** — go back to previous wallpapers with `wallpaperd prev`
-- **Favorites & Trash** — curate your collection
-- **sketchybar integration** — live status bar item with popup controls
-- **Unix socket IPC** — scriptable with `nc` or any JSON tool
+The `kakemono` binary is both the daemon and the command-line client. The optional kakemono app adds a tray icon, a thumbnail picker, and a settings window.
 
----
+kakemono replaces the Go `wallpaperd`, and reads its config and history. To switch, follow [docs/migration.md](docs/migration.md).
 
-## Installation
+## Install
 
-```bash
-go install github.com/rielj/wallpaperd@latest
+kakemono builds with stable Rust 1.99 or newer.
+
+### The command-line tool and daemon
+
+From a clone of this repository:
+
+```sh
+cargo install --locked --path crates/cli
 ```
 
-Or build from source:
+The command installs `kakemono` into `~/.cargo/bin`.
 
-```bash
-git clone https://github.com/rielj/wallpaperd
-cd wallpaperd
-go build -o wallpaperd .
+### The app (tray, picker, and settings)
+
+The app is a Tauri 2 project in `crates/ui`. It needs Node.js and npm. On Linux it also needs the WebKitGTK development packages. On Debian and Ubuntu:
+
+```sh
+sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
 ```
 
----
+Build the bundle, which also contains the `kakemono` binary:
 
-## Quick Start
-
-```bash
-# Start the daemon (background)
-wallpaperd daemon
-
-# Fetch and set the next wallpaper immediately
-wallpaperd next
-
-# See what's currently set
-wallpaperd status
-
-# Navigate history
-wallpaperd prev
-wallpaperd next
-
-# Curate
-wallpaperd favorite   # copy to ~/Pictures/Wallpapers/favorites
-wallpaperd trash      # move to trash, load next
-
-# Set a specific file
-wallpaperd set ~/Downloads/myphoto.jpg
-
-# Pause/resume rotation
-wallpaperd pause
-wallpaperd resume
+```sh
+scripts/build-sidecar.sh
+cd crates/ui/frontend
+npm ci
+TAURI_APP_PATH=../src-tauri npm run tauri -- build --config ../src-tauri/tauri.bundle.conf.json
 ```
 
----
+The bundles go to `target/release/bundle/`. On macOS, copy `kakemono.app` to `/Applications`.
+
+### Start the daemon at login
+
+```sh
+kakemono service install
+```
+
+| OS | What `service install` creates | Logs |
+|---|---|---|
+| macOS | LaunchAgent `dev.rielj.kakemono.daemon` in `~/Library/LaunchAgents/` | `~/.local/state/kakemono/launchd.log` |
+| Linux | systemd user unit `~/.config/systemd/user/kakemono.service`, part of `graphical-session.target` | `journalctl --user -u kakemono.service` |
+| Windows | the value `kakemono-daemon` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` | `%LOCALAPPDATA%\kakemono\logs\` |
+
+On Linux, the systemd unit needs your session's environment, and many tiling compositors don't start `graphical-session.target`. [docs/linux-backends.md](docs/linux-backends.md#the-systemd-service-needs-your-session-environment) explains both cases.
+
+`kakemono service status` shows whether the service is installed and running. `kakemono service uninstall` removes it.
+
+## Quick start
+
+```sh
+kakemono daemon          # start the daemon in the background
+kakemono next            # download and set a new wallpaper now
+kakemono status          # show the current wallpaper
+kakemono prev            # go back in the history
+kakemono favorite        # copy the current wallpaper to the favorites folder
+kakemono trash           # move the current wallpaper to the trash folder and set the next one
+kakemono set ~/Downloads/photo.jpg
+kakemono pause           # stop the timer; `kakemono resume` starts it again
+```
+
+If a command can't reach the daemon, it exits with code 1 and says how to start it.
+
+On Linux, run `kakemono detect` once to see which wallpaper backend kakemono picked for your desktop. If wallpapers don't change, run `kakemono doctor`.
+
+## Commands
+
+Every command takes `--config <PATH>` and `--socket <PATH>`. `kakemono <command> --help` describes each one.
+
+| Command | What it does |
+|---|---|
+| `daemon` | Starts the daemon in the background. `-f`, `--foreground` keeps it in the terminal. The daemon refuses to start twice. |
+| `next` | Sets the next wallpaper: forward in the history, or a new download at the end of it. |
+| `prev` | Sets the previous wallpaper from the history. |
+| `set <IMAGE-PATH>` | Sets an image file as the wallpaper. |
+| `favorite` | Copies the current wallpaper to the favorites folder. |
+| `trash` | Moves the current wallpaper to the trash folder and sets the next one. |
+| `status` | Shows the current wallpaper, the theme, the interval, and whether rotation is paused. `--json` prints the daemon's JSON. |
+| `pause`, `resume` | Stops or restarts the rotation timer. |
+| `open` | Reveals the current wallpaper in Finder or the file manager. `--folder` opens the download folder. `--favorites` opens the favorites folder. |
+| `pick` | Opens the thumbnail picker in the kakemono app. |
+| `settings` | Opens the settings window in the kakemono app. |
+| `detect` | Shows the wallpaper backend for this session and why. `--write` saves it to `[desktop]`. `--force` overwrites a section with `managed_by = "user"`. Linux only. On other systems it prints the native backend. |
+| `doctor` | Prints the config file, the session, the backend and the command it would run, the picker window rules, and the daemon's state. `--apply` asks the daemon to set the current wallpaper again. |
+| `service install`, `service uninstall`, `service status [--json]` | Manages the login service. |
+| `config path`, `config init`, `config edit` | Prints the config path, writes the commented default config (never overwrites), or opens the config in `$VISUAL` or `$EDITOR`. |
+| `completions <SHELL>` | Prints a completion script for `bash`, `elvish`, `fish`, `powershell`, or `zsh`. |
+
+`pick` and `settings` look for the `kakemono-ui` binary in `$KAKEMONO_UI`, next to `kakemono`, in `/Applications/kakemono.app` and `~/Applications/kakemono.app` (macOS), and on `PATH`.
 
 ## Configuration
 
-The config file is auto-generated on first run at:
+kakemono reads the first config file that it finds:
 
-```
-~/.config/wallpaperd/config.toml
-```
+1. `--config <PATH>`;
+2. `$KAKEMONO_CONFIG`;
+3. `~/.config/kakemono/config.toml` (`$XDG_CONFIG_HOME/kakemono/config.toml` if set; `%APPDATA%\kakemono\config.toml` on Windows);
+4. the wallpaperd config, `~/.config/wallpaperd/config.toml`.
 
-### Full reference
+With no file, kakemono uses the defaults below. `kakemono config init` writes a commented config, with some example values that differ from the defaults. The daemon reads the config when it starts. After you edit the file, restart the daemon or send it `reload` (see [Talk to the daemon over the socket](#talk-to-the-daemon-over-the-socket)).
+
+kakemono ignores unknown keys. A section with some keys missing uses the defaults for those keys. Paths can start with `~`.
+
+### `[daemon]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `rotation_enabled` | `true` | Change the wallpaper on a timer. |
+| `interval` | `"30m"` | Time between changes, as a Go duration: `"45s"`, `"30m"`, `"2h30m"`. An invalid or zero value falls back to 30 minutes. |
+| `download_dir` | `"~/Pictures/Wallpapers/cache"` | Where downloads go. |
+| `cache_size` | `50` | The number of downloads to keep in `download_dir`. |
+| `trash_dir` | `"~/Pictures/Wallpapers/trash"` | Where `trash` moves files. |
+| `socket_path` | unset | The daemon socket. Unset means the platform default (see [Files](#files)). Ignored on Windows. |
+| `rotate_on_theme_change` | `true` | Set a new wallpaper when the system switches between light and dark mode. |
+| `reapply_on_space_change` | `false` | macOS: set the current wallpaper again when you switch Spaces. See [docs/migration.md](docs/migration.md#spaces-get-the-wallpaper-only-when-they-are-current). |
+
+### Sources
+
+| Section | Keys and defaults |
+|---|---|
+| `[bing]` | `enabled = true`, `market = "en-US"` |
+| `[wallhaven]` | `enabled = false`, `api_key = ""`, `purity = "100"`, `sorting = "random"`, `categories = "111"` |
+| `[unsplash]` | `enabled = false`, `access_key = ""` |
+| `[reddit]` | `enabled = false`, `subreddits = ["EarthPorn", "wallpapers"]` |
+| `[apod]` | `enabled = false`, `api_key = "DEMO_KEY"` |
+| `[local]` | `enabled = false`, `dirs = []`, `recursive = true` |
+
+Wallhaven works without an API key. `purity` is three digits for SFW, sketchy, and NSFW. `categories` is three digits for general, anime, and people. `sorting` is one of `random`, `toplist`, `date_added`, `relevance`, `views`, `favorites`, and `hot`.
+
+### `[light]` and `[dark]`
+
+| Key | `[light]` default | `[dark]` default |
+|---|---|---|
+| `sources` | `["bing"]` | `["bing"]` |
+| `queries` | `["landscape", "nature"]` | `["space", "night", "dark"]` |
+
+For each change, kakemono tries the enabled sources from the list for the current theme, in random order, with one random query. If none of the listed sources is enabled, it uses any enabled source.
+
+### `[favorites]`
+
+| Key | Default |
+|---|---|
+| `dir` | `"~/Pictures/Wallpapers/favorites"` |
+
+### `[picker]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `position` | `"bottom"` | The screen edge for the picker: `bottom`, `top`, `left`, or `right`. |
+| `close_on_blur` | `true` | Hide the picker when it loses focus. |
+| `placement` | `"edge"` | `edge` uses `position`. `custom` uses `custom`. Dragging the picker sets both. |
+| `custom` | unset | `{ x = 10, y = 20, monitor = "DP-1" }` |
+| `force_x11` | `false` | Linux, Wayland: run the picker under XWayland so kakemono can place it. Experimental. |
+
+### `[desktop]`
+
+Linux only. It selects the wallpaper backend: `backend`, `set_command`, `persistent`, `fit`, `theme`, and `managed_by`. The daemon fills it in on the first start. [docs/linux-backends.md](docs/linux-backends.md) describes every key and backend. On macOS and Windows, kakemono always uses the system API and ignores `backend` and `set_command`.
+
+### `[hooks]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `on_change` | unset | A command to run after every wallpaper change. |
+
+`on_change` is an argv array, or a string that kakemono splits like a shell would. kakemono runs it without a shell and doesn't wait for it. A hook that fails or runs longer than 10 seconds is logged as a warning. At most 4 hooks run at once.
+
+The hook gets `KAKEMONO_PATH`, `KAKEMONO_SOURCE`, `KAKEMONO_TITLE`, `KAKEMONO_AUTHOR`, `KAKEMONO_SOURCE_URL`, and `KAKEMONO_THEME`, plus `PATH`, `HOME`, `DISPLAY`, `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, and `DBUS_SESSION_BUS_ADDRESS` from the daemon. Arguments can use `{path}`, `{uri}`, `{fit}`, and `{theme}`.
 
 ```toml
-[daemon]
-# How often to change the wallpaper (Go duration string)
-interval = "30m"
-# Where to store downloaded wallpapers
-download_dir = "~/Pictures/Wallpapers/cache"
-# Maximum number of cached wallpapers (oldest deleted when exceeded)
-cache_size = 50
-
-[wallhaven]
-enabled = true
-# Optional API key — https://wallhaven.cc/settings/account
-api_key = ""
-# Purity: "100" = SFW, "110" = SFW+Sketchy, "111" = all
-purity = "100"
-# Sorting: "random", "hot", "toplist", "latest"
-sorting = "random"
-
-[unsplash]
-enabled = true
-# Optional API key — https://unsplash.com/developers
-access_key = ""
-
-[reddit]
-enabled = true
-subreddits = ["EarthPorn", "wallpapers", "spaceporn", "CityPorn", "SkyPorn"]
-
-[bing]
-enabled = true
-market = "en-US"
-
-[apod]
-enabled = true
-# NASA API key — https://api.nasa.gov (or use "DEMO_KEY")
-api_key = "DEMO_KEY"
-
-[local]
-enabled = false
-dirs = ["/path/to/your/wallpapers"]
-recursive = true
-
-# Providers and queries for light mode
-[light]
-sources = ["bing", "unsplash", "wallhaven"]
-queries = ["nature", "landscape", "architecture"]
-
-# Providers and queries for dark mode
-[dark]
-sources = ["bing", "unsplash", "wallhaven"]
-queries = ["space", "night", "cityscape", "dark"]
-
-[favorites]
-dir = "~/Pictures/Wallpapers/favorites"
-
-[sketchybar]
-enabled = true
-item_name = "wallpaper"
+[hooks]
+# sketchybar (macOS). The `kakemono service install` daemon has Homebrew on its PATH; from
+# other launchers, use the full path (`command -v sketchybar`).
+on_change = ["sketchybar", "--trigger", "wallpaper_changed"]
+# waybar (Linux)
+# on_change = ["pkill", "-RTMIN+8", "waybar"]
 ```
 
----
+[contrib/sketchybar](contrib/sketchybar/README.md) and [contrib/waybar](contrib/waybar/README.md) have complete bar items that use these hooks.
 
-## CLI Commands
+## Files
 
-| Command | Description |
-|---|---|
-| `wallpaperd daemon` | Start the daemon (background) |
-| `wallpaperd daemon --foreground` | Start the daemon in the current process |
-| `wallpaperd next` | Switch to the next wallpaper |
-| `wallpaperd prev` | Revert to the previous wallpaper |
-| `wallpaperd set <path>` | Set a specific image file |
-| `wallpaperd favorite` | Copy current wallpaper to favorites dir |
-| `wallpaperd trash` | Move current to trash, load next |
-| `wallpaperd pause` | Pause auto-rotation |
-| `wallpaperd resume` | Resume auto-rotation |
-| `wallpaperd status` | Pretty-print current status |
-| `wallpaperd status --json` | Output status as JSON |
+| | macOS | Linux | Windows |
+|---|---|---|---|
+| Config | `~/.config/kakemono/config.toml` | `$XDG_CONFIG_HOME/kakemono/config.toml` | `%APPDATA%\kakemono\config.toml` |
+| History and state | `~/.config/kakemono/state.json` | `$XDG_CONFIG_HOME/kakemono/state.json` | `%APPDATA%\kakemono\state.json` |
+| Socket | `~/.config/kakemono/kakemono.sock` | `$XDG_RUNTIME_DIR/kakemono/kakemono.sock` | named pipe `\\.\pipe\kakemono-<user>` |
+| Lock and PID files | `~/.config/kakemono/` | `$XDG_RUNTIME_DIR/kakemono/` | `%LOCALAPPDATA%\kakemono\run\` |
+| Daemon logs | `~/.local/state/kakemono/` | `$XDG_STATE_HOME/kakemono/` | `%LOCALAPPDATA%\kakemono\logs\` |
+| Thumbnails (app) | `~/.cache/kakemono/` | `$XDG_CACHE_HOME/kakemono/` | `%LOCALAPPDATA%\kakemono\cache\` |
 
-All commands accept `--config <path>` and `--socket <path>` flags.
+`XDG_CONFIG_HOME`, `XDG_STATE_HOME`, and `XDG_CACHE_HOME` default to `~/.config`, `~/.local/state`, and `~/.cache`, on macOS too. Without `XDG_RUNTIME_DIR`, Linux puts the socket at `~/.config/kakemono/kakemono.sock` and the lock and PID files in the config folder. `$KAKEMONO_SOCKET` overrides the default socket.
 
----
+The background daemon writes one log file per day, `kakemono.<date>.log`, and keeps the newest 7. `KAKEMONO_LOG` sets the level in `tracing` filter syntax, for example `KAKEMONO_LOG=debug`.
 
-## Sketchybar Integration
+## Talk to the daemon over the socket
 
-See [`sketchybar/README.md`](sketchybar/README.md) for full setup instructions.
+The daemon reads one JSON request per line and answers with one JSON line:
 
-Quick install:
-
-```bash
-PLUGIN_DIR="$HOME/.config/sketchybar/plugins"
-cp sketchybar/plugins/wallpaper.sh "$PLUGIN_DIR/"
-cp sketchybar/plugins/wallpaper_popup.sh "$PLUGIN_DIR/"
-chmod +x "$PLUGIN_DIR/"*.sh
-# Then add sketchybar/sketchybarrc.sh contents to your sketchybarrc
+```sh
+echo '{"cmd":"status"}' | nc -U ~/.config/kakemono/kakemono.sock
+echo '{"cmd":"set","args":{"path":"/tmp/a.jpg"}}' | nc -U ~/.config/kakemono/kakemono.sock
 ```
 
----
-
-## Auto-start with launchctl
-
-Save the following as `~/Library/LaunchAgents/com.rielj.wallpaperd.plist`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key><string>com.rielj.wallpaperd</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/local/bin/wallpaperd</string>
-        <string>daemon</string>
-        <string>--foreground</string>
-    </array>
-    <key>RunAtLoad</key><true/>
-    <key>KeepAlive</key><true/>
-    <key>StandardOutPath</key><string>/tmp/wallpaperd.log</string>
-    <key>StandardErrorPath</key><string>/tmp/wallpaperd.err</string>
-</dict>
-</plist>
-```
-
-Then:
-
-```bash
-launchctl load ~/Library/LaunchAgents/com.rielj.wallpaperd.plist
-```
-
----
-
-## IPC Protocol
-
-The daemon exposes a Unix domain socket at `~/.config/wallpaperd/daemon.sock`.
-You can script it directly:
-
-```bash
-echo '{"cmd":"status"}' | nc -U ~/.config/wallpaperd/daemon.sock
-echo '{"cmd":"next"}'   | nc -U ~/.config/wallpaperd/daemon.sock
-```
-
-**Request format:**
-```json
-{"cmd": "next", "args": {}}
-```
-
-**Response format:**
-```json
-{"ok": true, "data": {...}}
-{"ok": false, "error": "message"}
-```
-
-Supported commands: `next`, `prev`, `favorite`, `trash`, `pause`, `resume`, `status`, `set` (requires `args.path`).
-
----
-
-## State & Files
-
-| File | Purpose |
-|---|---|
-| `~/.config/wallpaperd/config.toml` | Configuration |
-| `~/.config/wallpaperd/state.json` | History, current wallpaper, paused state |
-| `~/.config/wallpaperd/daemon.sock` | IPC socket |
-| `~/.config/wallpaperd/daemon.pid` | Daemon PID |
-| `~/Pictures/Wallpapers/cache/` | Downloaded wallpapers |
-| `~/Pictures/Wallpapers/favorites/` | Favorited wallpapers |
-| `~/Pictures/Wallpapers/trash/` | Trashed wallpapers |
-
----
-
-## Settings GUI
-
-wallpaperd ships with an optional native macOS settings window built with
-[Wails](https://wails.io) (Go + React + TypeScript). The GUI lets you configure
-every option visually — toggle providers, set API keys, manage subreddits,
-adjust intervals, browse favorites, and trigger wallpaper actions — without
-touching `config.toml` directly.
-
-> **Note:** The GUI is entirely optional. `config.toml` is the source of truth
-> and works perfectly without the GUI.
-
-### Prerequisites
-
-| Tool | Version | Install |
-|---|---|---|
-| Go | 1.21+ | <https://go.dev/dl> |
-| Node.js | 18+ | <https://nodejs.org> |
-| Wails CLI | v2 | `go install github.com/wailsapp/wails/v2/cmd/wails@latest` |
-
-Verify everything is set up:
-
-```bash
-wails doctor
-```
-
-### Building the Settings GUI
-
-```bash
-# Development — hot-reload dev server (React HMR + Go auto-recompile)
-cd gui && make dev
-
-# Release build — produces gui/build/bin/wallpaperd-settings.app
-cd gui && make build
-
-# Universal binary (runs natively on Apple Silicon and Intel)
-cd gui && make build-universal
-```
-
-Alternatively, using Wails directly:
-
-```bash
-cd gui
-wails dev           # development
-wails build         # release (.app bundle)
-wails build -platform darwin/universal   # universal binary
-```
-
-### Launching the Settings Window
-
-After building, open the app bundle directly:
-
-```bash
-open gui/build/bin/wallpaperd-settings.app
-```
-
-Or launch it from the command line via `wallpaperd`:
-
-```bash
-wallpaperd settings
-```
-
-The window reads and writes `~/.config/wallpaperd/config.toml` directly, and
-communicates with a running daemon over the IPC socket for live actions (next,
-prev, favorite, trash).
-
-### Features
-
-- **General** tab — interval, cache size, download directory
-- **Providers** tab — enable/disable Bing, Wallhaven, Unsplash, Reddit, APOD,
-  Local; configure API keys, subreddits, directories
-- **Themes** tab — per-theme source selection and search queries for light/dark
-  mode
-- **Favorites** tab — browse favorited wallpapers with previews
-- **Sketchybar** tab — enable integration and set the item name
-- **Status bar** — shows daemon status, current wallpaper, and action buttons
-  (Next / Prev / Favorite / Trash)
-- Follows macOS system dark/light mode automatically
-
-### Screenshots
-
-<!-- TODO: add screenshots once the GUI is complete -->
-
----
+A reply is `{"ok":true,"data":{...}}` or `{"ok":false,"error":"..."}`. The commands are `next`, `prev`, `set` (needs `args.path`), `favorite`, `trash`, `pause`, `resume`, `status`, `reload`, `subscribe`, `version`, and `doctor`. `reload` reads the config again without a restart. Changes to `socket_path` and `[desktop]` still need a restart.
 
 ## Development
 
-```bash
-go test ./...
-go vet ./...
-go build ./...
+```sh
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cd crates/ui/frontend && npm ci && npm test && npm run build
 ```
+
+| Crate | Contents |
+|---|---|
+| `crates/cli` | The `kakemono` binary: commands and the daemon host |
+| `crates/engine` | Rotation, history, favorites, trash, and hooks |
+| `crates/sources` | The wallpaper sources and downloads |
+| `crates/platform` | Wallpaper setters, theme and display signals, login services, and Linux backend detection |
+| `crates/config` | The config schema, defaults, paths, and editing |
+| `crates/protocol` | The socket protocol and client |
+| `crates/ui` | The Tauri app: tray, picker, and settings |
+
+## License
+
+MIT. See [LICENSE](LICENSE).

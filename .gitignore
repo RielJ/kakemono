@@ -5,19 +5,8 @@ target/
 node_modules/
 dist/
 
-# Go build outputs and coverage
-/wallpaperd
-/gui/gui
-/picker/picker
-gui/build/bin/
-picker/build/bin/
-coverage.out
-
-# Stray runtime dir created by an unexpanded "~" path
-/~/
-
-# Third-party GPL-3 reference (Variety). Local reading only: never commit or copy code from it.
-/variety-reference/
-
 # OS / editor
 .DS_Store
+
+# Tauri sidecar staged by scripts/build-sidecar.sh (Task 47)
+crates/ui/src-tauri/binaries/

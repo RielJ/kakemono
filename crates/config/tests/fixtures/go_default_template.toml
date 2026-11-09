@@ -1,0 +1,81 @@
+# wallpaperd configuration file
+# Location: ~/.config/wallpaperd/config.toml
+
+[daemon]
+# Enable or disable automatic wallpaper rotation
+rotation_enabled = true
+# How often to rotate the wallpaper (Go duration string: "30m", "1h", "2h30m")
+interval = "30m"
+# Directory where downloaded wallpapers are cached
+download_dir = "~/Pictures/Wallpapers/cache"
+# Maximum number of images to keep in the cache directory
+cache_size = 50
+# Directory where trashed wallpapers are moved
+trash_dir = "~/Pictures/Wallpapers/trash"
+# Unix socket path used for IPC between the daemon and CLI commands
+socket_path = "~/.config/wallpaperd/daemon.sock"
+
+# --- Providers ---
+
+[bing]
+enabled = true
+# Bing market code controlling language/region of results
+market = "en-US"
+
+[wallhaven]
+enabled = false
+# Optional Wallhaven API key — without it the provider falls back to HTML scraping
+api_key = ""
+# Purity filter: "100" = SFW, "110" = SFW+Sketchy, "111" = all
+purity = "100"
+# Sort order: "random", "toplist", "date_added", "relevance", "views", "favorites", "hot"
+sorting = "random"
+# Category filter: 3 bits (general/anime/people), "111" = all
+categories = "111"
+
+[unsplash]
+enabled = false
+# Optional Unsplash access key — without it the provider uses the anonymous URL
+access_key = ""
+
+[reddit]
+enabled = false
+# List of subreddits to pick from (one is chosen at random per request)
+subreddits = ["EarthPorn", "wallpapers", "spaceporn"]
+
+[apod]
+enabled = false
+# NASA API key — "DEMO_KEY" works for low-volume use
+api_key = "DEMO_KEY"
+
+[local]
+enabled = false
+# Directories to scan for local wallpapers
+dirs = []
+# Whether to scan subdirectories recursively
+recursive = true
+
+# --- Theme-aware provider selection ---
+
+[light]
+# Providers to use in light mode
+sources = ["bing"]
+# Search queries passed to providers that support them
+queries = ["landscape", "nature", "cityscape"]
+
+[dark]
+# Providers to use in dark mode
+sources = ["bing"]
+queries = ["space", "night", "dark minimal", "galaxy"]
+
+# --- Favorites ---
+
+[favorites]
+# Directory where favorited wallpapers are copied
+dir = "~/Pictures/Wallpapers/favorites"
+
+# --- Picker ---
+
+[picker]
+# Position of the floating thumbnail picker: "bottom", "top", "left", "right"
+position = "bottom"

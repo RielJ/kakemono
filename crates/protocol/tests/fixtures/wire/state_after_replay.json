@@ -1,0 +1,51 @@
+{
+  "current": {
+    "path": "/tmp/wpd-goldens-replay/pics/alpha.png",
+    "source": "local",
+    "source_url": "file:///tmp/wpd-goldens-replay/pics/alpha.png",
+    "image_url": "/tmp/wpd-goldens-replay/pics/alpha.png",
+    "title": "alpha",
+    "author": "",
+    "width": 0,
+    "height": 0,
+    "set_at": "2026-11-10T03:29:31+08:00"
+  },
+  "history": [
+    {
+      "path": "/tmp/wpd-goldens-replay/pics/alpha.png",
+      "source": "local",
+      "source_url": "file:///tmp/wpd-goldens-replay/pics/alpha.png",
+      "image_url": "/tmp/wpd-goldens-replay/pics/alpha.png",
+      "title": "alpha",
+      "author": "",
+      "width": 0,
+      "height": 0,
+      "set_at": "2026-11-10T03:29:31+08:00"
+    },
+    {
+      "path": "/tmp/wpd-goldens-replay/set/beta.png",
+      "source": "local",
+      "source_url": "",
+      "image_url": "",
+      "title": "beta.png",
+      "author": "",
+      "width": 0,
+      "height": 0,
+      "set_at": "2026-11-10T03:29:31+08:00"
+    },
+    {
+      "path": "/tmp/wpd-goldens-replay/pics/alpha.png",
+      "source": "local",
+      "source_url": "file:///tmp/wpd-goldens-replay/pics/alpha.png",
+      "image_url": "/tmp/wpd-goldens-replay/pics/alpha.png",
+      "title": "alpha",
+      "author": "",
+      "width": 0,
+      "height": 0,
+      "set_at": "2026-11-10T03:29:31+08:00"
+    }
+  ],
+  "history_index": 2,
+  "paused": false,
+  "last_changed": "2026-11-10T03:29:31.344332+08:00"
+}
