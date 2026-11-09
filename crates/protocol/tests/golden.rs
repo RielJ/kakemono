@@ -239,7 +239,8 @@ mod golden {
             Request::Reload,
             Request::Subscribe,
             Request::Version,
-            Request::Doctor,
+            Request::Doctor { apply: false },
+            Request::Doctor { apply: true },
         ];
         for req in all {
             let cmd = Command::from(req.clone());
@@ -247,6 +248,51 @@ mod golden {
             let json = serde_json::to_string(&cmd).expect("serialize");
             let back: Command = serde_json::from_str(&json).expect("parse");
             assert_eq!(Request::try_from(back), Ok(req));
+        }
+    }
+
+    /// New in Rust: `doctor` with `apply` (Task 37). Fixture written by hand, not by Go.
+    #[test]
+    fn golden_command_doctor_apply() {
+        let cmd: Command = round_trip_file("command_doctor_apply.json");
+        assert_eq!(
+            Request::try_from(cmd.clone()),
+            Ok(Request::Doctor { apply: true })
+        );
+        assert_go_bytes::<Command>(
+            "command_doctor_apply.json",
+            read("command_doctor_apply.json").trim_end(),
+        );
+        assert_eq!(Command::from(Request::Doctor { apply: true }), cmd);
+    }
+
+    #[test]
+    fn golden_doctor_apply_absent_null_or_false_means_report_only() {
+        for json in [
+            r#"{"cmd":"doctor"}"#,
+            r#"{"cmd":"doctor","args":null}"#,
+            r#"{"cmd":"doctor","args":{"apply":null}}"#,
+            r#"{"cmd":"doctor","args":{"apply":false}}"#,
+        ] {
+            let cmd: Command = serde_json::from_str(json).expect("parse");
+            assert_eq!(
+                Request::try_from(cmd),
+                Ok(Request::Doctor { apply: false }),
+                "{json}"
+            );
+        }
+        // Plain doctor writes no `args`: still `{"cmd":"doctor"}` byte for byte.
+        let line = serde_json::to_string(&Command::from(Request::Doctor { apply: false })).unwrap();
+        assert_eq!(line, r#"{"cmd":"doctor"}"#);
+        for bad in [
+            r#"{"cmd":"doctor","args":{"apply":"yes"}}"#,
+            r#"{"cmd":"doctor","args":{"apply":1}}"#,
+        ] {
+            let bad: Command = serde_json::from_str(bad).unwrap();
+            assert_eq!(
+                Request::try_from(bad).unwrap_err().to_string(),
+                "doctor: argument 'apply' must be a boolean"
+            );
         }
     }
 

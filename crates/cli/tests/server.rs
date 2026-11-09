@@ -11,12 +11,15 @@ use futures::StreamExt;
 use interprocess::local_socket::tokio::Stream as LocalSocketStream;
 use interprocess::local_socket::traits::tokio::Stream as _;
 use kakemono_cli::daemon::lock::{self, LockError, LockGuard};
-use kakemono_cli::daemon::server::{self, BindError, Server, VersionData};
+use kakemono_cli::daemon::server::{
+    self, ApplyOutcome, BindError, DoctorData, NOTHING_TO_APPLY, Server, VersionData,
+};
 use kakemono_config::Config;
 use kakemono_engine::state::State;
 use kakemono_engine::{Deps, Engine};
 use kakemono_platform::api::{Fit, Platform, Theme};
 use kakemono_platform::fake::{ManualSignals, RecordingSetter};
+use kakemono_platform::linux::detect::Env;
 use kakemono_protocol::client::{self, Client};
 use kakemono_protocol::endpoint::Endpoint;
 use kakemono_protocol::types::{Command, Event, Request, Response, StatusData, WallpaperInfo};
@@ -57,6 +60,10 @@ impl Daemon {
         let root = root.trim_matches('"');
         text.replace(root, "[ROOT]")
             .replace(env!("CARGO_PKG_VERSION"), "[VERSION]")
+            .replace(
+                &format!("\"pid\":{},", std::process::id()),
+                "\"pid\":\"[PID]\",",
+            )
     }
 
     async fn stop(mut self) {
@@ -89,6 +96,11 @@ fn config(root: &Path) -> Config {
 /// Lock, bind and serve on `<tmp>/run/k.sock`. The static source serves two local images
 /// (`one.jpg`, `two.jpg`); `next` picks one of them at random.
 async fn start() -> Daemon {
+    start_with(|srv| srv).await
+}
+
+/// [`start`], with `customize` applied to the [`Server`] before it serves.
+async fn start_with(customize: impl FnOnce(Server) -> Server) -> Daemon {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
     let images: Vec<_> = ["one.jpg", "two.jpg"]
@@ -133,6 +145,7 @@ async fn start() -> Daemon {
         cfg.dark.sources = vec!["local".to_owned()];
         Ok(cfg)
     });
+    let srv = customize(srv);
     let shutdown = CancellationToken::new();
     let task = tokio::spawn(srv.serve(listener, shutdown.clone()));
     Daemon {
@@ -221,9 +234,12 @@ async fn every_command_through_client() {
     let version: VersionData = ok_data(&c.request(Request::Version).await.unwrap());
     assert_eq!(version, VersionData::current());
 
-    let doctor: serde_json::Value = ok_data(&c.request(Request::Doctor).await.unwrap());
-    assert_eq!(doctor["backend"]["name"], "fake");
-    assert_eq!(doctor["theme"], "light");
+    let doctor: DoctorData = ok_data(&c.request(Request::Doctor { apply: false }).await.unwrap());
+    assert_eq!(doctor.backend.name, "fake");
+    assert_eq!(doctor.theme, "light");
+    assert_eq!(doctor.pid, std::process::id());
+    assert_eq!(doctor.env, None, "no env probe installed");
+    assert_eq!(doctor.apply, None, "plain doctor sets nothing");
 
     // reload re-reads config.toml (interval 10m).
     let r = c.request(Request::Reload).await.unwrap();
@@ -454,5 +470,78 @@ async fn dispatch_subscribe_without_a_connection_is_an_error() {
     let srv = Server::new(d.engine.clone(), || Ok(Config::default()));
     let r = srv.dispatch(Request::Subscribe).await;
     assert!(!r.ok);
+    d.stop().await;
+}
+
+/// `doctor` with `apply` re-sets the current wallpaper through the daemon's own setter, and a
+/// failed set is reported inside an `ok:true` report.
+#[tokio::test]
+async fn doctor_apply_resets_the_current_wallpaper_through_the_daemon() {
+    let d = start_with(|srv| {
+        srv.with_env_probe(|| {
+            Box::pin(async { Env::default().with_var("XDG_CURRENT_DESKTOP", "Hyprland") })
+        })
+    })
+    .await;
+    let mut c = Client::connect(&d.endpoint).await.unwrap();
+
+    // Nothing to re-set yet: no setter call.
+    let doctor: DoctorData = ok_data(&c.request(Request::Doctor { apply: true }).await.unwrap());
+    assert_eq!(
+        doctor.apply,
+        Some(ApplyOutcome {
+            ok: false,
+            path: None,
+            error: Some(NOTHING_TO_APPLY.to_owned()),
+        })
+    );
+    assert!(d.setter.calls().is_empty());
+    assert_eq!(
+        doctor.env.unwrap().xdg_current_desktop.as_deref(),
+        Some("Hyprland")
+    );
+
+    let current: WallpaperInfo = ok_data(&c.request(Request::Next).await.unwrap());
+    let history = d.engine.state().history_count();
+    let doctor: DoctorData = ok_data(&c.request(Request::Doctor { apply: true }).await.unwrap());
+    assert_eq!(
+        doctor.apply,
+        Some(ApplyOutcome {
+            ok: true,
+            path: Some(current.path.clone()),
+            error: None,
+        })
+    );
+    let calls = d.setter.calls();
+    assert_eq!(calls.len(), 2, "next + apply");
+    assert_eq!(calls[1], (PathBuf::from(&current.path), Fit::Fill));
+    assert_eq!(
+        d.engine.state().history_count(),
+        history,
+        "history untouched"
+    );
+
+    // A failing setter: still an ok:true report, with the error inside.
+    d.setter.fail_next(1);
+    let r = c.request(Request::Doctor { apply: true }).await.unwrap();
+    let doctor: DoctorData = ok_data(&r);
+    let apply = doctor.apply.unwrap();
+    assert!(!apply.ok && apply.path.is_none());
+    assert!(apply.error.is_some_and(|e| !e.is_empty()));
+
+    // On the wire, `apply` is a JSON object and plain doctor has none.
+    let lines = raw_exchange(
+        &d.endpoint,
+        &[
+            r#"{"cmd":"doctor"}"#,
+            r#"{"cmd":"doctor","args":{"apply":"yes"}}"#,
+        ],
+    )
+    .await;
+    assert!(!lines[0].contains("\"apply\""), "{}", lines[0]);
+    assert_eq!(
+        lines[1],
+        r#"{"ok":false,"error":"doctor: argument 'apply' must be a boolean"}"#
+    );
     d.stop().await;
 }

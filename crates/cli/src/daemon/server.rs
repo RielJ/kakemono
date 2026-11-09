@@ -24,6 +24,7 @@ use interprocess::local_socket::traits::tokio::Listener as _;
 use kakemono_config::{Config, ConfigError};
 use kakemono_engine::{Engine, EngineEvent};
 use kakemono_platform::api::BackendInfo;
+use kakemono_platform::linux::detect::Env;
 use kakemono_protocol::client;
 use kakemono_protocol::codec::{self, CodecError};
 use kakemono_protocol::endpoint::Endpoint;
@@ -47,9 +48,10 @@ const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 /// `--config` / `Paths::locate_config` choice it started with.
 pub type ConfigLoader = Arc<dyn Fn() -> Result<Config, ConfigError> + Send + Sync>;
 
-/// Builds the `doctor` payload (Task 37). The error string becomes `Response.error`.
-pub type DoctorFn =
-    Arc<dyn Fn(Engine) -> BoxFuture<'static, Result<serde_json::Value, String>> + Send + Sync>;
+/// Captures the daemon's own detection environment for `doctor` (Task 37; Linux). The daemon
+/// installs `detect::env::capture_with_dbus`; tests leave it out so payloads are the same on
+/// every OS.
+pub type EnvProbe = Arc<dyn Fn() -> BoxFuture<'static, Env> + Send + Sync>;
 
 /// Payload of `version`: `{"version":"<crate version>"}`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,14 +68,51 @@ impl VersionData {
     }
 }
 
-/// The default `doctor` payload, used until a [`DoctorFn`] is installed:
-/// `{"version":..,"backend":{"name":..,"detail":..},"theme":"light|dark"}`.
-#[derive(Clone, Debug, Serialize)]
-pub struct BasicDoctorData {
+/// Payload of `doctor`: `{"version","pid","backend":{"name","detail"},"theme"}`, plus `env`
+/// when an [`EnvProbe`] is installed and `apply` when the request asked for it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DoctorData {
     pub version: String,
-    pub backend: BackendInfo,
+    pub pid: u32,
+    pub backend: DoctorBackend,
     pub theme: String,
+    /// What detection sees from inside the daemon (its env, not the shell's). Linux only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<Env>,
+    /// The outcome of re-setting the current wallpaper (`doctor` with `apply`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub apply: Option<ApplyOutcome>,
 }
+
+/// [`BackendInfo`], readable back by the CLI.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DoctorBackend {
+    pub name: String,
+    pub detail: String,
+}
+
+impl From<BackendInfo> for DoctorBackend {
+    fn from(info: BackendInfo) -> Self {
+        Self {
+            name: info.name,
+            detail: info.detail,
+        }
+    }
+}
+
+/// `{"ok":true,"path":..}` or `{"ok":false,"error":..}`. A failed apply is still an `ok:true`
+/// response: the rest of the report is what the user needs to see why.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplyOutcome {
+    pub ok: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// The `error` of [`ApplyOutcome`] when there is no current wallpaper to re-set.
+pub const NOTHING_TO_APPLY: &str = "no current wallpaper to re-set; run `kakemono next` first";
 
 /// Why [`bind`] failed.
 #[derive(Debug, thiserror::Error)]
@@ -151,14 +190,14 @@ async fn remove_stale(endpoint: &Endpoint) -> Result<(), BindError> {
 pub struct Server {
     engine: Engine,
     config_loader: ConfigLoader,
-    doctor: Option<DoctorFn>,
+    env_probe: Option<EnvProbe>,
 }
 
 impl fmt::Debug for Server {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Server")
             .field("engine", &self.engine)
-            .field("doctor", &self.doctor.is_some())
+            .field("env_probe", &self.env_probe.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -172,19 +211,16 @@ impl Server {
         Self {
             engine,
             config_loader: Arc::new(config_loader),
-            doctor: None,
+            env_probe: None,
         }
     }
 
-    /// Replaces the default `doctor` payload ([`BasicDoctorData`]).
-    pub fn with_doctor(
+    /// Adds the daemon's environment snapshot ([`DoctorData::env`]) to `doctor`.
+    pub fn with_env_probe(
         mut self,
-        doctor: impl Fn(Engine) -> BoxFuture<'static, Result<serde_json::Value, String>>
-        + Send
-        + Sync
-        + 'static,
+        probe: impl Fn() -> BoxFuture<'static, Env> + Send + Sync + 'static,
     ) -> Self {
-        self.doctor = Some(Arc::new(doctor));
+        self.env_probe = Some(Arc::new(probe));
         self
     }
 
@@ -292,7 +328,7 @@ impl Server {
             Request::Status => data(Ok::<_, String>(self.engine.status())),
             Request::Reload => self.reload().await,
             Request::Version => data(Ok::<_, String>(VersionData::current())),
-            Request::Doctor => self.doctor().await,
+            Request::Doctor { apply } => self.doctor(apply).await,
             Request::Subscribe => Response::err("subscribe: only valid on a connection"),
         }
     }
@@ -318,15 +354,42 @@ impl Server {
         }
     }
 
-    async fn doctor(&self) -> Response {
-        match &self.doctor {
-            Some(doctor) => data(doctor(self.engine.clone()).await),
-            None => data(Ok::<_, String>(BasicDoctorData {
-                version: VersionData::current().version,
-                backend: self.engine.platform().setter.info(),
-                theme: self.engine.theme().as_str().to_owned(),
-            })),
-        }
+    /// `doctor`: with `apply`, re-set the current wallpaper first (through the engine's op lock
+    /// and the daemon's own setter), so `backend` reflects any re-detection it caused.
+    async fn doctor(&self, apply: bool) -> Response {
+        let apply = if apply {
+            Some(match self.engine.reapply().await {
+                Ok(Some(info)) => ApplyOutcome {
+                    ok: true,
+                    path: Some(info.path),
+                    error: None,
+                },
+                Ok(None) => ApplyOutcome {
+                    ok: false,
+                    path: None,
+                    error: Some(NOTHING_TO_APPLY.to_owned()),
+                },
+                Err(e) => ApplyOutcome {
+                    ok: false,
+                    path: None,
+                    error: Some(e.to_string()),
+                },
+            })
+        } else {
+            None
+        };
+        let env = match &self.env_probe {
+            Some(probe) => Some(probe().await),
+            None => None,
+        };
+        data(Ok::<_, String>(DoctorData {
+            version: VersionData::current().version,
+            pid: std::process::id(),
+            backend: self.engine.platform().setter.info().into(),
+            theme: self.engine.theme().as_str().to_owned(),
+            env,
+            apply,
+        }))
     }
 
     /// `subscribe`: one `{"ok":true}` line, then one `Event` line per engine event until the

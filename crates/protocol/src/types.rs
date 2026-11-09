@@ -75,8 +75,12 @@ pub enum Request {
     Subscribe,
     /// New: daemon version string.
     Version,
-    /// New: diagnostics report.
-    Doctor,
+    /// New: diagnostics report. With `apply`, the daemon first re-sets the current wallpaper
+    /// through its own setter and reports the outcome. Wire: `args.apply`, written only when
+    /// `true`, so the plain form stays `{"cmd":"doctor"}`.
+    Doctor {
+        apply: bool,
+    },
 }
 
 impl Request {
@@ -94,7 +98,7 @@ impl Request {
             Self::Reload => "reload",
             Self::Subscribe => "subscribe",
             Self::Version => "version",
-            Self::Doctor => "doctor",
+            Self::Doctor { .. } => "doctor",
         }
     }
 }
@@ -112,6 +116,9 @@ pub enum RequestError {
     /// `trash` with an `expected` that is neither a string nor `null`.
     #[error("trash: argument 'expected' must be a string")]
     InvalidExpected,
+    /// `doctor` with an `apply` that is neither a boolean nor `null`.
+    #[error("doctor: argument 'apply' must be a boolean")]
+    InvalidApply,
 }
 
 impl TryFrom<Command> for Request {
@@ -140,7 +147,12 @@ impl TryFrom<Command> for Request {
             "reload" => Self::Reload,
             "subscribe" => Self::Subscribe,
             "version" => Self::Version,
-            "doctor" => Self::Doctor,
+            // Missing, `null` or `false` = report only.
+            "doctor" => match cmd.args.get("apply") {
+                None | Some(Value::Null) => Self::Doctor { apply: false },
+                Some(Value::Bool(apply)) => Self::Doctor { apply: *apply },
+                Some(_) => return Err(RequestError::InvalidApply),
+            },
             _ => return Err(RequestError::UnknownCommand(cmd.cmd)),
         })
     }
@@ -157,6 +169,9 @@ impl From<Request> for Command {
                 expected: Some(path),
             } => {
                 out.args.insert("expected".into(), Value::String(path));
+            }
+            Request::Doctor { apply: true } => {
+                out.args.insert("apply".into(), Value::Bool(true));
             }
             _ => {}
         }

@@ -128,12 +128,18 @@ pub enum Commands {
         /// With --write: overwrite a [desktop] section you manage yourself
         #[arg(long, requires = "write")]
         force: bool,
+        /// Internal: detect in a saved session env (JSON) instead of this one
+        #[arg(long, hide = true, value_name = "FILE")]
+        env_json: Option<PathBuf>,
     },
     /// Diagnose the desktop backend and daemon
     Doctor {
-        /// Re-set the current wallpaper after the checks
+        /// Ask the daemon to re-set the current wallpaper
         #[arg(long)]
         apply: bool,
+        /// Internal: check a saved session env (JSON) instead of this one
+        #[arg(long, hide = true, value_name = "FILE")]
+        env_json: Option<PathBuf>,
     },
     /// Manage the login service that starts the daemon
     Service {
@@ -291,7 +297,6 @@ fn dispatch(ctx: &Context, command: Commands) -> anyhow::Result<()> {
             Ok(())
         }
         Commands::Config { action } => config_command(ctx, out, action),
-        // Wired by later tasks; each replaces its arm.
         Commands::Daemon {
             foreground,
             detached,
@@ -301,16 +306,22 @@ fn dispatch(ctx: &Context, command: Commands) -> anyhow::Result<()> {
         }
         Commands::Pick => commands::pick::run(ctx, out),
         Commands::Settings => commands::settings::run(ctx, out),
-        Commands::Detect { .. } => not_available("detect"), // Task 37
-        Commands::Doctor { .. } => not_available("doctor"), // Task 37
+        Commands::Detect {
+            write,
+            force,
+            env_json,
+        } => block_on(commands::detect::run(
+            ctx,
+            out,
+            write,
+            force,
+            env_json.as_deref(),
+        )),
+        Commands::Doctor { apply, env_json } => {
+            block_on(commands::doctor::run(ctx, out, apply, env_json.as_deref()))
+        }
         Commands::Service { action } => commands::service::run(ctx, out, action),
     }
-}
-
-fn not_available(name: &str) -> anyhow::Result<()> {
-    Err(anyhow!(
-        "`kakemono {name}` is not available in this build yet"
-    ))
 }
 
 fn block_on<F: Future<Output = anyhow::Result<()>>>(future: F) -> anyhow::Result<()> {

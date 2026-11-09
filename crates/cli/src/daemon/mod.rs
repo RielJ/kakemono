@@ -116,12 +116,17 @@ fn create_missing_config(source: &ConfigSource) {
 pub fn run(paths: &Paths, options: &Options) -> anyhow::Result<()> {
     let Resolved {
         config_path,
-        config,
+        mut config,
         endpoint,
     } = resolve(paths, options)?;
-    // TODO(task 37): `firstrun::ensure_desktop(&mut config)` goes here, before `host`.
 
     let lock = lock::acquire(&paths.runtime_dir)?;
+    // First-run detection (Task 37): under the lock, so a refused second daemon writes nothing;
+    // before `host`, so the platform resolves from the saved `[desktop]`.
+    if !fake_platform_requested() {
+        let legacy = paths.locate_config(options.config.as_deref()).is_legacy();
+        crate::firstrun::ensure_desktop(&config_path, legacy, &mut config);
+    }
     let _pid_file = PidFile::write(paths.runtime_dir.join(PID_FILE_NAME));
 
     let state_file = paths.state_file.clone();
@@ -142,6 +147,11 @@ pub fn run(paths: &Paths, options: &Options) -> anyhow::Result<()> {
     })
 }
 
+/// True when the fake platform will be used (test builds only).
+fn fake_platform_requested() -> bool {
+    cfg!(feature = "fake") && std::env::var_os(FAKE_PLATFORM_ENV).is_some_and(|v| v == "1")
+}
+
 /// The platform host for `desktop`. On Linux the persistent-setter PID file lives in the same
 /// runtime dir as the lock and socket (`open_platform_in`), so a `--config`/env override of the
 /// runtime dir moves them together.
@@ -155,7 +165,7 @@ where
     Fut: Future<Output = anyhow::Result<()>> + Send,
 {
     #[cfg(feature = "fake")]
-    if std::env::var_os(FAKE_PLATFORM_ENV).is_some_and(|v| v == "1") {
+    if fake_platform_requested() {
         use kakemono_platform::fake::{ManualSignals, RecordingSetter};
         tracing::warn!("{FAKE_PLATFORM_ENV}=1: using the fake platform; wallpapers are not set");
         let platform = Platform {
@@ -207,6 +217,11 @@ impl Daemon {
             .context("initialising the engine")?;
         let backend = engine.platform().setter.info();
         let server = Server::new(engine.clone(), move || load_or_default(&config_path));
+        // `doctor` reports the daemon's own session env (systemd units often lack it; Task 37).
+        #[cfg(target_os = "linux")]
+        let server = server.with_env_probe(|| {
+            Box::pin(kakemono_platform::linux::detect::env::capture_with_dbus())
+        });
 
         let shutdown = CancellationToken::new();
         let serving = tokio::spawn(server.serve(listener, shutdown.clone()));

@@ -10,7 +10,6 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 use kakemono_config::paths::{ConfigSource, Paths};
 use kakemono_config::{Config, ConfigError};
@@ -273,7 +272,7 @@ pub async fn set_file(link: State<'_, Arc<DaemonLink>>, path: String) -> CmdResu
 /// `doctor` → the daemon's diagnostics report (IPC `doctor` data), as JSON.
 #[tauri::command]
 pub async fn doctor(link: State<'_, Arc<DaemonLink>>) -> CmdResult<Json> {
-    let response = link.call(Request::Doctor).await?;
+    let response = link.call(Request::Doctor { apply: false }).await?;
     let data = response
         .data_as::<Json>()
         .map_err(|source| LinkError::Decode {
@@ -287,32 +286,6 @@ pub async fn doctor(link: State<'_, Arc<DaemonLink>>) -> CmdResult<Json> {
 #[tauri::command]
 pub async fn daemon_running(link: State<'_, Arc<DaemonLink>>) -> CmdResult<bool> {
     Ok(link.status().await.is_ok())
-}
-
-/// `start_daemon`: spawns `kakemono daemon` (next to this executable, else on `PATH`) and
-/// waits up to 3 s for it to answer. Returns whether it is running. Task 46 owns the
-/// automatic sidecar start; this is the explicit button.
-#[tauri::command]
-pub async fn start_daemon(link: State<'_, Arc<DaemonLink>>) -> CmdResult<bool> {
-    if link.status().await.is_ok() {
-        return Ok(true);
-    }
-    let cli = cli_path();
-    tracing::info!(cli = %cli.display(), "starting the daemon");
-    std::process::Command::new(&cli)
-        .arg("daemon")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|e| CommandError::io(format!("starting {} daemon", cli.display()), e))?;
-    for _ in 0..15 {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        if link.status().await.is_ok() {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 /// The `kakemono` CLI: beside the current executable (also the `.app` `Contents/MacOS`),
