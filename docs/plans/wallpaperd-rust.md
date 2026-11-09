@@ -8,6 +8,7 @@ The user chose these:
 
 | Decision | Choice | Source |
 | --- | --- | --- |
+| App name | **kakemono** (renamed from `wallpaperd`, which is too close to the existing Rust Wayland daemon `wpaperd`). Binary `kakemono`, crates `kakemono-*`, `~/.config/kakemono/`, app id `dev.rielj.kakemono`, env prefix `KAKEMONO_`. The Go config path `~/.config/wallpaperd/config.toml` is read as a legacy fallback and never moved automatically. Throughout this plan, read `wallpaperd` as `kakemono` wherever it is user-facing. | user |
 | macOS Space switching | Re-applying on Space change is **opt-in**: `[daemon] reapply_on_space_change = false` by default. By default only the current Space changes, as in Go today. | B's warning, A/C's mechanism |
 | Wayland picker (v1) | Centred window, documented compositor window rules, opt-in `force_x11`, and a time-boxed raw-wry layer-shell spike that ships nothing | A |
 | Picker placement | The user can **drag** the picker anywhere on every OS. The position is remembered on macOS, Windows, X11, Hyprland and sway (see §H). | User request |
@@ -449,7 +450,7 @@ Ranked by likelihood × impact.
 5. **macOS Spaces limitation.** We can only set the current Space. Re-applying on switch is opt-in, because it clears the user's "Show on all Spaces" toggle. Document it, and don't over-promise.
 6. **Provider API drift:**
    - The keyless Unsplash Source endpoint has been shut down; verify against the Go `unsplash.go` and require an `access_key`, otherwise mark the provider unavailable with a clear error.
-   - Reddit throttles or 403s generic user agents; use a descriptive UA (`wallpaperd/2.0 (+repo url)`).
+   - Reddit throttles or 403s generic user agents; use a descriptive UA (`kakemono/<version>`).
    - Changes to Wallhaven's HTML break the scraper.
    - Mitigation: fixtures, the nightly live job, and multi-source fallback in the engine.
 7. **The Linux backend matrix churns** (swww→awww rename, hyprpaper 0.8 rewrite with `hyprctl hyprpaper wallpaper` syntax UNVERIFIED, KDE screen indices, COSMIC).
@@ -670,14 +671,14 @@ Ranked by likelihood × impact.
 - **Mode:** contract-first
 - **Steps:**
   1. `#[async_trait] trait Provider { fn name(&self)->&'static str; fn enabled(&self)->bool; async fn fetch(&self, query:&str)->Result<Vec<WallpaperResult>, ProviderError>; }` with `WallpaperResult{source_url,image_url,title,author,source}`.
-  2. `http::client()` uses UA `wallpaperd/2.0 (+https://github.com/rielj/wallpaperd)` and a 30 s timeout.
+  2. `http::client()` uses UA `kakemono/<version>` (`http::USER_AGENT`) and a 30 s timeout. Providers build URLs with `http::url_with_query` (reqwest's `.query()` needs a feature the workspace doesn't enable) and accept an injected client + base URL for tests.
   3. `get_with_retry` honours `Retry-After` (seconds and HTTP-date), with backoff 1 s, 2 s, 4 s.
   4. `download(url, dir)`:
      - port of Go `DownloadFile`: content-type check, 10 KB minimum, `sanitize_filename`, write to temp then rename
      - a filename collision gets a suffix
   5. Also port `is_image_file`.
   6. Wiremock tests: a 429 with `Retry-After: 2` is retried after a 2 s paused clock; non-image is rejected; too-small is rejected; the filename is sanitized.
-- **Automated verification:** `cargo test -p wallpaperd-sources http download`
+- **Automated verification:** `cargo test -p wallpaperd-sources -- http download`
 - **Manual verification:** none
 
 ## Task 10: Bing provider
@@ -841,7 +842,9 @@ Ranked by likelihood × impact.
   1. `lock::acquire(runtime_dir) -> Result<LockGuard, AlreadyRunning>` uses `File::try_lock`.
   2. Server: unlink the stale socket only after the lock is held. Accept loop; one task per connection; dispatch the typed `Request` onto `Engine`.
   3. `subscribe` streams events until the client disconnects. `reload` re-reads the config from disk.
-  4. Responses match Go's serialisation exactly (§I).
+  4. Responses match Go's serialisation exactly (§I). Write every line through `protocol::codec::write_line_json` / `to_vec_go`, never plain `serde_json::to_writer`: Go escapes `<`, `>`, `&` as `\u003c` etc. No crate may enable serde_json's `preserve_order` (sorted `args` keys depend on it).
+     - `subscribe`: reply with one `{"ok":true}` line, then event lines (the client expects exactly this handshake; see `.pi/contracts/protocol.md`).
+     - Bind via `Endpoint::bind()`. It creates the parent dir with mode 0700 and sets the socket to 0600, but does not remove a stale socket file. The server does that, only while holding the lock (step 2).
   5. Integration test: start the server on a tempdir socket with a fake engine platform and drive it through `protocol::Client` for every command. Snapshot the raw response lines with insta. A second lock attempt fails.
 - **Automated verification:** `cargo test -p wallpaperd --test server`
 - **Manual verification:** none
