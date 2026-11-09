@@ -1,0 +1,163 @@
+[workspace]
+resolver = "3"
+# crates/ui/src-tauri joins in Task 40.
+members = [
+    "crates/protocol",
+    "crates/config",
+    "crates/sources",
+    "crates/platform",
+    "crates/engine",
+    "crates/cli",
+]
+
+[workspace.package]
+version = "2.0.0-alpha.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
+# Every third-party version lives here (plan §G). Member crates use `{ workspace = true }`.
+# Versions checked against crates.io on 2026-11-09.
+[workspace.dependencies]
+# Internal crates
+wallpaperd-protocol = { path = "crates/protocol" }
+wallpaperd-config = { path = "crates/config" }
+wallpaperd-sources = { path = "crates/sources" }
+wallpaperd-platform = { path = "crates/platform" }
+wallpaperd-engine = { path = "crates/engine" }
+
+# Async runtime and helpers
+tokio = { version = "1.54.1", features = [
+    "rt",
+    "rt-multi-thread",
+    "macros",
+    "sync",
+    "time",
+    "io-util",
+    "fs",
+    "net",
+    "process",
+    "signal",
+] }
+tokio-util = "0.7.20"
+futures = "0.3.34"
+async-trait = "0.1.92"
+
+# Serialization and config
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["raw_value"] }
+toml = "1.2.1"
+toml_edit = { version = "0.25.19", features = ["serde"] }
+etcetera = "0.11.0"
+chrono = { version = "0.4.45", features = ["serde"] }
+shell-words = "1.1.1"
+ts-rs = { version = "12.0.1", features = ["chrono-impl", "serde-json-impl"] }
+
+# Errors and logging
+thiserror = "2.0.21"
+anyhow = "1.0.104"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2.5"
+
+# CLI
+clap = { version = "4.6.7", features = ["derive", "env"] }
+clap_complete = "4.6.11"
+
+# IPC
+interprocess = { version = "2.4.8", features = ["tokio"] }
+
+# HTTP and providers
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "json", "gzip", "stream"] }
+scraper = "0.29.0"
+url = "2.5.8"
+percent-encoding = "2.3.2"
+httpdate = "1.0.3"
+rand = "0.10.3"
+walkdir = "2.5.0"
+
+# Theme (all OSes)
+dark-light = { version = "3.0.0", default-features = false, features = ["tokio"] }
+
+# Linux
+zbus = { version = "6.2.1", default-features = false, features = ["tokio", "proxy"] }
+ashpd = { version = "0.14.0", default-features = false, features = ["tokio", "open_uri"] }
+which = "8.0.6"
+nix = { version = "0.31.3", features = ["signal", "process"] }
+
+# macOS
+objc2 = "0.6.5"
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "block2",
+    "NSArray",
+    "NSDictionary",
+    "NSError",
+    "NSGeometry",
+    "NSNotification",
+    "NSObject",
+    "NSOperation",
+    "NSString",
+    "NSThread",
+    "NSURL",
+    "NSValue",
+] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "block2",
+    "NSApplication",
+    "NSEvent",
+    "NSGraphics",
+    "NSResponder",
+    "NSRunningApplication",
+    "NSScreen",
+    "NSWorkspace",
+] }
+dispatch2 = "0.3.1"
+block2 = "0.6.2"
+
+# Windows
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Com",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Power",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+# Autostart (macOS LaunchAgent, Windows HKCU Run)
+auto-launch = "0.6.0"
+
+# UI (crates/ui/src-tauri, Task 40). Unused until then.
+tauri = "2.12.5"
+tauri-build = "2.7.4"
+tauri-plugin-single-instance = "2.5.5"
+tauri-plugin-autostart = "2.7.0"
+tauri-plugin-dialog = "2.8.4"
+tauri-plugin-opener = "2.7.2"
+tauri-plugin-positioner = "2.4.0"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
+
+# Tests
+wiremock = "0.6.5"
+insta = { version = "1.49.0", features = ["json"] }
+assert_cmd = "2.2.2"
+predicates = "3.1.4"
+tempfile = "3.27.0"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"

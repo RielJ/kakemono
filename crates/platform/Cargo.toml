@@ -1,0 +1,52 @@
+[package]
+name = "wallpaperd-platform"
+description = "wallpaperd OS seam: wallpaper setters, system signals, main-thread host, argv exec, open/reveal, service install"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+# Test doubles (`fake::RecordingSetter`, `fake::ManualSignals`) for downstream crates' tests.
+fake = []
+
+# No C-building dependencies here: `cargo check -p wallpaperd-platform --target <other OS>` must work
+# from any host (plan §J). Keep reqwest/TLS out of this crate.
+[dependencies]
+wallpaperd-config.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+url.workspace = true
+percent-encoding.workspace = true
+dark-light.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-foundation.workspace = true
+objc2-app-kit.workspace = true
+dispatch2.workspace = true
+block2.workspace = true
+auto-launch.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
+auto-launch.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus.workspace = true
+ashpd.workspace = true
+which.workspace = true
+nix.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+tempfile.workspace = true
+insta.workspace = true
+
+[lints]
+workspace = true

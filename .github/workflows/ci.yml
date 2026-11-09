@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Nightly provider live smoke tests (job `live` below).
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  rust:
+    name: rust (${{ matrix.os }})
+    if: github.event_name != 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system libraries (Tauri/WebKitGTK)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+
+      # Uses rust-toolchain.toml (stable + rustfmt + clippy).
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt
+        run: cargo fmt --all --check
+
+      - name: cargo clippy
+        run: >-
+          cargo clippy --workspace --all-targets --all-features
+          -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace --all-features
+
+  frontend:
+    name: frontend
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: crates/ui/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      # crates/ui/frontend arrives in Task 40; until then every step is skipped.
+      - uses: actions/setup-node@v4
+        if: hashFiles('crates/ui/frontend/package-lock.json') != ''
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crates/ui/frontend/package-lock.json
+
+      - if: hashFiles('crates/ui/frontend/package-lock.json') != ''
+        run: npm ci
+      - if: hashFiles('crates/ui/frontend/package-lock.json') != ''
+        run: npm run typecheck
+      - if: hashFiles('crates/ui/frontend/package-lock.json') != ''
+        run: npm run build
+      - if: hashFiles('crates/ui/frontend/package-lock.json') != ''
+        run: npm test
+
+  deny:
+    name: cargo deny
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
+  live:
+    name: provider live smoke tests
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test (live)
+        run: cargo test -p wallpaperd-sources --features live -- --ignored

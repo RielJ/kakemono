@@ -1,0 +1,1 @@
+//! TODO(task 39): LaunchAgent plist `~/Library/LaunchAgents/dev.rielj.wallpaperd.plist` (RunAtLoad, KeepAlive).
