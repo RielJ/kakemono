@@ -10,6 +10,7 @@ import {
   trashWallpaper,
   type Thumbnail,
 } from '../../shared/api'
+import { useDaemonEvents } from '../../shared/useDaemonEvents'
 import { keyAction, type KeyAction } from '../keys'
 import { commitTrash, MESSAGES, UNDO_MS } from '../trash'
 import ContextMenu, { type MenuItem } from './ContextMenu'
@@ -38,6 +39,8 @@ export function optionLabel(thumb: Thumbnail): string {
 export default function ThumbnailStrip({ vertical = false }: StripProps) {
   const idPrefix = useId()
   const [thumbs, setThumbs] = useState<Thumbnail[]>([])
+  const thumbsRef = useRef(thumbs)
+  thumbsRef.current = thumbs
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [active, setActive] = useState(0)
@@ -166,6 +169,21 @@ export default function ThumbnailStrip({ vertical = false }: StripProps) {
   useEffect(() => {
     if (ready && !listRef.current?.contains(document.activeElement)) listRef.current?.focus()
   }, [ready])
+
+  // Live: the highlight follows the daemon (rotation, tray Next, the CLI); a wallpaper the
+  // list doesn't have yet, or a reconnect, reloads it.
+  useDaemonEvents({
+    onChanged: (info) => {
+      if (thumbsRef.current.some((t) => t.path === info.path)) {
+        setThumbs((prev) => prev.map((t) => ({ ...t, isCurrent: t.path === info.path })))
+      } else {
+        load()
+      }
+    },
+    onConnection: (c) => {
+      if (c.state === 'connected') load()
+    },
+  })
 
   useEffect(() => {
     load()

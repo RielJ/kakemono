@@ -7,6 +7,7 @@
 
 pub mod commands;
 pub mod daemon_link;
+pub mod events;
 pub mod picker;
 pub mod picker_place;
 pub mod thumbs;
@@ -15,7 +16,7 @@ pub mod windows;
 
 use std::sync::Arc;
 
-use tauri::{App, AppHandle, RunEvent, Runtime};
+use tauri::{App, AppHandle, Manager, RunEvent, Runtime};
 
 use crate::daemon_link::DaemonLink;
 use crate::windows::Page;
@@ -54,6 +55,7 @@ pub fn run() -> anyhow::Result<()> {
         .manage(link)
         .manage(picker::PickerState::detect())
         .manage(Arc::new(thumbs::Thumbs::detect()))
+        .manage(events::LiveState::default())
         .invoke_handler(tauri::generate_handler![
             commands::get_config,
             commands::save_config,
@@ -72,6 +74,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::reveal,
             commands::open_url,
             commands::app_info,
+            events::daemon_connection,
             picker::show_picker,
             picker::hide_picker,
             picker::reset_picker_position,
@@ -106,6 +109,10 @@ fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
              (on GNOME install the AppIndicator extension)"
         );
     }
+
+    // Live updates; its own connection, never the shared link.
+    let endpoint = app.state::<Arc<DaemonLink>>().endpoint().clone();
+    events::spawn(&handle, endpoint);
 
     // Pre-create the picker hidden so showing it is instant.
     if let Err(err) = picker::create(&handle) {

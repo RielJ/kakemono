@@ -2,8 +2,8 @@
 //! request through the shared [`DaemonLink`].
 //!
 //! Failures are logged and shown in the tray tooltip; the menu never blocks on the daemon.
-//! Task 45 adds live Pause/Resume labelling from `subscribe`; until then the label is read
-//! from `status` at startup and after each toggle.
+//! The Pause/Resume label and the "daemon not running" tooltip are kept live by
+//! [`crate::events`] from `subscribe`; a toggle also relabels at once.
 
 use std::sync::Arc;
 
@@ -18,7 +18,7 @@ use crate::windows::{self, Page};
 pub const TRAY_ID: &str = "kakemono";
 const TOOLTIP: &str = "kakemono";
 
-/// Menu item ids. Stable: Task 45 looks up `TOGGLE_PAUSE` to relabel it.
+/// Menu item ids. Stable.
 pub mod ids {
     pub const NEXT: &str = "next";
     pub const PREV: &str = "prev";
@@ -104,8 +104,6 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<TrayIcon<R>> {
         .show_menu_on_left_click(true)
         .on_menu_event(on_menu_event)
         .build(app)?;
-
-    refresh_pause_label(app.clone());
     Ok(tray)
 }
 
@@ -169,17 +167,6 @@ fn toggle_pause<R: Runtime>(app: AppHandle<R>) {
     });
 }
 
-/// Sets the pause item from IPC `status`. Leaves the default label when the daemon is down.
-pub fn refresh_pause_label<R: Runtime>(app: AppHandle<R>) {
-    tauri::async_runtime::spawn(async move {
-        let result = link(&app).status().await;
-        if let Ok(status) = &result {
-            set_pause_label(&app, status.paused);
-        }
-        report(&app, "status", result.map(drop));
-    });
-}
-
 pub fn set_pause_label<R: Runtime>(app: &AppHandle<R>, paused: bool) {
     let Some(items) = app.try_state::<TrayItems<R>>() else {
         return;
@@ -192,19 +179,31 @@ pub fn set_pause_label<R: Runtime>(app: &AppHandle<R>, paused: bool) {
 /// Logs the outcome and mirrors daemon reachability in the tooltip, the one static cue a
 /// tray has.
 fn report<R: Runtime>(app: &AppHandle<R>, what: &str, result: Result<(), LinkError>) {
-    let tooltip = match &result {
-        Ok(()) => TOOLTIP.to_owned(),
+    match &result {
+        Ok(()) => set_problem(app, None),
         Err(err) if err.is_not_running() => {
             tracing::warn!(action = what, "daemon is not running");
-            format!("{TOOLTIP}: daemon not running")
+            set_problem(app, Some("daemon not running"));
         }
         Err(err) => {
             tracing::warn!(action = what, error = %err, "daemon request failed");
-            format!("{TOOLTIP}: {}", first_line(&err.to_string()))
+            set_problem(app, Some(&err.to_string()));
         }
-    };
+    }
+}
+
+/// Tooltip text: `kakemono`, or `kakemono: <first line of problem>`.
+pub fn tooltip(problem: Option<&str>) -> String {
+    match problem {
+        None => TOOLTIP.to_owned(),
+        Some(problem) => format!("{TOOLTIP}: {}", first_line(problem)),
+    }
+}
+
+/// Shows `problem` in the tooltip, or clears it.
+pub fn set_problem<R: Runtime>(app: &AppHandle<R>, problem: Option<&str>) {
     if let Some(tray) = app.tray_by_id(TRAY_ID)
-        && let Err(err) = tray.set_tooltip(Some(&tooltip))
+        && let Err(err) = tray.set_tooltip(Some(&tooltip(problem)))
     {
         tracing::debug!(error = %err, "cannot set tray tooltip");
     }
@@ -268,6 +267,16 @@ mod tests {
     fn pause_label_names_the_next_action() {
         assert_eq!(pause_label(false), "Pause");
         assert_eq!(pause_label(true), "Resume");
+    }
+
+    #[test]
+    fn tooltip_names_the_problem_or_just_the_app() {
+        assert_eq!(tooltip(None), "kakemono");
+        assert_eq!(
+            tooltip(Some("daemon not running")),
+            "kakemono: daemon not running"
+        );
+        assert_eq!(tooltip(Some("a\nb")), "kakemono: a");
     }
 
     #[test]

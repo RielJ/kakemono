@@ -2577,6 +2577,7 @@ name = "kakemono-ui"
 version = "2.0.0-alpha.0"
 dependencies = [
  "anyhow",
+ "futures",
  "image",
  "insta",
  "interprocess",

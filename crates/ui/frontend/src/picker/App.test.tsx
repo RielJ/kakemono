@@ -21,6 +21,14 @@ vi.mock('../shared/api', async (importOriginal) => {
   }
 })
 
+// Captures the handlers the strip registers, so tests can play daemon events.
+const live = vi.hoisted(() => ({ handlers: {} as import('../shared/useDaemonEvents').DaemonEventHandlers }))
+vi.mock('../shared/useDaemonEvents', () => ({
+  useDaemonEvents: (h: import('../shared/useDaemonEvents').DaemonEventHandlers) => {
+    live.handlers = h
+  },
+}))
+
 const THUMBS: Thumbnail[] = [
   { path: '/w/a.jpg', source: 'unsplash', title: 'Alps', isCurrent: false, imageUrl: 'thumb://localhost/a' },
   { path: '/w/b.jpg', source: 'local', title: 'Beach', isCurrent: true, imageUrl: 'thumb://localhost/b' },
@@ -252,3 +260,36 @@ describe('trash with undo', () => {
     expect(api.trashWallpaper).not.toHaveBeenCalled()
   })
 })
+
+describe('live updates', () => {
+  const selected = () => screen.getAllByRole('option').map((o) => o.getAttribute('aria-selected'))
+
+  it('moves the current-wallpaper highlight when the daemon changes it', async () => {
+    await renderPicker()
+    act(() => live.handlers.onChanged?.({ ...WALLPAPER, path: '/w/a.jpg' }))
+    expect(selected()).toEqual(['true', 'false', 'false'])
+    expect(api.listThumbnails).toHaveBeenCalledTimes(1)
+  })
+
+  it('reloads the list for a wallpaper it does not have, and on reconnect', async () => {
+    await renderPicker()
+    await act(async () => live.handlers.onChanged?.({ ...WALLPAPER, path: '/w/new.jpg' }))
+    expect(api.listThumbnails).toHaveBeenCalledTimes(2)
+    await act(async () => live.handlers.onConnection?.({ state: 'connected', status: null }))
+    expect(api.listThumbnails).toHaveBeenCalledTimes(3)
+    await act(async () => live.handlers.onConnection?.({ state: 'not_running' }))
+    expect(api.listThumbnails).toHaveBeenCalledTimes(3)
+  })
+})
+
+const WALLPAPER = {
+  path: '',
+  source: 'local',
+  source_url: '',
+  image_url: '',
+  title: '',
+  author: '',
+  width: 0,
+  height: 0,
+  set_at: '',
+}

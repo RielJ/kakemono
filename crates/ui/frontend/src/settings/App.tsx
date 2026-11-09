@@ -22,6 +22,7 @@ import ThemesSettings from './components/ThemesSettings'
 import { diffConfig, isEmptyPatch } from './configPatch'
 import { fileManagerName, TAB_TITLES, type TabId } from './sections'
 import { configErrors, hasErrors } from './validate'
+import { useDaemonEvents, type Connection } from '../shared/useDaemonEvents'
 
 // ── Save bar ─────────────────────────────────────────────────────────────────
 
@@ -158,11 +159,37 @@ export default function App() {
       .catch(() => {})
   }, [loadAll, refreshStatus])
 
-  // Poll until live updates arrive over `subscribe` (Task 45).
+  // Live updates from the daemon's `subscribe` stream (src-tauri/src/events.rs).
+  const [connection, setConnection] = useState<Connection['state']>('connecting')
+  useDaemonEvents({
+    onConnection: (c) => {
+      setConnection(c.state)
+      if (c.state === 'connected') {
+        setDaemon('running')
+        if (c.status) setStatus(c.status)
+        else void refreshStatus()
+      } else if (c.state === 'not_running') {
+        setDaemon('stopped')
+        setStatus(null)
+      } else if (c.state === 'error') {
+        // Reachable but not subscribable (e.g. an older daemon): `status` decides.
+        void refreshStatus()
+      }
+    },
+    onChanged: (current) => {
+      setStatus((s) => (s ? { ...s, current } : s))
+      // History position and count moved too.
+      void refreshStatus()
+    },
+    onPaused: (paused) => setStatus((s) => (s ? { ...s, paused } : s)),
+  })
+
+  // Without a subscription (an `error` state), fall back to polling.
   useEffect(() => {
+    if (connection !== 'error') return
     const timer = setInterval(() => void refreshStatus(), 10_000)
     return () => clearInterval(timer)
-  }, [refreshStatus])
+  }, [connection, refreshStatus])
 
   const errors = useMemo(() => (config ? configErrors(config) : {}), [config])
   const invalid = hasErrors(errors)
