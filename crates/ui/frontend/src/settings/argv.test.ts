@@ -82,7 +82,7 @@ describe('checkDaemonBackend', () => {
     expect(linux(saved, 'command', "setbg 'a b' {path}")).toEqual({ kind: 'match' })
   })
 
-  it('is stale when the daemon still runs the old argv (no setter rebuild on reload)', () => {
+  it('is stale when the daemon still runs the old argv (it has not loaded the saved [desktop])', () => {
     const saved = { backend: 'command' as const, set_command: ['setbg', '--new', '{path}'] }
     expect(linux(saved, 'command', 'setbg {path}')).toEqual({
       kind: 'stale',

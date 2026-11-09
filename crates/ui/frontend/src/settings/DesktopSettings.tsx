@@ -110,12 +110,14 @@ function InUse({ view, savedDesktop, os }: { view: DaemonView; savedDesktop: Des
       </p>
       {backend.detail && <p className={pre}>{backend.detail}</p>}
       {check.kind === 'stale' && (
-        // Disappears on its own once `reload` rebuilds the setter (Task 37b).
+        // A reload rebuilds the daemon's setter (Task 37b), so this shows only when the daemon has not
+        // loaded the saved [desktop] (its reload failed, or `detect --write` wrote it) or it re-detected.
         <p role="status" className="text-xs text-amber-700 dark:text-amber-300 flex gap-1.5">
           <Icon name="alert" className="w-3.5 h-3.5 shrink-0 mt-px" />
           <span>
-            The saved settings select <span className="font-mono">{check.expected}</span>. Restart the daemon to use the
-            edited command.
+            The saved settings select <span className="font-mono">{check.expected}</span>, but the daemon is still using
+            the previous backend. Press Test to load them. If this stays, check the reload error, or use the detected
+            backend.
           </span>
         </p>
       )}

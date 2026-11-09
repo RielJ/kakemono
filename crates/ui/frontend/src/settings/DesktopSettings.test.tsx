@@ -126,20 +126,25 @@ describe('DesktopSettings on Linux', () => {
     expect(screen.getByRole('alert').textContent).toBe('reload: [desktop] set_command: command is empty')
   })
 
-  it('shows the restart notice only while the daemon reports another command', async () => {
+  it('shows the stale notice only while the daemon reports another command', async () => {
     const saved = withDesktop({ backend: 'command', set_command: ['setbg', '--new', '{path}'] })
     vi.mocked(api.detectDesktop).mockResolvedValue('')
+    // The daemon has not loaded the saved [desktop] yet (e.g. its last reload failed).
     vi.mocked(api.desktopBackend).mockResolvedValue(report('command', 'setbg {path}'))
-    // Today: reload keeps the old setter, so after Test the daemon still reports the old argv.
-    vi.mocked(api.testDesktop).mockResolvedValue(report('command', 'setbg {path}', { ok: true, path: '/w/a.jpg', error: null }))
+    vi.mocked(api.testDesktop).mockResolvedValue(
+      report('command', 'setbg --new {path}', { ok: true, path: '/w/a.jpg', error: null }),
+    )
     await renderPanel({ saved, os: 'linux' })
-    expect(screen.getByText(/Restart the daemon to use the edited command/)).toBeTruthy()
+    const notice = screen.getByText(/the daemon is still using the previous backend/).textContent
+    expect(notice).toContain('command: setbg --new {path}')
+    expect(notice).toContain('Press Test to load them.')
+    expect(notice).not.toMatch(/restart/i)
 
-    // After Task 37b: reload rebuilds the setter, the reply matches, the notice goes away.
+    // Test reloads: the daemon rebuilds its setter (Task 37b), the reply matches, the notice goes away.
     vi.mocked(api.desktopBackend).mockResolvedValue(report('command', 'setbg --new {path}'))
     await userEvent.click(screen.getByRole('button', { name: 'Test' }))
     expect(screen.getByText('Wallpaper set: /w/a.jpg')).toBeTruthy()
-    expect(screen.queryByText(/Restart the daemon/)).toBeNull()
+    expect(screen.queryByText(/still using the previous backend/)).toBeNull()
   })
 
   it('Pin writes managed_by through save_config immediately', async () => {
@@ -177,8 +182,8 @@ describe('DesktopSettings on Linux', () => {
     expect(api.detectDesktop).toHaveBeenCalledWith(true)
     expect(screen.getByRole('combobox', { name: 'Backend' })).toHaveProperty('value', 'awww')
     expect(screen.getByText('hyprland:wayland')).toBeTruthy()
-    // The daemon still runs feh: the notice says so until it restarts.
-    expect(screen.getByText(/Restart the daemon to use the edited command/).textContent).toContain('awww preset')
+    // detect --write does not reload the daemon, which still runs feh: the notice says so until a reload.
+    expect(screen.getByText(/the daemon is still using the previous backend/).textContent).toContain('awww preset')
   })
 
   it('hides the command editor for backends that take no argv', async () => {
@@ -187,6 +192,6 @@ describe('DesktopSettings on Linux', () => {
     await renderPanel({ saved: withDesktop({ backend: 'gnome' }), os: 'linux' })
     expect(screen.queryByText('Wallpaper command')).toBeNull()
     expect(screen.queryByRole('switch', { name: 'Keep running' })).toBeNull()
-    expect(screen.queryByText(/Restart the daemon/)).toBeNull()
+    expect(screen.queryByText(/still using the previous backend/)).toBeNull()
   })
 })
