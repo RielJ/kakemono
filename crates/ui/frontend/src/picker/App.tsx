@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import ThumbnailStrip from './components/ThumbnailStrip'
-import { getConfig, hidePicker } from '../shared/api'
+import { getAppInfo, getConfig } from '../shared/api'
 
 export type PickerPosition = 'bottom' | 'top' | 'left' | 'right'
 
@@ -15,25 +15,21 @@ export default function App() {
     getConfig()
       .then((cfg) => setPosition(toPosition(cfg.picker.position)))
       .catch(() => {})
+    // 13 px type on macOS (tokens.css keys off data-os).
+    getAppInfo()
+      .then((info) => {
+        document.documentElement.dataset.os = info.os
+      })
+      .catch(() => {})
   }, [])
 
-  // Hiding on blur is handled in Rust (`picker.rs`, honours `[picker] close_on_blur`).
-  useEffect(() => {
-    // Close on Escape key. `hide_picker` also saves a dragged position.
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        void hidePicker()
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
-
+  // Esc is handled in ThumbnailStrip (it also sends a pending trash first). Hiding on blur is
+  // handled in Rust (`picker.rs`, honours `[picker] close_on_blur`).
   const isVertical = position === 'left' || position === 'right'
 
   return (
-    <div className={`app ${isVertical ? 'app-vertical' : 'app-horizontal'}`}>
+    <main className={`app ${isVertical ? 'app-vertical' : 'app-horizontal'}`}>
       <ThumbnailStrip vertical={isVertical} />
-    </div>
+    </main>
   )
 }

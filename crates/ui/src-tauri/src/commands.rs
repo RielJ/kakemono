@@ -21,6 +21,7 @@ use tauri::{AppHandle, Runtime, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::daemon_link::{DaemonLink, LinkError};
+use crate::thumbs::Thumbs;
 
 /// The picker shows at most this many entries, as the Go picker did.
 pub const MAX_THUMBNAILS: usize = 100;
@@ -389,15 +390,18 @@ pub struct Thumbnail {
     pub source: String,
     pub title: String,
     pub is_current: bool,
-    /// Empty until Task 44 serves `thumb://` URLs.
+    /// `thumb://` URL from [`crate::thumbs::Thumbs::admit`]; `""` when the file isn't
+    /// inside the download, favourites or local dirs (the picker shows a placeholder).
     pub image_url: String,
 }
 
 /// `thumbnails` → history (newest first), then the cache dir, then the favourites dir;
-/// de-duplicated, missing files skipped, at most [`MAX_THUMBNAILS`].
+/// de-duplicated, missing files skipped, at most [`MAX_THUMBNAILS`]. The listed files become
+/// the `thumb://` allowlist.
 #[tauri::command]
-pub async fn thumbnails() -> CmdResult<Vec<Thumbnail>> {
-    blocking(|| {
+pub async fn thumbnails(thumbs: State<'_, Arc<Thumbs>>) -> CmdResult<Vec<Thumbnail>> {
+    let thumbs = Arc::clone(&thumbs);
+    blocking(move || {
         let (paths, source) = locate_config()?;
         let cfg = kakemono_config::load_or_default(source.path())?;
         let state_file = if paths.state_file.exists() {
@@ -406,11 +410,15 @@ pub async fn thumbnails() -> CmdResult<Vec<Thumbnail>> {
             &paths.legacy_state_file
         };
         let state = read_state(state_file);
-        Ok(list_thumbnails(
-            &state,
-            &cfg.daemon.download_dir,
-            &cfg.favorites.dir,
-        ))
+        let mut list = list_thumbnails(&state, &cfg.daemon.download_dir, &cfg.favorites.dir);
+        let mut roots = vec![cfg.daemon.download_dir.clone(), cfg.favorites.dir.clone()];
+        roots.extend(cfg.local.dirs.iter().cloned());
+        let paths: Vec<&str> = list.iter().map(|t| t.path.as_str()).collect();
+        let urls = thumbs.admit(&roots, &paths);
+        for (thumb, url) in list.iter_mut().zip(urls) {
+            thumb.image_url = url;
+        }
+        Ok(list)
     })
     .await
 }

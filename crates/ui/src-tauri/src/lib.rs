@@ -9,6 +9,7 @@ pub mod commands;
 pub mod daemon_link;
 pub mod picker;
 pub mod picker_place;
+pub mod thumbs;
 pub mod tray;
 pub mod windows;
 
@@ -38,7 +39,8 @@ pub fn run() -> anyhow::Result<()> {
     let link = Arc::new(DaemonLink::from_environment()?);
     tracing::info!(endpoint = %link.endpoint(), "daemon endpoint");
 
-    let app = tauri::Builder::default()
+    let builder = thumbs::register(tauri::Builder::default());
+    let app = builder
         // Must be the first plugin: it exits a second instance before anything else starts.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             open_requested(app, page_from_args(&argv).unwrap_or(Page::Settings));
@@ -51,6 +53,7 @@ pub fn run() -> anyhow::Result<()> {
         .plugin(tauri_plugin_opener::init())
         .manage(link)
         .manage(picker::PickerState::detect())
+        .manage(Arc::new(thumbs::Thumbs::detect()))
         .invoke_handler(tauri::generate_handler![
             commands::get_config,
             commands::save_config,

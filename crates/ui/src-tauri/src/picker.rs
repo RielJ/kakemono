@@ -24,8 +24,8 @@ use kakemono_config::paths::Paths;
 use kakemono_config::schema::{PickerConfig, PickerCustom, PickerPlacement};
 use serde_json::json;
 use tauri::{
-    AppHandle, LogicalSize, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewUrl,
-    WebviewWindow, WebviewWindowBuilder, WindowEvent,
+    AppHandle, LogicalSize, Manager, PhysicalPosition, PhysicalSize, Runtime, Theme, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder, WindowEvent, window::Color,
 };
 
 use crate::commands::CommandError;
@@ -264,6 +264,19 @@ fn capture_and_save(state: &PickerState, placer: &dyn Placer) {
     }
 }
 
+/// Picker background (`--bg-light` / `--bg-dark` in `frontend/src/shared/tokens.css`).
+pub const BG_LIGHT: Color = Color(0xf4, 0xf4, 0xf5, 0xff);
+/// See [`BG_LIGHT`].
+pub const BG_DARK: Color = Color(0x1e, 0x1e, 0x20, 0xff);
+
+/// The window background for `theme`.
+pub fn background_for(theme: Theme) -> Color {
+    match theme {
+        Theme::Dark => BG_DARK,
+        _ => BG_LIGHT,
+    }
+}
+
 /// Shows the picker at its saved or edge position and focuses it.
 pub fn show<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWindow<R>> {
     let window = create(app)?;
@@ -282,6 +295,10 @@ pub fn show<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWindow<R>> {
         let (w, h) = floating_size(config.position);
         window.set_size(LogicalSize::new(w, h))?;
     }
+
+    // The native background matches the page's, so there is no flash before it paints.
+    let theme = window.theme().unwrap_or(Theme::Light);
+    window.set_background_color(Some(background_for(theme)))?;
 
     window.show()?;
     window.unminimize()?;
@@ -513,6 +530,33 @@ mod tests {
             !caps.contains("set-title"),
             "the frontend must not retitle windows"
         );
+    }
+
+    /// `#rrggbb` after `name:` in a CSS file.
+    fn css_hex(css: &str, name: &str) -> Color {
+        let at = css.find(&format!("{name}:")).expect(name) + name.len() + 1;
+        let hex = css[at..]
+            .trim_start()
+            .strip_prefix('#')
+            .expect("hex colour");
+        let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).unwrap();
+        Color(byte(0), byte(2), byte(4), 0xff)
+    }
+
+    #[test]
+    fn window_background_matches_the_page_tokens() {
+        let tokens = include_str!("../../frontend/src/shared/tokens.css");
+        assert_eq!(css_hex(tokens, "--bg-light"), BG_LIGHT);
+        assert_eq!(css_hex(tokens, "--bg-dark"), BG_DARK);
+        assert_eq!(background_for(Theme::Dark), BG_DARK);
+        assert_eq!(background_for(Theme::Light), BG_LIGHT);
+        // The inline <head> style paints the same colours before any CSS loads.
+        let html = include_str!("../../frontend/picker.html");
+        assert_eq!(css_hex(html, "background"), BG_LIGHT);
+        let dark = &html[html.find("prefers-color-scheme: dark").unwrap()..];
+        assert_eq!(css_hex(dark, "background"), BG_DARK);
+        // The document title matches the window title the compositor rules key on.
+        assert!(html.contains(&format!("<title>{TITLE}</title>")));
     }
 
     #[test]

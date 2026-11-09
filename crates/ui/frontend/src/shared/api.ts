@@ -23,7 +23,7 @@ export interface Thumbnail {
   source: string
   title: string
   isCurrent: boolean
-  /** `''` until the `thumb://` protocol lands (Task 44). */
+  /** `thumb://` URL for an admitted path; `''` when the path is outside the download, favorites and local dirs (show a placeholder). */
   imageUrl: string
 }
 

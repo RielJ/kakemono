@@ -1,239 +1,315 @@
-/* ── Catppuccin Macchiato ─────────────────────────────────────────────────── */
-:root {
-  --base:    #24273a;
-  --mantle:  #1e2030;
-  --crust:   #181926;
-  --surface0: #363a4f;
-  --surface1: #494d64;
-  --overlay0: #6e738d;
-  --text:    #cad3f5;
-  --subtext0: #a5adcb;
-  --subtext1: #b8c0e0;
-  --peach:   #fab387;
-  --green:   #a6da95;
-  --red:     #ed8796;
-  --mauve:   #c6a0f6;
-  --blue:    #8aadf4;
-  --radius:  10px;
-}
+@import '../shared/tokens.css';
 
-/* ── Reset ───────────────────────────────────────────────────────────────── */
-* {
+/* Picker. Tokens and the reduced-motion switch live in shared/tokens.css. */
+
+*,
+*::before,
+*::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
 
-html, body, #root {
+html,
+body,
+#root {
   height: 100%;
   width: 100%;
   overflow: hidden;
-  user-select: none;
-  -webkit-user-select: none;
-  font-family: 'Hack Nerd Font', 'Hack Nerd Font Mono', 'JetBrains Mono', monospace;
 }
 
 body {
-  background: transparent;
+  background: var(--bg);
   color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--font-size);
+  line-height: 1.35;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* ── App container ───────────────────────────────────────────────────────── */
 .app {
-  height: 100%;
+  position: relative;
   display: flex;
-  background: rgba(36, 39, 58, 0.82);
-  backdrop-filter: blur(20px) saturate(1.4);
-  -webkit-backdrop-filter: blur(20px) saturate(1.4);
-}
-
-.app-horizontal {
-  align-items: center;
-  border-top: 1px solid rgba(202, 211, 245, 0.08);
+  height: 100%;
+  background: var(--bg);
 }
 
 .app-vertical {
   flex-direction: column;
-  align-items: stretch;
-}
-.app-vertical {
-  border-left: 1px solid rgba(202, 211, 245, 0.08);
 }
 
-/* ── Thumbnail strip ─────────────────────────────────────────────────────── */
+/* ── Drag handle ─────────────────────────────────────────────────────────── */
+.grip {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  color: var(--text-muted);
+  cursor: grab;
+  opacity: 0.7;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+.app-vertical .grip {
+  width: auto;
+  height: 20px;
+}
+
+.grip:hover {
+  opacity: 1;
+}
+
+.grip:active {
+  cursor: grabbing;
+}
+
+/* The icon must not swallow the press that starts the drag. */
+.grip svg {
+  pointer-events: none;
+}
+
+/* ── Strip ───────────────────────────────────────────────────────────────── */
 .strip {
   display: flex;
-  flex-direction: row;
+  flex: 1;
+  gap: 8px;
   align-items: center;
-  gap: 10px;
-  height: 100%;
-  padding: 14px 20px;
+  min-width: 0;
+  padding: 12px 12px 12px 4px;
   overflow-x: auto;
   overflow-y: hidden;
-  scroll-behavior: smooth;
   scrollbar-width: none;
+  outline: none;
 }
+
 .strip::-webkit-scrollbar {
   display: none;
 }
 
-/* Vertical mode for left/right position */
-.strip-vertical {
+.app-vertical .strip {
   flex-direction: column;
+  min-height: 0;
+  padding: 4px 12px 12px;
   overflow-x: hidden;
   overflow-y: auto;
-  width: 100%;
-  height: auto;
-  flex: 1;
-  padding: 20px 14px;
 }
 
-/* ── Thumbnail item ──────────────────────────────────────────────────────── */
-.thumb-item {
+.strip[hidden] {
+  display: none;
+}
+
+/* ── Option ──────────────────────────────────────────────────────────────── */
+.option {
   position: relative;
-  flex-shrink: 0;
-  width: 200px;
-  height: 130px;
-  border-radius: var(--radius);
+  flex: none;
+  width: 192px;
+  aspect-ratio: 16 / 10;
   overflow: hidden;
+  border-radius: var(--radius);
+  background: var(--placeholder);
   cursor: pointer;
-  border: 2px solid transparent;
-  transition: border-color 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
+  /* Inset rings: never clipped by the strip, and no layout shift. */
+  box-shadow: inset 0 0 0 1px var(--border);
 }
 
-.thumb-item:hover {
-  border-color: var(--subtext0);
-  transform: scale(1.04);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+.app-vertical .option {
+  width: 100%;
 }
 
-.thumb-item.current {
-  border-color: var(--peach);
-  box-shadow: 0 0 0 1px var(--peach), 0 4px 20px rgba(250, 179, 135, 0.2);
-}
-
-/* Vertical mode: thumbnails fill width */
-.strip-vertical .thumb-item {
-  width: 170px;
-  height: 110px;
-}
-
-.thumb-item img {
+.option img {
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  display: block;
   pointer-events: none;
 }
 
-/* ── Current badge ───────────────────────────────────────────────────────── */
-.current-badge {
+.option::after {
+  content: '';
   position: absolute;
-  top: 6px;
-  right: 6px;
-  background: var(--peach);
-  color: var(--base);
-  font-size: 10px;
-  font-weight: bold;
-  border-radius: 5px;
-  padding: 2px 6px;
-  line-height: 1;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  transition: box-shadow var(--duration-fast) var(--ease-out);
 }
 
-/* ── Source label (fade in on hover) ─────────────────────────────────────── */
-.thumb-label {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  background: linear-gradient(transparent, rgba(30, 32, 48, 0.9));
-  font-size: 10px;
-  color: var(--subtext0);
-  padding: 16px 6px 4px;
-  text-align: center;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  opacity: 0;
-  transition: opacity 0.15s ease;
-}
-.thumb-item:hover .thumb-label {
-  opacity: 1;
+@media (hover: hover) and (pointer: fine) {
+  .option:hover::after {
+    box-shadow: inset 0 0 0 2px var(--text-muted);
+  }
 }
 
-/* ── Context menu ────────────────────────────────────────────────────────── */
-.context-menu {
-  position: fixed;
-  background: var(--surface0);
-  border: 1px solid var(--surface1);
-  border-radius: 8px;
-  padding: 4px;
-  min-width: 170px;
-  z-index: 1000;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(12px);
+.option[aria-selected='true']::after {
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 
-.ctx-title {
-  font-size: 11px;
-  color: var(--subtext0);
-  padding: 5px 10px 6px;
-  border-bottom: 1px solid var(--surface1);
-  margin-bottom: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* Keyboard focus (the listbox has focus; the active option shows it). */
+.strip:focus-visible .option[data-active]::after {
+  box-shadow:
+    inset 0 0 0 2px var(--accent),
+    inset 0 0 0 4px var(--bg);
 }
 
-.ctx-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  background: none;
-  border: none;
-  color: var(--text);
-  font-family: inherit;
-  font-size: 12px;
-  padding: 6px 10px;
-  text-align: left;
-  border-radius: 5px;
-  cursor: pointer;
-  transition: background 0.1s;
-}
-.ctx-item:hover {
-  background: var(--surface1);
-}
-
-.ctx-icon {
-  font-size: 13px;
-  width: 16px;
-  text-align: center;
-}
-
-/* ── Loading / Empty states ──────────────────────────────────────────────── */
-.loading, .empty {
+.placeholder {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  width: 100%;
   height: 100%;
-  color: var(--subtext0);
-  font-size: 13px;
+  color: var(--text-muted);
 }
 
-.loading-icon, .empty-icon {
-  font-size: 20px;
+.current-mark {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.current-mark svg {
+  width: 12px;
+  height: 12px;
+}
+
+.caption {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: 3px 6px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+.caption:empty {
+  display: none;
+}
+
+.option:hover .caption,
+.strip:focus-visible .option[data-active] .caption {
+  opacity: 1;
+}
+
+/* ── States ──────────────────────────────────────────────────────────────── */
+.state {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  text-wrap: balance;
+}
+
+/* ── Context menu ────────────────────────────────────────────────────────── */
+.menu {
+  position: fixed;
+  z-index: 10;
+  min-width: 180px;
+  padding: 4px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-menu);
+  transform-origin: top left;
+  animation: menu-in var(--duration-fast) var(--ease-out);
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+.menu-item {
+  display: block;
+  width: 100%;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: default;
+  outline: none;
+}
+
+.menu-item:hover,
+.menu-item:focus-visible {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.menu-item[aria-disabled='true'] {
+  color: var(--text-muted);
+  background: none;
   opacity: 0.6;
 }
 
-.loading .loading-icon {
-  animation: pulse 1.5s ease-in-out infinite;
+/* ── Toast ───────────────────────────────────────────────────────────────── */
+.toast-region {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 5;
+  pointer-events: none;
 }
 
-@keyframes pulse {
-  0%, 100% { opacity: 0.6; }
-  50% { opacity: 1; }
+.toast {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 6px 6px 6px 12px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-menu);
+  pointer-events: auto;
+  animation: toast-in var(--duration) var(--ease-out);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+.toast-action {
+  padding: 3px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.toast-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
 }
