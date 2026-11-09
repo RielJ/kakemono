@@ -8,6 +8,9 @@
 //! - `trim_cache` also keeps the image of the previous history entry, not only the current one.
 //!   GNOME's dark-mode key can still point at it (plan Task 20).
 //! - An empty favorites or trash dir is an error. Go would have written into the working dir.
+//! - `trim_cache` never deletes anything inside the favorites or trash dir, comparing
+//!   canonical paths. If either dir is the download dir (or contains it), it deletes nothing and
+//!   logs a warning. Go deleted favorites saved into the download dir.
 //!
 //! The file work runs on tokio's blocking pool (`spawn_blocking`) with `std::fs`.
 
@@ -42,15 +45,26 @@ pub(crate) async fn trash(src: &Path, trash_dir: &Path) -> Result<PathBuf, Engin
 }
 
 /// Deletes the oldest images in `download_dir` beyond `cache_size` (0 = unlimited). `state` is
-/// the state after the new image was pushed (its `current` and history are protected). Failures
-/// are logged, never returned.
-pub(crate) async fn trim_cache(download_dir: &Path, cache_size: u32, state: &State) {
+/// the state after the new image was pushed (its `current` and history are protected). Nothing
+/// inside `favorites_dir` or `trash_dir` is deleted. Failures are logged, never returned.
+pub(crate) async fn trim_cache(
+    download_dir: &Path,
+    favorites_dir: &Path,
+    trash_dir: &Path,
+    cache_size: u32,
+    state: &State,
+) {
     if cache_size == 0 || download_dir.as_os_str().is_empty() {
         return;
     }
     let dir = download_dir.to_path_buf();
+    let keep_out = vec![
+        (FAVORITES_SETTING, favorites_dir.to_path_buf()),
+        (TRASH_SETTING, trash_dir.to_path_buf()),
+    ];
     let protected = protected_paths(state);
-    let joined = tokio::task::spawn_blocking(move || trim_blocking(&dir, cache_size, &protected));
+    let joined =
+        tokio::task::spawn_blocking(move || trim_blocking(&dir, cache_size, &protected, &keep_out));
     match joined.await {
         Ok(deleted) if !deleted.is_empty() => {
             tracing::debug!(count = deleted.len(), "trimmed the download cache");
@@ -231,10 +245,54 @@ fn protected_paths(state: &State) -> HashSet<PathBuf> {
         .collect()
 }
 
+/// The config settings `trim_cache` keeps out of, as named in warnings.
+const FAVORITES_SETTING: &str = "[favorites] dir";
+const TRASH_SETTING: &str = "[daemon] trash_dir";
+
+/// Canonicalises the dirs `trim_cache` must not delete from. Empty settings and dirs that don't
+/// exist are dropped (nothing can be inside them).
+fn canonical_keep_out(keep_out: &[(&'static str, PathBuf)]) -> Vec<(&'static str, PathBuf)> {
+    keep_out
+        .iter()
+        .filter(|(_, dir)| !dir.as_os_str().is_empty())
+        .filter_map(|(setting, dir)| Some((*setting, fs::canonicalize(dir).ok()?)))
+        .collect()
+}
+
+/// The settings whose dir is the download dir or one of its parents: every download is then
+/// inside it, so the trim must delete nothing.
+fn overlapping_settings(
+    canonical_download_dir: &Path,
+    keep_out: &[(&'static str, PathBuf)],
+) -> Vec<&'static str> {
+    keep_out
+        .iter()
+        .filter(|(_, dir)| canonical_download_dir.starts_with(dir))
+        .map(|(setting, _)| *setting)
+        .collect()
+}
+
+/// The single warning a trim logs when [`overlapping_settings`] is not empty.
+fn overlap_warning(download_dir: &Path, settings: &[&str]) -> String {
+    format!(
+        "trim cache: {} contains the download dir {}; not deleting anything \
+         (set cache_size = 0 or use separate dirs)",
+        settings.join(" and "),
+        download_dir.display()
+    )
+}
+
 /// Go `trimCache`: lists the images directly in `dir` (no subdirs, no other files), oldest
 /// modification time first, and deletes the oldest until `cache_size` remain. Protected files
-/// are skipped and the next oldest is deleted instead. Returns the paths it removed.
-fn trim_blocking(dir: &Path, cache_size: u32, protected: &HashSet<PathBuf>) -> Vec<PathBuf> {
+/// and files whose canonical path is inside a `keep_out` dir are skipped and the next oldest is
+/// deleted instead. If a `keep_out` dir is `dir` or a parent of it, deletes nothing and logs
+/// one warning. Returns the paths it removed.
+fn trim_blocking(
+    dir: &Path,
+    cache_size: u32,
+    protected: &HashSet<PathBuf>,
+    keep_out: &[(&'static str, PathBuf)],
+) -> Vec<PathBuf> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(err) => {
@@ -244,7 +302,16 @@ fn trim_blocking(dir: &Path, cache_size: u32, protected: &HashSet<PathBuf>) -> V
             return Vec::new();
         }
     };
-    let canonical_dir = fs::canonicalize(dir).ok();
+    let Ok(canonical_dir) = fs::canonicalize(dir) else {
+        // Can't tell whether the download dir overlaps favorites or trash: delete nothing.
+        return Vec::new();
+    };
+    let keep_out = canonical_keep_out(keep_out);
+    let overlapping = overlapping_settings(&canonical_dir, &keep_out);
+    if !overlapping.is_empty() {
+        tracing::warn!("{}", overlap_warning(dir, &overlapping));
+        return Vec::new();
+    }
     let mut files: Vec<(SystemTime, PathBuf)> = entries
         .filter_map(Result::ok)
         .filter_map(|entry| {
@@ -264,11 +331,18 @@ fn trim_blocking(dir: &Path, cache_size: u32, protected: &HashSet<PathBuf>) -> V
     files.sort();
 
     let is_protected = |path: &Path| {
-        protected.contains(path)
-            || canonical_dir
-                .as_ref()
-                .zip(path.file_name())
-                .is_some_and(|(d, name)| protected.contains(&d.join(name)))
+        if protected.contains(path)
+            || path
+                .file_name()
+                .is_some_and(|name| protected.contains(&canonical_dir.join(name)))
+        {
+            return true;
+        }
+        // A symlink into favorites or trash counts as inside it. If the path can't be
+        // resolved, keep the file.
+        fs::canonicalize(path).map_or(true, |real| {
+            protected.contains(&real) || keep_out.iter().any(|(_, d)| real.starts_with(d))
+        })
     };
     let excess = files.len() - keep;
     let mut deleted = Vec::new();
@@ -411,6 +485,66 @@ mod tests {
     fn trim_ignores_a_missing_dir() {
         let dir = tempfile::tempdir().unwrap();
         let gone = dir.path().join("nope");
-        assert!(trim_blocking(&gone, 1, &HashSet::new()).is_empty());
+        assert!(trim_blocking(&gone, 1, &HashSet::new(), &[]).is_empty());
+    }
+
+    #[test]
+    fn overlap_is_the_download_dir_or_a_parent_of_it() {
+        let d = Path::new("/c/downloads");
+        let keep_out = vec![
+            (FAVORITES_SETTING, PathBuf::from("/c/downloads")),
+            (TRASH_SETTING, PathBuf::from("/c")),
+        ];
+        assert_eq!(
+            overlapping_settings(d, &keep_out),
+            vec![FAVORITES_SETTING, TRASH_SETTING]
+        );
+        let nested = vec![
+            (FAVORITES_SETTING, PathBuf::from("/c/downloads/favs")),
+            (TRASH_SETTING, PathBuf::from("/c/downloads-trash")),
+        ];
+        assert!(overlapping_settings(d, &nested).is_empty());
+    }
+
+    #[test]
+    fn overlap_warning_names_the_setting() {
+        assert_eq!(
+            overlap_warning(Path::new("/c/d"), &[FAVORITES_SETTING]),
+            "trim cache: [favorites] dir contains the download dir /c/d; not deleting anything \
+             (set cache_size = 0 or use separate dirs)"
+        );
+        assert!(
+            overlap_warning(Path::new("/c/d"), &[FAVORITES_SETTING, TRASH_SETTING])
+                .starts_with("trim cache: [favorites] dir and [daemon] trash_dir contains")
+        );
+    }
+
+    #[test]
+    fn trim_with_an_overlapping_dir_deletes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["a.jpg", "b.jpg", "c.jpg"] {
+            write(&dir.path().join(name), b"x");
+        }
+        let keep_out = vec![(FAVORITES_SETTING, dir.path().to_path_buf())];
+        assert!(trim_blocking(dir.path(), 1, &HashSet::new(), &keep_out).is_empty());
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 3);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn trim_keeps_a_symlink_into_favorites() {
+        let root = tempfile::tempdir().unwrap();
+        let downloads = root.path().join("downloads");
+        let favorites = root.path().join("favorites");
+        fs::create_dir_all(&downloads).unwrap();
+        fs::create_dir_all(&favorites).unwrap();
+        write(&favorites.join("fav.jpg"), b"f");
+        std::os::unix::fs::symlink(favorites.join("fav.jpg"), downloads.join("link.jpg")).unwrap();
+        write(&downloads.join("plain.jpg"), b"p");
+        let keep_out = vec![(FAVORITES_SETTING, favorites.clone())];
+        // 2 images, keep 1: the symlink is skipped, so plain.jpg goes whatever its age.
+        let deleted = trim_blocking(&downloads, 1, &HashSet::new(), &keep_out);
+        assert_eq!(deleted, vec![downloads.join("plain.jpg")]);
+        assert!(downloads.join("link.jpg").exists());
     }
 }

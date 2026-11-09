@@ -60,6 +60,16 @@ mod files {
         cache_size: u32,
         prepare: impl FnOnce(&Path) -> State,
     ) -> Fixture {
+        fixture_with(registry, cache_size, |_, _| {}, prepare)
+    }
+
+    /// [`fixture`] plus a hook that edits the config (it gets the temp root) before `prepare`.
+    fn fixture_with(
+        registry: Registry,
+        cache_size: u32,
+        configure: impl FnOnce(&mut Config, &Path),
+        prepare: impl FnOnce(&Path) -> State,
+    ) -> Fixture {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
         let mut cfg = Config::default();
@@ -68,6 +78,7 @@ mod files {
         cfg.favorites.dir = root.join("favorites");
         cfg.daemon.cache_size = cache_size;
         cfg.light.sources = vec!["bing".to_owned()];
+        configure(&mut cfg, &root);
         fs::create_dir_all(root.join("downloads")).unwrap();
         let state = prepare(&root);
 
@@ -411,5 +422,117 @@ mod files {
             vec!["favorites", "new.jpg", "notes.txt"]
         );
         assert!(f.downloads().join("favorites").join("fav.jpg").exists());
+    }
+
+    // ─── trim_cache vs favorites / trash (regression: Go deleted favorites in the cache) ─────
+
+    /// One provider (`bing`) returning a local image outside the temp root, so `next` trims
+    /// without downloading. The returned guard keeps the image alive.
+    fn fresh_image() -> (TempDir, Registry) {
+        let dir = tempfile::tempdir().unwrap();
+        let fresh = dir.path().join("fresh.png");
+        fs::write(&fresh, b"fresh").unwrap();
+        let registry = local_registry(&fresh);
+        (dir, registry)
+    }
+
+    fn three_aged_images(d: &Path) {
+        write_aged(&d.join("a.jpg"), b"a", 300);
+        write_aged(&d.join("b.jpg"), b"b", 200);
+        write_aged(&d.join("c.jpg"), b"c", 100);
+    }
+
+    #[tokio::test]
+    async fn trim_deletes_nothing_when_favorites_dir_is_the_download_dir() {
+        let (_img, registry) = fresh_image();
+        let f = fixture_with(
+            registry,
+            1,
+            |cfg, root| cfg.favorites.dir = root.join("downloads"),
+            |root| {
+                three_aged_images(&root.join("downloads"));
+                State::new()
+            },
+        );
+        f.engine.next().await.unwrap();
+        assert_eq!(names(&f.downloads()), vec!["a.jpg", "b.jpg", "c.jpg"]);
+    }
+
+    #[tokio::test]
+    async fn trim_deletes_nothing_when_trash_dir_is_the_download_dir() {
+        let (_img, registry) = fresh_image();
+        let f = fixture_with(
+            registry,
+            1,
+            |cfg, root| cfg.daemon.trash_dir = root.join("downloads"),
+            |root| {
+                three_aged_images(&root.join("downloads"));
+                State::new()
+            },
+        );
+        f.engine.next().await.unwrap();
+        assert_eq!(names(&f.downloads()), vec!["a.jpg", "b.jpg", "c.jpg"]);
+    }
+
+    #[tokio::test]
+    async fn trim_deletes_nothing_when_favorites_dir_contains_the_download_dir() {
+        let (_img, registry) = fresh_image();
+        let f = fixture_with(
+            registry,
+            1,
+            |cfg, root| cfg.favorites.dir = root.to_path_buf(),
+            |root| {
+                three_aged_images(&root.join("downloads"));
+                State::new()
+            },
+        );
+        f.engine.next().await.unwrap();
+        assert_eq!(names(&f.downloads()), vec!["a.jpg", "b.jpg", "c.jpg"]);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn trim_deletes_nothing_when_favorites_dir_is_a_symlink_to_the_download_dir() {
+        let (_img, registry) = fresh_image();
+        let f = fixture_with(
+            registry,
+            1,
+            |cfg, root| {
+                std::os::unix::fs::symlink(root.join("downloads"), root.join("favs-link")).unwrap();
+                cfg.favorites.dir = root.join("favs-link");
+            },
+            |root| {
+                three_aged_images(&root.join("downloads"));
+                State::new()
+            },
+        );
+        f.engine.next().await.unwrap();
+        assert_eq!(names(&f.downloads()), vec!["a.jpg", "b.jpg", "c.jpg"]);
+    }
+
+    #[tokio::test]
+    async fn trim_never_touches_a_favorites_dir_nested_in_the_download_dir() {
+        let (_img, registry) = fresh_image();
+        let f = fixture_with(
+            registry,
+            1,
+            |cfg, root| cfg.favorites.dir = root.join("downloads").join("favs"),
+            |root| {
+                let d = root.join("downloads");
+                three_aged_images(&d);
+                let src = d.join("c.jpg");
+                state_with(&[&src])
+            },
+        );
+        // Favorite the current image (c.jpg) into the nested dir, then rotate.
+        f.engine.favorite().await.unwrap();
+        let favs = f.downloads().join("favs");
+        write_aged(&favs.join("old-fav.jpg"), b"o", 9_000);
+
+        f.engine.next().await.unwrap();
+
+        // Top-level images: a, b, c; keep 1. c is the previous history entry; a and b go.
+        assert_eq!(names(&f.downloads()), vec!["c.jpg", "favs"]);
+        assert_eq!(names(&favs), vec!["c.jpg", "old-fav.jpg"]);
     }
 }

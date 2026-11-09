@@ -543,7 +543,14 @@ impl Engine {
             snap.state.clone()
         };
         self.persist();
-        files::trim_cache(download_dir, cfg.daemon.cache_size, &state).await;
+        files::trim_cache(
+            download_dir,
+            &cfg.favorites.dir,
+            &cfg.daemon.trash_dir,
+            cfg.daemon.cache_size,
+            &state,
+        )
+        .await;
         self.changed(&info);
         Ok(info)
     }
