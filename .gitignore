@@ -13,9 +13,6 @@ gui/build/bin/
 picker/build/bin/
 coverage.out
 
-# Stray runtime dir created by an unexpanded "~" path
-/~/
-
 # Third-party GPL-3 reference (Variety). Local reading only: never commit or copy code from it.
 /variety-reference/
 
