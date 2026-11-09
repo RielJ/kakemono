@@ -3,3 +3,10 @@
 pub mod mainloop;
 pub mod setter;
 pub mod signals;
+
+/// Build the macOS platform. Polled inside the tokio runtime; must stay `Send`.
+///
+/// TODO(task 25): NSWorkspace setter plus signals. Stub: unconfigured.
+pub async fn open_platform(cfg: &wallpaperd_config::schema::DesktopConfig) -> crate::api::Platform {
+    crate::api::Platform::unconfigured_for(cfg)
+}

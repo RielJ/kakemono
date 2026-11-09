@@ -1,7 +1,5 @@
 //! The OS seam: `WallpaperSetter` and `SystemSignals`, the main-thread `host()`, argv execution,
 //! URL open / file reveal and service installation (plan §A, §B, §E, §F).
-//!
-//! TODO(task 7): re-export the seam types from `api` and `host`.
 
 pub mod api;
 pub mod exec;
@@ -18,3 +16,9 @@ pub mod linux;
 pub mod macos;
 #[cfg(target_os = "windows")]
 pub mod windows;
+
+pub use api::{
+    BackendInfo, CommandStatus, Fit, ParseEnumError, Platform, SetError, Signal, StaticSignals,
+    SystemSignals, Theme, UNCONFIGURED_HINT, UnconfiguredSetter, WallpaperSetter,
+};
+pub use host::{default_host, host};
