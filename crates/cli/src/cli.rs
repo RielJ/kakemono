@@ -56,6 +56,9 @@ pub enum Commands {
         /// Run in the foreground (don't detach)
         #[arg(short, long)]
         foreground: bool,
+        /// Internal: set by the background re-exec; log to the log file instead of stderr
+        #[arg(long, hide = true, requires = "foreground")]
+        detached: bool,
     },
     /// Switch to the next wallpaper
     #[command(long_about = "Ask the daemon to advance to the next wallpaper.\n\n\
@@ -285,7 +288,10 @@ fn dispatch(ctx: &Context, command: Commands) -> anyhow::Result<()> {
         }
         Commands::Config { action } => config_command(ctx, out, action),
         // Wired by later tasks; each replaces its arm.
-        Commands::Daemon { .. } => not_available("daemon"), // Task 36
+        Commands::Daemon {
+            foreground,
+            detached,
+        } => commands::daemon::run(ctx, out, foreground, detached),
         Commands::Open { folder, favorites } => {
             block_on(commands::open::run(ctx, out, folder, favorites))
         }
@@ -385,7 +391,13 @@ mod tests {
     #[test]
     fn daemon_short_foreground_flag() {
         let cli = Cli::try_parse_from(["kakemono", "daemon", "-f"]).unwrap();
-        assert!(matches!(cli.command, Commands::Daemon { foreground: true }));
+        assert!(matches!(
+            cli.command,
+            Commands::Daemon {
+                foreground: true,
+                detached: false
+            }
+        ));
     }
 
     #[test]

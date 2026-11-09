@@ -39,8 +39,14 @@ tracing-appender.workspace = true
 [target.'cfg(unix)'.dependencies]
 nix.workspace = true
 
+[features]
+# With this feature, KAKEMONO_FAKE_PLATFORM=1 makes `daemon` use the fake platform. Release
+# builds never enable it; `cargo test` does through the self dev-dependency below.
+fake = ["kakemono-platform/fake"]
+
 [dev-dependencies]
-# Test builds of the binary get the fake platform (WALLPAPERD_FAKE_PLATFORM=1, Task 36).
+# Test builds of the lib and binary get the `fake` feature (Task 36).
+kakemono = { path = ".", features = ["fake"] }
 kakemono-platform = { workspace = true, features = ["fake"] }
 kakemono-sources = { workspace = true, features = ["fake"] }
 tokio = { workspace = true, features = ["test-util"] }
