@@ -1,0 +1,10 @@
+/* Optional: add to ~/.config/waybar/style.css. The module gets the classes
+   "light" or "dark", "running" or "paused", or "stopped" when the daemon is down. */
+#custom-wallpaper {
+  padding: 0 8px;
+}
+
+#custom-wallpaper.paused,
+#custom-wallpaper.stopped {
+  opacity: 0.6;
+}

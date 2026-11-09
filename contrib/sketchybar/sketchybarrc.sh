@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
-# sketchybarrc.sh — drop-in snippet to add the wallpaper item to sketchybar.
+# sketchybarrc.sh: drop-in snippet to add the wallpaper item to sketchybar.
 # Source this file from your main sketchybarrc, or copy the relevant lines.
 #
 # Requirements:
-#   - wallpaperd daemon must be running
-#   - jq must be installed
-#   - Place wallpaper.sh and wallpaper_popup.sh in $PLUGIN_DIR
+#   - the kakemono daemon is running (`kakemono service install` starts it at login)
+#   - jq is installed
+#   - wallpaper.sh and wallpaper_popup.sh are in $PLUGIN_DIR
+#   - config.toml has [hooks] on_change = ["<path to sketchybar>", "--trigger", "wallpaper_changed"]
 
 PLUGIN_DIR="$HOME/.config/sketchybar/plugins"
 
-# Register the custom event fired by wallpaperd when the wallpaper changes.
+# Register the custom event. The kakemono on_change hook fires it after every wallpaper change.
 sketchybar --add event wallpaper_changed
 
-# Main wallpaper item — right side of the bar.
+# Main wallpaper item, on the right side of the bar.
 sketchybar --add item wallpaper right \
     --set wallpaper \
         update_freq=0 \
@@ -22,7 +23,7 @@ sketchybar --add item wallpaper right \
         click_script="sketchybar --set \$NAME popup.drawing=toggle" \
     --subscribe wallpaper wallpaper_changed mouse.entered mouse.exited mouse.exited.global
 
-# Popup buttons — shown when the wallpaper item is clicked.
+# Popup buttons, shown when the wallpaper item is clicked.
 sketchybar --add item wallpaper.next popup.wallpaper \
     --set wallpaper.next \
         icon="⏭" \
