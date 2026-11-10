@@ -50,6 +50,7 @@ tracing-subscriber.workspace = true
 zbus.workspace = true
 
 [dev-dependencies]
+kakemono-protocol = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["test-util"] }
 interprocess.workspace = true
 tempfile.workspace = true

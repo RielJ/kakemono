@@ -29,6 +29,7 @@ kamadak-exif.workspace = true
 regex.workspace = true
 
 [dev-dependencies]
+kakemono-protocol = { workspace = true, features = ["test-support"] }
 kakemono-platform = { workspace = true, features = ["fake"] }
 kakemono-sources = { workspace = true, features = ["fake"] }
 tokio = { workspace = true, features = ["test-util"] }

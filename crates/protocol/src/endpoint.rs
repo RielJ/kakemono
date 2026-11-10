@@ -61,6 +61,19 @@ pub enum EndpointError {
     NoRuntimeDir,
 }
 
+/// A socket path that [`Endpoint::new`] accepts on this OS, for tests: `dir/name` on Unix, and a
+/// named pipe on Windows, made unique by the last component of `dir` (a temp dir), so parallel
+/// tests don't share a pipe.
+#[cfg(any(test, feature = "test-support"))]
+pub fn test_socket_path(dir: &Path, name: &str) -> PathBuf {
+    if cfg!(windows) {
+        let tag = dir.file_name().unwrap_or_default().to_string_lossy();
+        PathBuf::from(format!("{PIPE_PREFIX}kakemono-test-{tag}-{name}"))
+    } else {
+        dir.join(name)
+    }
+}
+
 impl Endpoint {
     /// Wraps `path` after checking it is usable on this OS: a Unix socket path short enough
     /// for `sun_path`, or a `\\.\pipe\` path on Windows.

@@ -384,17 +384,6 @@ mod tests {
 
     use super::*;
 
-    /// A socket path the platform accepts: a file in `dir` on Unix, a named pipe on Windows
-    /// (unique per temp dir, so parallel tests don't share one).
-    fn socket_in(dir: &Path, name: &str) -> PathBuf {
-        if cfg!(windows) {
-            let tag = dir.file_name().unwrap_or_default().to_string_lossy();
-            PathBuf::from(format!(r"\\.\pipe\kakemono-test-{tag}-{name}"))
-        } else {
-            dir.join(name)
-        }
-    }
-
     fn paths(root: &Path) -> Paths {
         let base = BaseDirs {
             home: root.to_owned(),
@@ -424,7 +413,7 @@ mod tests {
     fn resolve_creates_a_missing_config_and_prefers_the_socket_flag() {
         let tmp = tempfile::tempdir().unwrap();
         let paths = paths(tmp.path());
-        let socket = socket_in(tmp.path(), "flag.sock");
+        let socket = kakemono_protocol::endpoint::test_socket_path(tmp.path(), "flag.sock");
         let resolved = resolve(
             &paths,
             &Options {
@@ -443,7 +432,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let paths = paths(tmp.path());
         let config = tmp.path().join("explicit.toml");
-        let socket = socket_in(tmp.path(), "cfg.sock");
+        let socket = kakemono_protocol::endpoint::test_socket_path(tmp.path(), "cfg.sock");
         std::fs::write(
             &config,
             format!(
@@ -472,7 +461,7 @@ mod tests {
         let paths = paths(tmp.path());
         std::fs::create_dir_all(paths.legacy_config_file.parent().unwrap()).unwrap();
         std::fs::write(&paths.legacy_config_file, LEGACY).unwrap();
-        let socket = socket_in(tmp.path(), "flag.sock");
+        let socket = kakemono_protocol::endpoint::test_socket_path(tmp.path(), "flag.sock");
 
         let resolved = resolve(
             &paths,
@@ -512,7 +501,10 @@ mod tests {
             &paths,
             &Options {
                 config: Some(config.clone()),
-                socket: Some(socket_in(tmp.path(), "flag.sock")),
+                socket: Some(kakemono_protocol::endpoint::test_socket_path(
+                    tmp.path(),
+                    "flag.sock",
+                )),
             },
         )
         .unwrap();
@@ -544,7 +536,10 @@ mod tests {
             &paths,
             &Options {
                 config: Some(config.clone()),
-                socket: Some(socket_in(tmp.path(), "flag.sock")),
+                socket: Some(kakemono_protocol::endpoint::test_socket_path(
+                    tmp.path(),
+                    "flag.sock",
+                )),
             },
         );
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -574,7 +569,10 @@ mod tests {
                 &paths,
                 &Options {
                     config,
-                    socket: Some(socket_in(tmp.path(), "flag.sock")),
+                    socket: Some(kakemono_protocol::endpoint::test_socket_path(
+                        tmp.path(),
+                        "flag.sock",
+                    )),
                 },
             )
             .unwrap_err();

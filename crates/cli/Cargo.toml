@@ -48,6 +48,7 @@ nix.workspace = true
 fake = ["kakemono-platform/fake"]
 
 [dev-dependencies]
+kakemono-protocol = { workspace = true, features = ["test-support"] }
 # Test builds of the lib and binary get the `fake` feature (Task 36).
 kakemono = { path = ".", features = ["fake"] }
 kakemono-platform = { workspace = true, features = ["fake"] }
