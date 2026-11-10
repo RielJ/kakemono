@@ -7,6 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::tilde_expanded;
 use kakemono_config::load::{load_with_home, parse_str};
 use kakemono_config::{Config, SourceType, migrate_file};
 
@@ -78,7 +79,7 @@ placement = "custom"
 "#;
 
 /// `(id, enabled, type, location)` per row.
-type Row = (&'static str, bool, SourceType, &'static str);
+type Row<'a> = (&'a str, bool, SourceType, &'a str);
 
 fn rows(cfg: &Config) -> Vec<(String, bool, SourceType, String)> {
     cfg.sources
@@ -87,7 +88,7 @@ fn rows(cfg: &Config) -> Vec<(String, bool, SourceType, String)> {
         .collect()
 }
 
-fn owned(want: &[Row]) -> Vec<(String, bool, SourceType, String)> {
+fn owned(want: &[Row<'_>]) -> Vec<(String, bool, SourceType, String)> {
     want.iter()
         .map(|&(id, on, kind, loc)| (id.to_owned(), on, kind, loc.to_owned()))
         .collect()
@@ -118,7 +119,7 @@ fn load_all_ways(text: &str) -> Config {
     from_file
 }
 
-fn assert_migrates(text: &str, want: &[Row]) {
+fn assert_migrates(text: &str, want: &[Row<'_>]) {
     let cfg = load_all_ways(text);
     assert_eq!(rows(&cfg), owned(want));
     // `cache_size` is dropped, not converted: the size limit keeps its default.
@@ -206,7 +207,7 @@ queries = ["stars"]
                 "dir-727f",
                 true,
                 SourceType::Folder,
-                "/home/u/Pictures/walls"
+                tilde_expanded(home(), "Pictures/walls").as_str()
             ),
             ("dir-590b", true, SourceType::Folder, "/srv/art"),
         ])

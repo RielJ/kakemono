@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use crate::tilde_expanded;
 use kakemono_config::load::{parse_report, parse_str};
 use kakemono_config::{SourceEntry, SourceType, defaults_for_home};
 
@@ -146,7 +147,11 @@ fn missing_sources_gives_the_three_default_rows() {
             row(
                 "favorites",
                 SourceType::Folder,
-                "/home/golden/Pictures/Wallpapers/favorites"
+                &home()
+                    .join("Pictures")
+                    .join("Wallpapers")
+                    .join("favorites")
+                    .to_string_lossy()
             ),
         ]
     );
@@ -191,10 +196,10 @@ location = "~/not-a-path"
     assert_eq!(
         locations,
         [
-            "/home/golden/Pictures",
-            "/home/golden/one.jpg",
+            tilde_expanded(home(), "Pictures").as_str(),
+            tilde_expanded(home(), "one.jpg").as_str(),
             "/home/golden",
-            "/home/golden/x",
+            tilde_expanded(home(), "x").as_str(),
             "~/not-a-path",
         ]
     );

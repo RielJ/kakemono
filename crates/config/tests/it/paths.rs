@@ -287,10 +287,8 @@ mod effective_socket_path {
         assert_eq!(got, SocketPath::IgnoredLegacy(&go));
         assert_eq!(got.override_path(), None);
         let notice = got.notice().unwrap();
-        assert!(
-            notice.contains("/Users/a/.config/wallpaperd/daemon.sock"),
-            "{notice}"
-        );
+        // `legacy_default_socket` joins with `Path::join`, so `\` separators on Windows.
+        assert!(notice.contains(&go.display().to_string()), "{notice}");
         assert!(notice.contains("legacy wallpaperd config"), "{notice}");
     }
 

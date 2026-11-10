@@ -4,14 +4,17 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::tilde_expanded;
 use kakemono_config::{
     MigrationReport, SourceEntry, SourceType, deterministic_id, migrate_document, needs_migration,
     parse_str, valid_id,
 };
 use toml_edit::DocumentMut;
 
+const HOME: &str = "/home/u";
+
 fn home() -> &'static Path {
-    Path::new("/home/u")
+    Path::new(HOME)
 }
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -50,9 +53,13 @@ fn assert_loads_as_report(text: &str, report: &MigrationReport) {
         assert_eq!(loaded.id, row.id);
         assert_eq!(loaded.enabled, row.enabled);
         assert_eq!(loaded.kind, row.kind);
-        let want = row
-            .location
-            .replacen('~', "/home/u", usize::from(row.kind.is_local()));
+        let want = match (row.kind.is_local(), row.location.as_str()) {
+            (true, "~") => HOME.to_owned(),
+            (true, loc) => loc
+                .strip_prefix("~/")
+                .map_or_else(|| loc.to_owned(), |rest| tilde_expanded(home(), rest)),
+            (false, loc) => loc.to_owned(),
+        };
         assert_eq!(loaded.location, want);
     }
     assert!(report.rows.iter().all(|r| valid_id(&r.id)));

@@ -16,3 +16,11 @@ mod migrate_file;
 mod paths;
 mod picker_blur;
 mod sources_schema;
+
+use std::path::Path;
+
+/// A local source's `location` after `~/<rest>` is expanded: `home` joined with `rest` by
+/// `Path::join`, so the joining separator is `\` on Windows (`rest` keeps its own `/`).
+fn tilde_expanded(home: &Path, rest: &str) -> String {
+    home.join(rest).to_string_lossy().into_owned()
+}
