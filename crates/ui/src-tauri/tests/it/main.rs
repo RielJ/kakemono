@@ -5,4 +5,5 @@
 //! `cargo test --test it <module>::`.
 
 mod bindings;
+mod capabilities;
 mod picker_place;

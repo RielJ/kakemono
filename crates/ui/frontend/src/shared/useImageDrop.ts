@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { errorMessage, fetchDroppedUrl, importDroppedFile } from './api'
 
-/** The backend's cap (`MAX_DROP_BYTES` in `commands_sources.rs`). Checked before reading. */
+/** The backend's cap (`MAX_DROP_BYTES` in `commands_sources/mod.rs`). Checked before reading. */
 export const MAX_DROP_BYTES = 64 * 1024 * 1024
 
 export const MESSAGES = {

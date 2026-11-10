@@ -28,6 +28,7 @@ use tauri::{AppHandle, Runtime, State};
 use tauri_plugin_autostart::{AutoLaunchManager, ManagerExt as _};
 
 use crate::daemon_link::DaemonLink;
+use crate::error::{ErrorKind, Kinded, serialize_as_wire_error};
 
 /// How long one CLI call may take. `kakemono daemon` waits up to 10 s for the new daemon's
 /// socket; `service install` may wait on the service manager.
@@ -71,30 +72,21 @@ pub enum LifecycleError {
     },
 }
 
-impl LifecycleError {
-    /// Stable machine-readable kind.
-    pub fn kind(&self) -> &'static str {
+impl Kinded for LifecycleError {
+    fn kind(&self) -> ErrorKind {
         match self {
-            Self::CliNotFound => "cli_not_found",
-            Self::CliFailed { .. } => "cli_failed",
-            Self::CliOutput { .. } => "cli_output",
-            Self::Io { .. } => "io",
-            Self::Autostart(_) => "autostart",
-            Self::NotAnswering(_) => "daemon",
+            Self::CliNotFound => ErrorKind::CliNotFound,
+            Self::CliFailed { .. } => ErrorKind::CliFailed,
+            Self::CliOutput { .. } => ErrorKind::CliOutput,
+            Self::Io { .. } => ErrorKind::Io,
+            Self::Autostart(_) => ErrorKind::Autostart,
+            Self::NotAnswering(_) => ErrorKind::Daemon,
             Self::UndoFailed { error, .. } => error.kind(),
         }
     }
 }
 
-impl Serialize for LifecycleError {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeStruct;
-        let mut s = serializer.serialize_struct("LifecycleError", 2)?;
-        s.serialize_field("kind", self.kind())?;
-        s.serialize_field("message", &self.to_string())?;
-        s.end()
-    }
-}
+serialize_as_wire_error!(LifecycleError);
 
 type Result<T, E = LifecycleError> = std::result::Result<T, E>;
 
@@ -329,7 +321,7 @@ pub async fn ensure_daemon(link: State<'_, Arc<DaemonLink>>) -> Result<bool> {
 // ── Start at login ──────────────────────────────────────────────────────────
 
 /// `kakemono service status --json` (the service contract): exit 0 and this object on stdout.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 pub struct ServiceStatus {
     pub installed: bool,
     pub running: bool,
@@ -362,7 +354,7 @@ impl Autostart for AutoLaunchManager {
 }
 
 /// `start_at_login` → both halves and the combined switch.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, ts_rs::TS)]
 pub struct LoginItems {
     /// The switch: the daemon service is installed and the UI starts at login.
     pub enabled: bool,
@@ -674,7 +666,7 @@ mod tests {
         let err = ensure_running(&FakeProbe::new(&[false]), &runner, cli(), Path::new(SOCKET))
             .await
             .expect_err("refused");
-        assert_eq!(err.kind(), "cli_failed");
+        assert_eq!(err.kind(), ErrorKind::CliFailed);
         assert_eq!(
             err.to_string(),
             "`kakemono daemon` failed: error: daemon is already running (pid 9, lock: \
@@ -688,7 +680,7 @@ mod tests {
         let err = ensure_running(&FakeProbe::new(&[false]), &runner, cli(), Path::new(SOCKET))
             .await
             .expect_err("silent daemon");
-        assert_eq!(err.kind(), "daemon");
+        assert_eq!(err.kind(), ErrorKind::Daemon);
     }
 
     #[tokio::test]
@@ -697,7 +689,7 @@ mod tests {
         let err = ensure_running(&FakeProbe::new(&[false]), &runner, None, Path::new(SOCKET))
             .await
             .expect_err("no CLI");
-        assert_eq!(err.kind(), "cli_not_found");
+        assert_eq!(err.kind(), ErrorKind::CliNotFound);
         assert!(runner.calls().is_empty());
     }
 
@@ -711,7 +703,7 @@ mod tests {
             .await
             .expect_err("spawn fails");
         assert_eq!(err.to_string(), "cannot run `kakemono daemon`: denied");
-        assert_eq!(err.kind(), "io");
+        assert_eq!(err.kind(), ErrorKind::Io);
     }
 
     // ── service status parsing ──
@@ -808,7 +800,7 @@ mod tests {
         let err = login_items(&runner, cli(), &FakeAutostart::new(false))
             .await
             .expect_err("bad output");
-        assert_eq!(err.kind(), "cli_output");
+        assert_eq!(err.kind(), ErrorKind::CliOutput);
         assert!(
             err.to_string()
                 .starts_with("`kakemono service status` printed unexpected output")
@@ -913,7 +905,7 @@ mod tests {
         let err = set_login_items(&runner, cli(), &ui, true)
             .await
             .expect_err("both fail");
-        assert_eq!(err.kind(), "autostart");
+        assert_eq!(err.kind(), ErrorKind::Autostart);
         assert_eq!(
             err.to_string(),
             "start at login (kakemono-ui): nope (undoing the earlier step also failed: \

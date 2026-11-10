@@ -11,7 +11,10 @@ pub mod commands;
 pub mod commands_desktop;
 pub mod commands_sources;
 pub mod daemon_link;
+pub mod error;
 pub mod events;
+/// The app command names that `build.rs` turns into ACL permissions.
+pub mod ipc_commands;
 pub mod lifecycle;
 pub mod picker;
 pub mod picker_place;
@@ -25,6 +28,23 @@ use tauri::{App, AppHandle, Manager, RunEvent, Runtime};
 
 use crate::daemon_link::DaemonLink;
 use crate::windows::Page;
+
+/// Passed by the login item, so a second launch from it can be told apart from the user's.
+pub const AUTOSTART_FLAG: &str = "--autostart";
+
+/// What a second launch (argv forwarded by single-instance) opens: its page flag, else
+/// Settings. A login item that runs while the app is already up opens nothing.
+pub fn second_launch_page<S: AsRef<str>>(args: &[S]) -> Option<Page> {
+    let from_login = args
+        .iter()
+        .skip(1)
+        .any(|arg| arg.as_ref() == AUTOSTART_FLAG);
+    match page_from_args(args) {
+        Some(page) => Some(page),
+        None if from_login => None,
+        None => Some(Page::Settings),
+    }
+}
 
 /// Command-line flags the UI understands. A second launch forwards its argv to the running
 /// instance (single-instance), which handles them the same way.
@@ -49,11 +69,13 @@ pub fn run() -> anyhow::Result<()> {
     let app = builder
         // Must be the first plugin: it exits a second instance before anything else starts.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            open_requested(app, page_from_args(&argv).unwrap_or(Page::Settings));
+            if let Some(page) = second_launch_page(&argv) {
+                open_requested(app, page);
+            }
         }))
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
+            Some(vec![AUTOSTART_FLAG]),
         ))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -73,8 +95,6 @@ pub fn run() -> anyhow::Result<()> {
             commands::trash,
             commands::set_file,
             commands::thumbnails,
-            commands::doctor,
-            commands::daemon_running,
             commands_sources::check_source,
             commands_sources::download_now,
             commands_sources::delete_source_files,
@@ -88,7 +108,7 @@ pub fn run() -> anyhow::Result<()> {
             lifecycle::start_at_login,
             lifecycle::set_start_at_login,
             commands::reveal,
-            commands::open_url,
+            commands::open_folder,
             commands::app_info,
             events::daemon_connection,
             picker::show_picker,
@@ -116,15 +136,6 @@ fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
     let handle = app.handle().clone();
-    let has_tray = tauri::async_runtime::block_on(tray::tray_supported());
-    if has_tray {
-        tray::build(&handle)?;
-    } else {
-        tracing::warn!(
-            "no StatusNotifierWatcher on the session bus; running without a tray icon \
-             (on GNOME install the AppIndicator extension)"
-        );
-    }
 
     // Live updates; its own connection, never the shared link.
     let link = app.state::<Arc<DaemonLink>>().inner().clone();
@@ -132,25 +143,49 @@ fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     // Start the daemon if nothing answers; the live-update task connects once it is up.
     lifecycle::spawn_at_startup(link);
 
+    // Old thumbnails are deleted once per launch, on the blocking pool.
+    let thumbs = app.state::<Arc<thumbs::Thumbs>>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || match thumbs.prune_cache(thumbs::CACHE_MAX_AGE) {
+        Ok(0) => {}
+        Ok(removed) => tracing::debug!(removed, "pruned old thumbnails"),
+        Err(err) => tracing::warn!(error = %err, "cannot prune the thumbnail cache"),
+    });
+
     // Pre-create the picker hidden so showing it is instant.
     if let Err(err) = picker::create(&handle) {
         tracing::error!(error = %err, "cannot create the picker window");
     }
 
     let argv: Vec<String> = std::env::args().collect();
-    match page_from_args(&argv) {
-        Some(page) => open_requested(&handle, page),
-        // Without a tray there is no other way in, so show settings.
-        None if !has_tray => open_requested(&handle, Page::Settings),
-        None => {}
+    let requested = page_from_args(&argv);
+    if let Some(page) = requested {
+        open_requested(&handle, page);
     }
+    // The tray check asks the session bus on Linux, so it runs off the main thread.
+    tauri::async_runtime::spawn(start_tray(handle, requested.is_none()));
     Ok(())
 }
 
-fn open_requested<R: Runtime>(app: &AppHandle<R>, page: Page) {
-    if let Err(err) = windows::show(app, page) {
-        tracing::error!(error = %err, page = page.entry(), "cannot open window");
+/// Builds the tray if the desktop can show one. Without a tray there is no other way in, so
+/// settings opens when `open_settings_without_tray` (no page was asked for on the command line).
+async fn start_tray<R: Runtime>(app: AppHandle<R>, open_settings_without_tray: bool) {
+    if tray::tray_supported().await {
+        if let Err(err) = tray::build(&app) {
+            tracing::error!(error = %err, "cannot build the tray icon");
+        }
+        return;
     }
+    tracing::warn!(
+        "no StatusNotifierWatcher on the session bus; running without a tray icon \
+         (on GNOME install the AppIndicator extension)"
+    );
+    if open_settings_without_tray {
+        open_requested(&app, Page::Settings);
+    }
+}
+
+fn open_requested<R: Runtime>(app: &AppHandle<R>, page: Page) {
+    windows::open(app, page);
 }
 
 fn init_tracing() {
@@ -187,5 +222,17 @@ mod tests {
             page_from_args(&["kakemono-ui", "--verbose", "--picker"]),
             Some(Page::Picker)
         );
+        assert_eq!(page_from_args(&["kakemono-ui", AUTOSTART_FLAG]), None);
+    }
+
+    #[test]
+    fn a_second_launch_opens_settings_unless_it_is_the_login_item() {
+        assert_eq!(second_launch_page(&["kakemono-ui"]), Some(Page::Settings));
+        assert_eq!(
+            second_launch_page(&["kakemono-ui", "--picker"]),
+            Some(Page::Picker)
+        );
+        assert_eq!(second_launch_page(&["kakemono-ui", AUTOSTART_FLAG]), None);
+        assert_eq!(second_launch_page(&[AUTOSTART_FLAG]), Some(Page::Settings));
     }
 }

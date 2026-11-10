@@ -18,13 +18,14 @@ use std::sync::Arc;
 use kakemono_protocol::types::Request;
 use serde::{Deserialize, Serialize};
 use tauri::State;
+use ts_rs::TS;
 
 use crate::commands::CommandError;
 use crate::daemon_link::{DaemonLink, LinkError};
 use crate::lifecycle::{self, CliCall, CliRunner, LifecycleError, ProcessRunner};
 
 /// The backend the daemon reports (`doctor` data `backend`).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct BackendReport {
     /// Short id, e.g. `macos`, `gnome`, `awww`, `command`, `unconfigured`.
@@ -35,7 +36,7 @@ pub struct BackendReport {
 }
 
 /// The outcome of `doctor` with `apply` (`doctor` data `apply`).
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct ApplyReport {
     pub ok: bool,
@@ -47,7 +48,7 @@ pub struct ApplyReport {
 
 /// The parts of the daemon's `doctor` data the Desktop panel shows. Other fields (`env`) are
 /// ignored.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct DoctorReport {
     pub version: String,
@@ -142,6 +143,7 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
+    use crate::error::{ErrorKind, Kinded};
     use crate::lifecycle::CliOutput;
 
     /// Answers each call with the next scripted reply and records the argv.
@@ -202,7 +204,7 @@ mod tests {
         let err = detect(&runner, Some(Path::new(CLI)), true)
             .await
             .expect_err("refused");
-        assert_eq!(err.kind(), "cli_failed");
+        assert_eq!(err.kind(), ErrorKind::CliFailed);
         assert_eq!(
             err.to_string(),
             format!("`kakemono detect --write` failed: {refusal}")
@@ -217,7 +219,7 @@ mod tests {
     async fn detect_without_a_cli_runs_nothing() {
         let runner = FakeRunner::default();
         let err = detect(&runner, None, false).await.expect_err("no cli");
-        assert_eq!(err.kind(), "cli_not_found");
+        assert_eq!(err.kind(), ErrorKind::CliNotFound);
         assert!(runner.calls.lock().unwrap().is_empty());
     }
 
@@ -249,6 +251,7 @@ mod tests {
 /// `test_apply` against a scripted daemon on a temp socket (no real daemon).
 #[cfg(all(test, unix))]
 mod socket_tests {
+    use crate::error::{ErrorKind, Kinded};
     use interprocess::local_socket::tokio::prelude::*;
     use kakemono_protocol::endpoint::Endpoint;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -320,7 +323,7 @@ mod socket_tests {
         let (_dir, link, server) =
             daemon(vec!["{\"ok\":false,\"error\":\"reload: bad config\"}\n"]).await;
         let err = test_apply(&link).await.expect_err("reload fails");
-        assert_eq!(err.kind(), "daemon");
+        assert_eq!(err.kind(), ErrorKind::Daemon);
         assert_eq!(err.to_string(), "reload: bad config");
         assert_eq!(server.await.expect("server").len(), 1);
     }

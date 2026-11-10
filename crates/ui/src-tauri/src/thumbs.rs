@@ -12,15 +12,21 @@
 //!
 //! This replaces Go's `/local/<any-path>` handler, which served any image file on disk.
 //!
+//! The same listing gates the path-taking picker commands: [`Thumbs::is_admitted`] is true only
+//! for an entry of the last listing.
+//!
 //! Thumbnails are JPEGs whose short edge is [`THUMB_EDGE`] px, cached in
-//! `<platform cache dir>/thumbs/<content hash>.jpg`, never next to the wallpapers.
+//! `<platform cache dir>/thumbs/<content hash>.jpg`, never next to the wallpapers. An id also
+//! hashes the file's size and mtime, so a file replaced in place gets a new URL and the webview
+//! never shows its old thumbnail. At most [`DECODE_LIMIT`] images are decoded at once, and
+//! [`Thumbs::prune_cache`] deletes cache files older than [`CACHE_MAX_AGE`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasher, Hasher, RandomState};
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::time::SystemTime;
+use std::sync::{Condvar, Mutex};
+use std::time::{Duration, SystemTime};
 
 use image::{DynamicImage, ImageDecoder, ImageReader};
 use tauri::http::{Response, StatusCode, header};
@@ -33,6 +39,10 @@ pub const THUMB_EDGE: u32 = 384;
 pub const JPEG_QUALITY: u8 = 82;
 /// Extensions that may be admitted (same set the listing uses).
 pub const IMAGE_EXTS: [&str; 4] = ["jpg", "jpeg", "png", "webp"];
+/// Images decoded at once. Each decode holds a full wallpaper in memory.
+pub const DECODE_LIMIT: usize = 4;
+/// Cache files not written for this long are deleted by [`Thumbs::prune_cache`].
+pub const CACHE_MAX_AGE: Duration = Duration::from_secs(30 * 24 * 3600);
 /// Bumped when the thumbnail recipe changes, so old cache files are not reused.
 const RECIPE: &str = "v1-384-q82";
 
@@ -51,8 +61,64 @@ struct Allow {
     roots: Vec<PathBuf>,
     /// id → admitted real path.
     ids: HashMap<String, PathBuf>,
-    /// (real path, len, mtime) → content key, so a cache hit doesn't re-read the image.
-    keys: HashMap<(PathBuf, u64, Option<SystemTime>), String>,
+    /// Real paths of every entry in the last listing, served or not ([`Thumbs::is_admitted`]).
+    listed: HashSet<PathBuf>,
+    /// (real path, len, mtime) → content key, so a cache hit doesn't re-read the image. Holds
+    /// only files of the last listing.
+    keys: HashMap<Stamp, String>,
+}
+
+/// (real path, len, mtime): a file and the version of its content.
+type Stamp = (PathBuf, u64, Option<SystemTime>);
+
+fn stamp(real: &Path, meta: &std::fs::Metadata) -> Stamp {
+    (real.to_owned(), meta.len(), meta.modified().ok())
+}
+
+/// A counting semaphore for blocking threads.
+#[derive(Debug)]
+struct Gate {
+    free: Mutex<usize>,
+    freed: Condvar,
+}
+
+/// Held while decoding; gives the slot back on drop.
+struct Permit<'a>(&'a Gate);
+
+impl Gate {
+    fn new(slots: usize) -> Self {
+        Self {
+            free: Mutex::new(slots),
+            freed: Condvar::new(),
+        }
+    }
+
+    fn enter(&self) -> Permit<'_> {
+        let mut free = self
+            .free
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while *free == 0 {
+            free = self
+                .freed
+                .wait(free)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        *free -= 1;
+        Permit(self)
+    }
+}
+
+impl Drop for Permit<'_> {
+    fn drop(&mut self) {
+        let mut free = self
+            .0
+            .free
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *free += 1;
+        self.0.freed.notify_one();
+    }
 }
 
 /// The allowlist and the cache dir. Managed as `Arc<Thumbs>`.
@@ -60,6 +126,7 @@ pub struct Thumbs {
     salt: RandomState,
     cache_dir: PathBuf,
     allow: Mutex<Allow>,
+    decode: Gate,
 }
 
 impl Thumbs {
@@ -69,6 +136,7 @@ impl Thumbs {
             salt: RandomState::new(),
             cache_dir,
             allow: Mutex::new(Allow::default()),
+            decode: Gate::new(DECODE_LIMIT),
         }
     }
 
@@ -98,25 +166,34 @@ impl Thumbs {
         f(&mut guard)
     }
 
-    fn id_for(&self, real: &Path) -> String {
+    fn id_for(&self, (real, len, mtime): &Stamp) -> String {
         let mut hasher = self.salt.build_hasher();
         hasher.write(real.as_os_str().as_encoded_bytes());
+        hasher.write_u64(*len);
+        if let Some(since) = mtime.and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok()) {
+            hasher.write_u128(since.as_nanos());
+        }
         format!("{:016x}", hasher.finish())
     }
 
     /// Replaces the allowlist with `paths` that resolve inside `roots`. Returns one image URL
-    /// per input path, `""` for a path that was not admitted.
+    /// per input path, `""` for a path that was not admitted. Every path that exists becomes a
+    /// picker entry for [`is_admitted`](Self::is_admitted), served or not.
     pub fn admit<P: AsRef<Path>>(&self, roots: &[P], paths: &[&str]) -> Vec<String> {
         let roots: Vec<PathBuf> = roots
             .iter()
             .filter_map(|r| std::fs::canonicalize(r.as_ref()).ok())
             .collect();
+        let listed: HashSet<PathBuf> = paths
+            .iter()
+            .filter_map(|path| std::fs::canonicalize(path).ok())
+            .collect();
         let mut ids = HashMap::new();
         let urls = paths
             .iter()
             .map(|path| match admissible(&roots, Path::new(path)) {
-                Some(real) => {
-                    let id = self.id_for(&real);
+                Some((real, meta)) => {
+                    let id = self.id_for(&stamp(&real, &meta));
                     ids.insert(id.clone(), real);
                     url_for(&id)
                 }
@@ -126,8 +203,19 @@ impl Thumbs {
         self.with(|allow| {
             allow.roots = roots;
             allow.ids = ids;
+            allow.keys.retain(|(real, ..), _| listed.contains(real));
+            allow.listed = listed;
         });
         urls
+    }
+
+    /// True when `path` (symlinks resolved) is an entry of the last listing. The picker only
+    /// ever sends such paths, so `favorite`, `set_file` and `reveal` refuse anything else.
+    pub fn is_admitted(&self, path: &Path) -> bool {
+        let Ok(real) = std::fs::canonicalize(path) else {
+            return false;
+        };
+        self.with(|allow| allow.listed.contains(&real))
     }
 
     /// Maps a request path (`/<id>`) to the admitted file, re-checking it on disk.
@@ -167,6 +255,7 @@ impl Thumbs {
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "image/jpeg")
                 .header(header::CACHE_CONTROL, "private, max-age=3600")
+                .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
                 .body(bytes)
                 .unwrap_or_else(|_| status(StatusCode::INTERNAL_SERVER_ERROR)),
             Err(ThumbError::Decode(err)) => {
@@ -181,24 +270,33 @@ impl Thumbs {
     }
 
     /// The cached thumbnail of `path`, generated on a miss.
+    /// `path` is opened once, checked to still be the file at `path`, and read from that handle.
     pub fn thumbnail(&self, path: &Path) -> Result<Vec<u8>, ThumbError> {
-        let meta = std::fs::metadata(path)?;
-        let memo = (path.to_owned(), meta.len(), meta.modified().ok());
+        let mut file = open_checked(path)?;
+        let memo = stamp(path, &file.metadata()?);
         if let Some(key) = self.with(|allow| allow.keys.get(&memo).cloned())
             && let Ok(bytes) = std::fs::read(self.cache_dir.join(format!("{key}.jpg")))
         {
             return Ok(bytes);
         }
 
-        let source = std::fs::read(path)?;
+        let mut source = Vec::new();
+        std::io::Read::read_to_end(&mut file, &mut source)?;
         let key = content_key(&source);
-        self.with(|allow| allow.keys.insert(memo, key.clone()));
+        self.with(|allow| {
+            if allow.listed.contains(path) {
+                allow.keys.insert(memo, key.clone());
+            }
+        });
         let cached = self.cache_dir.join(format!("{key}.jpg"));
         if let Ok(bytes) = std::fs::read(&cached) {
             return Ok(bytes);
         }
 
-        let jpeg = make_thumbnail(&source)?;
+        let jpeg = {
+            let _permit = self.decode.enter();
+            make_thumbnail(&source)?
+        };
         std::fs::create_dir_all(&self.cache_dir)?;
         // Write then rename, so a concurrent reader never sees half a file.
         let tmp = self
@@ -211,6 +309,55 @@ impl Thumbs {
         }
         Ok(jpeg)
     }
+}
+
+impl Thumbs {
+    /// Deletes cached thumbnails (and leftover `.tmp` files) last written more than `max_age`
+    /// ago. Returns how many were deleted. A missing cache dir deletes nothing.
+    pub fn prune_cache(&self, max_age: Duration) -> std::io::Result<usize> {
+        let entries = match std::fs::read_dir(&self.cache_dir) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(err) => return Err(err),
+        };
+        let now = SystemTime::now();
+        let mut removed = 0;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let ours = matches!(
+                path.extension().and_then(|ext| ext.to_str()),
+                Some("jpg" | "tmp")
+            );
+            let old = entry
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .is_ok_and(|written| now.duration_since(written).unwrap_or_default() > max_age);
+            if ours && old && std::fs::remove_file(&path).is_ok() {
+                removed += 1;
+            }
+        }
+        Ok(removed)
+    }
+}
+
+/// Opens `path` and checks that the handle is the file at `path` itself (Unix: same device
+/// and inode as `symlink_metadata`). [`Thumbs::resolve`] checked the path; this stops a
+/// component swapped for a symlink after that check from being read through the handle.
+fn open_checked(path: &Path) -> std::io::Result<std::fs::File> {
+    let file = std::fs::File::open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let opened = file.metadata()?;
+        let at_path = std::fs::symlink_metadata(path)?;
+        if (opened.dev(), opened.ino()) != (at_path.dev(), at_path.ino()) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "the file changed after it was checked",
+            ));
+        }
+    }
+    Ok(file)
 }
 
 /// A thumbnail could not be made.
@@ -247,11 +394,14 @@ fn inside(roots: &[PathBuf], real: &Path) -> bool {
     roots.iter().any(|root| real.starts_with(root))
 }
 
-/// The real path of `path` if it is an image file inside one of `roots` (already canonical).
-fn admissible(roots: &[PathBuf], path: &Path) -> Option<PathBuf> {
+/// The real path and metadata of `path` if it is an image file inside one of `roots`
+/// (already canonical).
+fn admissible(roots: &[PathBuf], path: &Path) -> Option<(PathBuf, std::fs::Metadata)> {
     let real = std::fs::canonicalize(path).ok()?;
     let ext = real.extension()?.to_str()?.to_ascii_lowercase();
-    (IMAGE_EXTS.contains(&ext.as_str()) && real.is_file() && inside(roots, &real)).then_some(real)
+    let meta = std::fs::metadata(&real).ok()?;
+    (IMAGE_EXTS.contains(&ext.as_str()) && meta.is_file() && inside(roots, &real))
+        .then_some((real, meta))
 }
 
 /// Stable content key: 128-bit FNV-1a of the bytes, plus the recipe version. Stable across
@@ -375,7 +525,10 @@ mod tests {
         let urls = f.thumbs.admit(&[&f.root], &[secret.to_str().unwrap()]);
         assert_eq!(urls, vec![String::new()], "not admitted");
         // Even its would-be id is unknown.
-        let id = f.thumbs.id_for(&std::fs::canonicalize(&secret).unwrap());
+        let real = std::fs::canonicalize(&secret).unwrap();
+        let id = f
+            .thumbs
+            .id_for(&stamp(&real, &std::fs::metadata(&real).unwrap()));
         assert_eq!(f.thumbs.respond(&format!("/{id}")).status(), 403);
         // A raw path in the request is never a valid id.
         let raw = format!("/{}", secret.display());
@@ -461,7 +614,8 @@ mod tests {
             &[link.to_str().unwrap(), via_alias.to_str().unwrap()],
         );
         assert_eq!(urls, vec![String::new(), String::new()]);
-        let id = thumbs.id_for(&std::fs::canonicalize(&key).unwrap());
+        let real = std::fs::canonicalize(&key).unwrap();
+        let id = thumbs.id_for(&stamp(&real, &std::fs::metadata(&real).unwrap()));
         assert_eq!(thumbs.respond(&format!("/{id}")).status(), 403);
     }
 
@@ -476,6 +630,126 @@ mod tests {
             f.thumbs.respond(&format!("/{}", id_of(&first[0]))).status(),
             403
         );
+    }
+
+    #[test]
+    fn thumbs_a_file_replaced_in_place_gets_a_new_url() {
+        let f = fixture();
+        let pic = png(&f.root, "a.png", 10, 10);
+        let before = f.thumbs.admit(&[&f.root], &[pic.to_str().unwrap()]);
+        let res = f.thumbs.respond(&format!("/{}", id_of(&before[0])));
+        assert_eq!(res.headers()[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+
+        // Same path, new content: the webview must not reuse its cached response.
+        png(&f.root, "a.png", 20, 20);
+        let after = f.thumbs.admit(&[&f.root], &[pic.to_str().unwrap()]);
+        assert_ne!(before, after);
+        let res = f.thumbs.respond(&format!("/{}", id_of(&after[0])));
+        let img = image::load_from_memory(res.body()).unwrap();
+        assert_eq!((img.width(), img.height()), (20, 20));
+    }
+
+    #[test]
+    fn thumbs_memo_keeps_only_listed_files() {
+        let f = fixture();
+        let a = png(&f.root, "a.png", 10, 10);
+        let b = png(&f.root, "b.png", 10, 10);
+        let urls = f.thumbs.admit(&[&f.root], &[a.to_str().unwrap()]);
+        f.thumbs.respond(&format!("/{}", id_of(&urls[0])));
+        assert_eq!(f.thumbs.with(|allow| allow.keys.len()), 1);
+        f.thumbs.admit(&[&f.root], &[b.to_str().unwrap()]);
+        assert_eq!(f.thumbs.with(|allow| allow.keys.len()), 0);
+    }
+
+    #[test]
+    fn thumbs_prune_removes_old_cache_files_only() {
+        let f = fixture();
+        let dir = f.thumbs.cache_dir();
+        std::fs::create_dir_all(dir).unwrap();
+        let old = SystemTime::now() - Duration::from_secs(40 * 24 * 3600);
+        for name in ["old.jpg", "old.1.tmp", "new.jpg", "keep.txt"] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        for name in ["old.jpg", "old.1.tmp", "keep.txt"] {
+            let file = std::fs::File::options()
+                .write(true)
+                .open(dir.join(name))
+                .unwrap();
+            file.set_modified(old).unwrap();
+        }
+        assert_eq!(f.thumbs.prune_cache(CACHE_MAX_AGE).unwrap(), 2);
+        let mut left: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["keep.txt", "new.jpg"]);
+        // No cache dir yet is not an error.
+        let empty = Thumbs::new(f.root.join("no-cache"));
+        assert_eq!(empty.prune_cache(CACHE_MAX_AGE).unwrap(), 0);
+    }
+
+    #[test]
+    fn thumbs_decode_gate_bounds_concurrency() {
+        let gate = std::sync::Arc::new(Gate::new(2));
+        let active = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let peak = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let (gate, active, peak) = (gate.clone(), active.clone(), peak.clone());
+                std::thread::spawn(move || {
+                    let _permit = gate.enter();
+                    let now = active.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                    peak.fetch_max(now, std::sync::atomic::Ordering::SeqCst);
+                    std::thread::sleep(Duration::from_millis(5));
+                    active.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        assert_eq!(peak.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn thumbs_read_refuses_a_handle_that_is_not_the_checked_file() {
+        let f = fixture();
+        let pic = png(&f.root, "a.png", 10, 10);
+        let other = png(&f.root, "b.png", 10, 10);
+        assert!(open_checked(&pic).is_ok());
+        // A symlink at the checked path is not the file it was checked as.
+        let link = f.root.join("link.png");
+        std::os::unix::fs::symlink(&other, &link).unwrap();
+        assert_eq!(
+            open_checked(&link).unwrap_err().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+    }
+
+    #[test]
+    fn thumbs_is_admitted_only_for_the_last_listing() {
+        let f = fixture();
+        let pic = png(&f.root, "a.png", 10, 10);
+        let other = png(&f.root, "b.png", 10, 10);
+        let secret = png(&f.outside, "id_ed25519.png", 10, 10);
+        assert!(!f.thumbs.is_admitted(&pic), "nothing listed yet");
+
+        // Listed outside the roots: no thumbnail, but still a picker entry.
+        f.thumbs.admit(
+            &[&f.root],
+            &[pic.to_str().unwrap(), secret.to_str().unwrap()],
+        );
+        assert!(f.thumbs.is_admitted(&pic));
+        assert!(f.thumbs.is_admitted(&f.root.join("../favorites/a.png")));
+        assert!(f.thumbs.is_admitted(&secret));
+        assert!(!f.thumbs.is_admitted(&other), "never listed");
+        assert!(!f.thumbs.is_admitted(&f.outside.join("missing.png")));
+
+        f.thumbs.admit(&[&f.root], &[other.to_str().unwrap()]);
+        assert!(!f.thumbs.is_admitted(&pic), "replaced by the new listing");
+        assert!(f.thumbs.is_admitted(&other));
     }
 
     #[test]

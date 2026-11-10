@@ -55,6 +55,29 @@ pub fn show<R: Runtime>(app: &AppHandle<R>, page: Page) -> tauri::Result<Webview
     }
 }
 
+/// Opens `page` from a menu, a second launch or startup, logging a failure. The picker is shown
+/// from an async task, so its config read stays off the main thread.
+pub fn open<R: Runtime>(app: &AppHandle<R>, page: Page) {
+    let log = move |err: tauri::Error| {
+        tracing::error!(error = %err, page = page.entry(), "cannot open window");
+    };
+    match page {
+        Page::Picker => {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(err) = picker::show_async(&app).await {
+                    log(err);
+                }
+            });
+        }
+        Page::Settings => {
+            if let Err(err) = show(app, page) {
+                log(err);
+            }
+        }
+    }
+}
+
 fn build_settings<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWindow<R>> {
     WebviewWindowBuilder::new(
         app,

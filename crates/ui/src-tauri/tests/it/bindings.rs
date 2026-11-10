@@ -31,6 +31,14 @@ fn export_all(dir: &Path) {
     kakemono_protocol::types::Command::export_all(&cfg).expect("export Command");
     kakemono_protocol::types::CheckSourceData::export_all(&cfg).expect("export CheckSourceData");
     kakemono_protocol::types::DownloadNowData::export_all(&cfg).expect("export DownloadNowData");
+    // The app's own command replies and errors.
+    kakemono_ui::error::WireError::export_all(&cfg).expect("export WireError");
+    kakemono_ui::commands::SaveOutcome::export_all(&cfg).expect("export SaveOutcome");
+    kakemono_ui::commands::AppInfo::export_all(&cfg).expect("export AppInfo");
+    kakemono_ui::commands::Thumbnail::export_all(&cfg).expect("export Thumbnail");
+    kakemono_ui::commands_desktop::DoctorReport::export_all(&cfg).expect("export DoctorReport");
+    kakemono_ui::lifecycle::LoginItems::export_all(&cfg).expect("export LoginItems");
+    kakemono_ui::events::Connection::export_all(&cfg).expect("export Connection");
 }
 
 /// `relative path -> contents` for every `.ts` file under `dir` (ts-rs puts some

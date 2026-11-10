@@ -1,36 +1,51 @@
 /**
  * Frontend API surface. Every call goes to the Tauri backend (`crates/ui/src-tauri`) with
- * `invoke`, or to a Tauri plugin (dialog, opener). Command names and argument shapes match
- * `src-tauri/src/commands.rs`, `commands_desktop.rs`, `commands_sources.rs`, `picker.rs` and
+ * `invoke`, or to the Tauri dialog plugin. Command names and argument shapes match
+ * `src-tauri/src/commands/`, `commands_desktop.rs`, `commands_sources/`, `picker.rs` and
  * `lifecycle.rs`; see
  * `.pi/contracts/ui.md`.
  *
- * Config and status types are generated from Rust by ts-rs (`./bindings`); do not redeclare
- * them here.
+ * Config, status, command reply and error types are generated from Rust by ts-rs
+ * (`./bindings`); do not redeclare them here.
  */
 
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
-import { openPath } from '@tauri-apps/plugin-opener'
 
+import type { AppInfo } from './bindings/AppInfo'
+import type { ApplyReport } from './bindings/ApplyReport'
+import type { BackendReport } from './bindings/BackendReport'
 import type { CheckSourceData } from './bindings/CheckSourceData'
 import type { Config } from './bindings/Config'
+import type { DoctorReport } from './bindings/DoctorReport'
 import type { DownloadNowData } from './bindings/DownloadNowData'
+import type { ErrorKind } from './bindings/ErrorKind'
+import type { LoginItems } from './bindings/LoginItems'
+import type { SaveOutcome } from './bindings/SaveOutcome'
+import type { ServiceStatus } from './bindings/ServiceStatus'
 import type { SourceType } from './bindings/SourceType'
 import type { StatusData } from './bindings/StatusData'
+import type { Thumbnail } from './bindings/Thumbnail'
 import type { WallpaperInfo } from './bindings/WallpaperInfo'
+import type { WireError } from './bindings/WireError'
 
-export type { CheckSourceData, Config, DownloadNowData, SourceType, StatusData, WallpaperInfo }
-
-/** One picker entry, in the Go picker's shape (the `thumbnails` command returns these). */
-export interface Thumbnail {
-  path: string
-  source: string
-  title: string
-  isCurrent: boolean
-  /** `thumb://` URL for an admitted path; `''` when the path is outside the download, favorites and local dirs (show a placeholder). */
-  imageUrl: string
+export type {
+  AppInfo,
+  ApplyReport,
+  BackendReport,
+  CheckSourceData,
+  Config,
+  DoctorReport,
+  DownloadNowData,
+  ErrorKind,
+  LoginItems,
+  SaveOutcome,
+  ServiceStatus,
+  SourceType,
+  StatusData,
+  Thumbnail,
+  WallpaperInfo,
 }
 
 /**
@@ -45,29 +60,9 @@ type Patch<T> = T extends readonly unknown[]
     ? { [K in keyof T]?: Patch<T[K]> | null }
     : T
 
-/** What `save_config` did after writing the file. */
-export interface SaveOutcome {
-  /** The daemon answered IPC `reload`. */
-  reloaded: boolean
-  /** Why the reload failed; `null` when it worked or the daemon is not running. */
-  reload_error: string | null
-}
-
-/** Static facts from `app_info`. */
-export interface AppInfo {
-  /** Rust `std::env::consts::OS`: `macos`, `windows`, `linux`, … */
-  os: string
-  /** The config file being read and edited. */
-  config_path: string
-  /** True when that file is the Go `wallpaperd` config. */
-  legacy_config: boolean
-  version: string
-}
-
 /**
- * How a backend command fails: `CommandError` in `commands.rs`, plus the `LifecycleError`
- * kinds from `lifecycle.rs` (`cli_*`, `autostart`), plus `daemon_unreachable` from
- * `commands_sources.rs`. For `cli_failed` the message carries the CLI's stderr.
+ * How a backend command fails: `WireError` from `src-tauri/src/error.rs`, the one shape every
+ * command error serialises to. For `cli_failed` the message carries the CLI's stderr.
  *
  * The source commands (`checkSource`, `downloadNow`, `fetchDroppedUrl`, `importDroppedFile`)
  * reject with `{ kind: 'daemon_unreachable', message }` when the daemon isn't running and
@@ -75,22 +70,7 @@ export interface AppInfo {
  * When the daemon answers but refuses (for example a source with no images), the kind is
  * `daemon` and the message is the daemon's text. Bad input is `invalid`.
  */
-export interface CommandError {
-  kind:
-    | 'daemon_not_running'
-    | 'daemon_unreachable'
-    | 'daemon'
-    | 'config'
-    | 'invalid'
-    | 'io'
-    | 'opener'
-    | 'internal'
-    | 'cli_not_found'
-    | 'cli_failed'
-    | 'cli_output'
-    | 'autostart'
-  message: string
-}
+export type CommandError = WireError
 
 function isCommandError(err: unknown): err is CommandError {
   return (
@@ -187,12 +167,7 @@ export function listThumbnails(): Promise<Thumbnail[]> {
   return invoke<Thumbnail[]>('thumbnails')
 }
 
-/** The daemon's diagnostics report (IPC `doctor` data). */
-export function doctor(): Promise<unknown> {
-  return invoke<unknown>('doctor')
-}
-
-// ── Sources and dropped images (`commands_sources.rs`) ───────────────────────
+// ── Sources and dropped images (`commands_sources/`) ─────────────────────────
 
 /**
  * Asks the daemon how many images a source row would give (IPC `check_source`), starting the
@@ -246,31 +221,6 @@ export function importDroppedFile(name: string, bytes: ArrayBuffer | Uint8Array)
 
 // ── Desktop backend (`commands_desktop.rs`) ─────────────────────────────────
 
-/** The backend the daemon is using (`doctor` data `backend`). */
-export interface BackendReport {
-  /** Short id: `macos`, `windows`, `gnome`, `awww`, `command`, `unconfigured`, … */
-  name: string
-  /** For command backends: the argv joined for display, plus ` (kept running)` when persistent. */
-  detail: string
-}
-
-/** How `doctor` with `apply` went. `error` is the daemon's own text. */
-export interface ApplyReport {
-  ok: boolean
-  path: string | null
-  error: string | null
-}
-
-/** The parts of the daemon's `doctor` data the Desktop panel shows. */
-export interface DoctorReport {
-  version: string
-  pid: number
-  backend: BackendReport
-  theme: string
-  /** Set only by `testDesktop`. */
-  apply: ApplyReport | null
-}
-
 /** IPC `doctor`: the backend the running daemon uses. Rejects `daemon_not_running` when down. */
 export function desktopBackend(): Promise<DoctorReport> {
   return invoke<DoctorReport>('desktop_backend')
@@ -293,10 +243,6 @@ export function detectDesktop(write: boolean): Promise<string> {
   return invoke<string>('detect_desktop', { write })
 }
 
-export function daemonRunning(): Promise<boolean> {
-  return invoke<boolean>('daemon_running')
-}
-
 /**
  * Starts the daemon unless it answers (`kakemono daemon`, which refuses a second one).
  * Resolves to `true` once it answers; rejects with the CLI's stderr when it cannot start.
@@ -306,22 +252,6 @@ export function startDaemon(): Promise<boolean> {
 }
 
 // ── Start at login ──────────────────────────────────────────────────────────
-
-/** `kakemono service status --json`. */
-export interface ServiceStatus {
-  installed: boolean
-  running: boolean
-  /** Where the unit or plist lives (set even when not installed); `null` where there is no file (Windows). */
-  path: string | null
-}
-
-/** Both halves of "Start at login" (`start_at_login` in `lifecycle.rs`). */
-export interface LoginItems {
-  /** On only when the daemon service is installed and the UI starts at login. */
-  enabled: boolean
-  service: ServiceStatus
-  ui_autostart: boolean
-}
 
 export function getStartAtLogin(): Promise<LoginItems> {
   return invoke<LoginItems>('start_at_login')
@@ -344,16 +274,6 @@ export async function selectDirectory(): Promise<string> {
   return picked ?? ''
 }
 
-/** Image file picker. Resolves to `''` when the user cancels. */
-export async function selectFile(): Promise<string> {
-  const picked = await openDialog({
-    directory: false,
-    multiple: false,
-    filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp', 'heic'] }],
-  })
-  return picked ?? ''
-}
-
 /**
  * Multi-select image file picker for an Images source. Resolves to `[]` when the user cancels.
  * The plugin types the result as `string[] | null`; a lone string is accepted too.
@@ -369,24 +289,17 @@ export async function selectFiles(): Promise<string[]> {
   return []
 }
 
-/** Opens a folder in the file manager (opener plugin, scoped to `$HOME/**`). */
+/**
+ * Opens a folder in the file manager (`open_folder` command). A leading `~` is expanded;
+ * anything that is not an existing folder rejects `invalid`, so no file is ever launched.
+ */
 export function openFolder(path: string): Promise<void> {
-  return openPath(path)
-}
-
-export async function openFavoritesFolder(): Promise<void> {
-  const cfg = await getConfig()
-  return openPath(cfg.favorites.dir)
+  return invoke<void>('open_folder', { path })
 }
 
 /** Shows the file in Finder, Explorer or the file manager (`reveal` command). */
 export function revealInFinder(path: string): Promise<void> {
   return invoke<void>('reveal', { path })
-}
-
-/** Opens an http(s) URL in the default browser; other schemes are refused. */
-export function openUrl(url: string): Promise<void> {
-  return invoke<void>('open_url', { url })
 }
 
 // ── Windows ─────────────────────────────────────────────────────────────────

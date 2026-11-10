@@ -4,6 +4,9 @@
 //! commands and later the windows all reuse one connection instead of dialling per click.
 //! A daemon restart leaves the cached connection dead; the next request notices, reconnects
 //! once and resends. A cold connect that fails is reported as is (no retry loop here).
+//!
+//! Long requests use [`DaemonLink::call_alone`], which dials a connection of its own, so a
+//! slow `fetch` never makes the tray or `status` wait.
 
 use kakemono_protocol::client::{Client, ClientError};
 use kakemono_protocol::endpoint::{self, Endpoint, EndpointError};
@@ -28,10 +31,28 @@ pub enum LinkError {
     },
 }
 
+impl crate::error::Kinded for LinkError {
+    fn kind(&self) -> crate::error::ErrorKind {
+        use crate::error::ErrorKind;
+        match self {
+            Self::Client(ClientError::DaemonNotRunning { .. }) => ErrorKind::DaemonNotRunning,
+            Self::Client(ClientError::Timeout) => ErrorKind::DaemonTimeout,
+            Self::Client(_) | Self::Daemon(_) => ErrorKind::Daemon,
+            Self::Decode { .. } => ErrorKind::Internal,
+        }
+    }
+}
+
 impl LinkError {
     /// True when nothing listens on the endpoint.
     pub fn is_not_running(&self) -> bool {
         matches!(self, Self::Client(ClientError::DaemonNotRunning { .. }))
+    }
+
+    /// True when the daemon took longer than the request timeout to answer. It may still
+    /// finish the request.
+    pub fn is_timeout(&self) -> bool {
+        matches!(self, Self::Client(ClientError::Timeout))
     }
 }
 
@@ -105,12 +126,15 @@ impl DaemonLink {
 
     /// Sends one command and maps `ok:false` to [`LinkError::Daemon`].
     pub async fn call(&self, command: impl Into<Command>) -> Result<Response, LinkError> {
-        let response = self.request(command).await?;
-        if response.ok {
-            Ok(response)
-        } else {
-            Err(LinkError::Daemon(response.error))
-        }
+        ok_or_daemon(self.request(command).await?)
+    }
+
+    /// [`call`](Self::call) on a connection of its own, closed afterwards. For requests that
+    /// can take many seconds (`fetch`, `download_now`, `check_source`), so they never hold
+    /// the shared connection that the tray, `status` and `reload` use.
+    pub async fn call_alone(&self, command: impl Into<Command>) -> Result<Response, LinkError> {
+        let mut client = Client::connect(&self.endpoint).await?;
+        ok_or_daemon(client.request(command).await?)
     }
 
     /// IPC `status`, decoded.
@@ -123,6 +147,14 @@ impl DaemonLink {
                 what: "status",
                 source,
             })
+    }
+}
+
+fn ok_or_daemon(response: Response) -> Result<Response, LinkError> {
+    if response.ok {
+        Ok(response)
+    } else {
+        Err(LinkError::Daemon(response.error))
     }
 }
 

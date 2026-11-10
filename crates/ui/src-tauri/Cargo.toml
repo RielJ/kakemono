@@ -29,6 +29,7 @@ tauri-build = { workspace = true, features = [] }
 [dependencies]
 kakemono-protocol.workspace = true
 kakemono-config.workspace = true
+kakemono-fs.workspace = true
 tauri = { workspace = true, features = ["tray-icon"] }
 tauri-plugin-single-instance.workspace = true
 tauri-plugin-autostart.workspace = true
@@ -39,6 +40,7 @@ futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+ts-rs.workspace = true
 image.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
@@ -48,8 +50,8 @@ tracing-subscriber.workspace = true
 zbus.workspace = true
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 interprocess.workspace = true
-ts-rs.workspace = true
 tempfile.workspace = true
 insta.workspace = true
 

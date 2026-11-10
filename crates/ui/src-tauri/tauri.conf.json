@@ -23,7 +23,7 @@
         "default-src": "'self'",
         "connect-src": "ipc: http://ipc.localhost",
         "img-src": "'self' data: thumb: http://thumb.localhost",
-        "style-src": "'self' 'unsafe-inline'"
+        "style-src": "'self'"
       },
       "devCsp": null
     }

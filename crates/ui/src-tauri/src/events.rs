@@ -41,7 +41,7 @@ pub const CONNECTION: &str = "daemon://connection";
 ///
 /// JSON: `{"state":"connecting"}`, `{"state":"connected","status":StatusData|null}`,
 /// `{"state":"not_running"}`, `{"state":"error","message":"..."}`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ts_rs::TS)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum Connection {
     /// Before the first attempt finishes.
@@ -207,11 +207,17 @@ impl Default for LiveState {
 
 impl LiveState {
     pub fn get(&self) -> Connection {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     fn set(&self, state: Connection) {
-        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = state;
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = state;
     }
 }
 
@@ -453,7 +459,10 @@ mod socket_tests {
 
         // The daemon is gone: one not_running, however many retries happen.
         assert_eq!(next(&mut rx).await, Seen::Conn(Connection::NotRunning));
-        tokio::time::sleep(Duration::from_millis(400)).await;
+        // Paused clock: the backoff sleeps and this wait take no real time.
+        tokio::time::pause();
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        tokio::time::resume();
         assert!(
             rx.try_recv().is_err(),
             "retries must not re-emit not_running"

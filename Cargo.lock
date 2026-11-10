@@ -2590,6 +2590,7 @@ dependencies = [
  "insta",
  "interprocess",
  "kakemono-config",
+ "kakemono-fs",
  "kakemono-protocol",
  "serde",
  "serde_json",

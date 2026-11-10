@@ -282,10 +282,23 @@ pub fn background_for(theme: Theme) -> Color {
     }
 }
 
-/// Shows the picker at its saved or edge position and focuses it.
+/// Shows the picker at its saved or edge position and focuses it. Reads the config, so prefer
+/// [`show_async`] off the main thread.
 pub fn show<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWindow<R>> {
+    show_with(app, &load_picker())
+}
+
+/// [`show`] with the config read on the blocking pool.
+pub async fn show_async<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWindow<R>> {
+    let config = tauri::async_runtime::spawn_blocking(load_picker).await?;
+    show_with(app, &config)
+}
+
+fn show_with<R: Runtime>(
+    app: &AppHandle<R>,
+    config: &PickerConfig,
+) -> tauri::Result<WebviewWindow<R>> {
     let window = create(app)?;
-    let config = load_picker();
     let state = app.state::<PickerState>();
     state.with(|s| s.shown(Instant::now(), config.close_on_blur));
 
@@ -295,7 +308,7 @@ pub fn show<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWindow<R>> {
     };
 
     if state.kind().positions_itself() {
-        place_tier1(app, &window, &config, custom.as_ref())?;
+        place_tier1(app, &window, config, custom.as_ref())?;
     } else {
         let (w, h) = floating_size(config.position, config.orientation);
         window.set_size(LogicalSize::new(w, h))?;
@@ -447,8 +460,8 @@ pub async fn hide<R: Runtime>(app: AppHandle<R>) -> Result<(), CommandError> {
 
 /// `show_picker`.
 #[tauri::command]
-pub fn show_picker<R: Runtime>(app: AppHandle<R>) -> Result<(), CommandError> {
-    show(&app)?;
+pub async fn show_picker<R: Runtime>(app: AppHandle<R>) -> Result<(), CommandError> {
+    show_async(&app).await?;
     Ok(())
 }
 
@@ -466,7 +479,7 @@ pub async fn reset_picker_position<R: Runtime>(app: AppHandle<R>) -> Result<(), 
     if let Some(window) = app.get_webview_window(PICKER_LABEL)
         && window.is_visible()?
     {
-        show(&app)?;
+        show_async(&app).await?;
     }
     Ok(())
 }
@@ -526,7 +539,8 @@ mod tests {
             include_str!("windows.rs"),
             include_str!("lib.rs"),
             include_str!("tray.rs"),
-            include_str!("commands.rs"),
+            include_str!("commands/platform.rs"),
+            include_str!("commands/control.rs"),
         ];
         let needle = [".set", "_title("].concat();
         for source in sources {
@@ -535,11 +549,15 @@ mod tests {
                 "window rules match the picker title"
             );
         }
-        let caps = include_str!("../capabilities/default.json");
-        assert!(
-            !caps.contains("set-title"),
-            "the frontend must not retitle windows"
-        );
+        for caps in [
+            include_str!("../capabilities/picker.json"),
+            include_str!("../capabilities/settings.json"),
+        ] {
+            assert!(
+                !caps.contains("set-title"),
+                "the frontend must not retitle windows"
+            );
+        }
     }
 
     /// `#rrggbb` after `name:` in a CSS file.

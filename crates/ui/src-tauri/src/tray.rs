@@ -118,15 +118,9 @@ fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
         Action::Favorite => send(app, Request::Favorite),
         Action::Trash => send(app, Request::Trash { expected: None }),
         Action::TogglePause => toggle_pause(app.clone()),
-        Action::ShowPicker => show_window(app, Page::Picker),
-        Action::Settings => show_window(app, Page::Settings),
+        Action::ShowPicker => windows::open(app, Page::Picker),
+        Action::Settings => windows::open(app, Page::Settings),
         Action::Quit => app.exit(0),
-    }
-}
-
-fn show_window<R: Runtime>(app: &AppHandle<R>, page: Page) {
-    if let Err(err) = windows::show(app, page) {
-        tracing::error!(error = %err, page = page.entry(), "cannot open window");
     }
 }
 
@@ -213,16 +207,26 @@ fn first_line(text: &str) -> &str {
     text.lines().next().unwrap_or_default()
 }
 
+/// How long startup waits for the session bus to say whether a tray host exists. The check
+/// runs on the main thread before any window opens.
+#[cfg(target_os = "linux")]
+pub const TRAY_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Whether a tray can be shown. On Linux the icon goes through the StatusNotifierItem
 /// protocol and needs a `org.kde.StatusNotifierWatcher` on the session bus (stock GNOME has
 /// none without an extension). Elsewhere the tray always exists.
+/// On Linux the bus query gives up after `TRAY_CHECK_TIMEOUT` (no tray).
 pub async fn tray_supported() -> bool {
     #[cfg(target_os = "linux")]
     {
-        match status_notifier_watcher_present().await {
-            Ok(present) => present,
-            Err(err) => {
+        match tokio::time::timeout(TRAY_CHECK_TIMEOUT, status_notifier_watcher_present()).await {
+            Ok(Ok(present)) => present,
+            Ok(Err(err)) => {
                 tracing::warn!(error = %err, "cannot query the session bus for a tray host");
+                false
+            }
+            Err(_) => {
+                tracing::warn!("the session bus did not answer the tray host query in time");
                 false
             }
         }

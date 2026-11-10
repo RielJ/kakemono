@@ -7,20 +7,14 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useEffect, useRef } from 'react'
 
-import type { StatusData } from './bindings/StatusData'
+import type { Connection } from './bindings/Connection'
 import type { WallpaperInfo } from './bindings/WallpaperInfo'
 
 export const CHANGED = 'wallpaper://changed'
 export const PAUSED = 'wallpaper://paused'
 export const CONNECTION = 'daemon://connection'
 
-/** Mirrors Rust `events::Connection` (its JSON is pinned by `connection_json_matches_the_frontend_type`). */
-export type Connection =
-  | { state: 'connecting' }
-  /** Subscribed; `status` was read just after subscribing (`null` if that failed). Sent on every reconnect. */
-  | { state: 'connected'; status: StatusData | null }
-  | { state: 'not_running' }
-  | { state: 'error'; message: string }
+export type { Connection }
 
 export interface DaemonEventHandlers {
   onChanged?: (info: WallpaperInfo) => void
