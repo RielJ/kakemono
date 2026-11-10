@@ -28,6 +28,8 @@ nix = { workspace = true, features = ["fs"] }
 tokio = { workspace = true, features = ["test-util"] }
 tempfile.workspace = true
 insta.workspace = true
+# Enables `test-support` (`endpoint::test_socket_path`) for this crate's own integration tests.
+kakemono-protocol = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true
