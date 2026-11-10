@@ -195,9 +195,13 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $msi = Get-ChildItem "target/${{ matrix.target }}/release/bundle/msi/*.msi" | Select-Object -First 1
+          $bundle = "target/${{ matrix.target }}/release/bundle"
+          $msi = Get-ChildItem "$bundle/msi/*.msi" | Select-Object -First 1
           $dir = Join-Path $env:RUNNER_TEMP "msi"
-          Start-Process msiexec -ArgumentList "/a", "`"$($msi.FullName)`"", "/qn", "TARGETDIR=`"$dir`"" -Wait
+          $msiArgs = @(
+            "/a", "`"$($msi.FullName)`"", "/qn", "TARGETDIR=`"$dir`""
+          )
+          Start-Process msiexec -ArgumentList $msiArgs -Wait
           foreach ($exe in "kakemono-ui.exe", "kakemono.exe") {
             $found = Get-ChildItem $dir -Recurse -Filter $exe
             if (-not $found) { throw "$exe is not in $($msi.Name)" }
