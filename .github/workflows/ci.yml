@@ -56,7 +56,7 @@ jobs:
           -- -D warnings
 
       - name: cargo test
-        run: cargo test --workspace --all-features
+        run: cargo test --workspace --all-features --no-fail-fast
 
   frontend:
     name: frontend
