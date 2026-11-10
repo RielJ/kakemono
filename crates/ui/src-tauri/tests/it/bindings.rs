@@ -31,6 +31,9 @@ fn export_all(dir: &Path) {
     kakemono_protocol::types::Command::export_all(&cfg).expect("export Command");
     kakemono_protocol::types::CheckSourceData::export_all(&cfg).expect("export CheckSourceData");
     kakemono_protocol::types::DownloadNowData::export_all(&cfg).expect("export DownloadNowData");
+    kakemono_protocol::types::BrowseData::export_all(&cfg).expect("export BrowseData");
+    kakemono_protocol::types::BrowseUseData::export_all(&cfg).expect("export BrowseUseData");
+    kakemono_protocol::types::BrowseAction::export_all(&cfg).expect("export BrowseAction");
     // The app's own command replies and errors.
     kakemono_ui::error::WireError::export_all(&cfg).expect("export WireError");
     kakemono_ui::commands::SaveOutcome::export_all(&cfg).expect("export SaveOutcome");

@@ -103,12 +103,23 @@ impl Client {
     /// every later request returns [`ClientError::Poisoned`] instead of reading a reply meant for
     /// the earlier one.
     pub async fn request(&mut self, request: impl Into<Command>) -> Result<Response, ClientError> {
+        self.request_with_timeout(request, REQUEST_TIMEOUT).await
+    }
+
+    /// [`Client::request`] with a caller-chosen round-trip timeout instead of
+    /// [`REQUEST_TIMEOUT`], for requests that may take longer (a `browse_use` download) or must
+    /// fail sooner. Expiry gives [`ClientError::Timeout`] and poisons the client.
+    pub async fn request_with_timeout(
+        &mut self,
+        request: impl Into<Command>,
+        timeout: Duration,
+    ) -> Result<Response, ClientError> {
         if self.poisoned {
             return Err(ClientError::Poisoned);
         }
         let command = request.into();
         self.poisoned = true;
-        let response = tokio::time::timeout(REQUEST_TIMEOUT, self.round_trip(&command))
+        let response = tokio::time::timeout(timeout, self.round_trip(&command))
             .await
             .map_err(|_| ClientError::Timeout)??;
         self.poisoned = false;
