@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use kakemono_config::Config;
+use kakemono_config::{Config, valid_id};
 use kakemono_protocol::types::WallpaperInfo;
 use kakemono_sources::SourceSet;
 use rand::SeedableRng;
@@ -17,6 +17,20 @@ use crate::events::EngineEvent;
 use crate::files;
 use crate::gotext::{format_set_at, go_stat_error};
 use crate::pool::{self, Picked, Pool};
+
+/// Where a wallpaper set by [`Engine::set_file_with`] came from, as recorded in its history
+/// entry ([`WallpaperInfo`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Provenance {
+    /// The row's type string (`"wallhaven"`, ...), or `"local"` for a file of no source.
+    pub source: String,
+    /// The `[[sources]]` row id; empty for `"local"`.
+    pub source_id: String,
+    /// The title shown for the entry.
+    pub title: String,
+    /// The page the image came from; empty when unknown.
+    pub source_url: String,
+}
 
 impl Engine {
     /// Next wallpaper. If the user went back with `prev`, steps forward through history
@@ -58,27 +72,62 @@ impl Engine {
         Ok(info)
     }
 
-    /// Sets the local file `path` and pushes it to history with source `local`, an empty
-    /// `source_id` (no `[[sources]]` row) and the file name as title (Go `SetFile`). The path is
-    /// stored as given.
+    /// Sets the local file `path` and pushes it to history with the file name as title (Go
+    /// `SetFile`). The path is stored as given.
+    ///
+    /// The source is inferred by [`infer_provenance`]: a file directly in
+    /// `<download_dir>/<id>/` of an enabled online row records that row's type and id; any
+    /// other file records source `local` and an empty `source_id` (no `[[sources]]` row).
     ///
     /// # Errors
     ///
     /// [`EngineError::FileNotFound`] when `path` cannot be stat'ed, or [`EngineError::Set`].
     pub async fn set_file(&self, path: &Path) -> Result<WallpaperInfo, EngineError> {
         let _op = self.lock_op().await;
-        if let Err(e) = tokio::fs::metadata(path).await {
-            return Err(EngineError::FileNotFound(go_stat_error(path, &e)));
-        }
+        stat_file(path).await?;
+        let cfg = Arc::clone(&self.snap().cfg);
+        let provenance = infer_provenance(&cfg, path).await;
+        self.set_file_locked(path, provenance).await
+    }
+
+    /// Sets the local file `path` and pushes it to history with exactly `provenance`: an
+    /// explicit pick of a remote image knows its row, title and page. The path is stored as
+    /// given.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::FileNotFound`] when `path` cannot be stat'ed, or [`EngineError::Set`].
+    pub async fn set_file_with(
+        &self,
+        path: &Path,
+        provenance: Provenance,
+    ) -> Result<WallpaperInfo, EngineError> {
+        let _op = self.lock_op().await;
+        stat_file(path).await?;
+        self.set_file_locked(path, provenance).await
+    }
+
+    /// Sets `path` and pushes it to history with `provenance`. The caller holds `Inner::op`
+    /// and has stat'ed the file.
+    async fn set_file_locked(
+        &self,
+        path: &Path,
+        provenance: Provenance,
+    ) -> Result<WallpaperInfo, EngineError> {
         self.set_image(path).await?;
         let now = (self.inner.deps.now)();
+        let Provenance {
+            source,
+            source_id,
+            title,
+            source_url,
+        } = provenance;
         let info = WallpaperInfo {
             path: path.to_string_lossy().into_owned(),
-            source: "local".to_owned(),
-            title: path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default(),
+            source,
+            source_id,
+            title,
+            source_url,
             set_at: format_set_at(&now),
             ..WallpaperInfo::default()
         };
@@ -387,4 +436,53 @@ impl Engine {
         }
         Err(EngineError::Fetch(failures))
     }
+}
+
+/// [`EngineError::FileNotFound`] with Go's stat message when `path` cannot be stat'ed.
+async fn stat_file(path: &Path) -> Result<(), EngineError> {
+    match tokio::fs::metadata(path).await {
+        Ok(_) => Ok(()),
+        Err(e) => Err(EngineError::FileNotFound(go_stat_error(path, &e))),
+    }
+}
+
+/// The provenance [`Engine::set_file`] records for `path`: the type and id of the enabled
+/// online row whose `<download_dir>/<id>` is the file's folder, else source `local` with an
+/// empty id. Folders are compared canonicalized, so `..`, relative paths and symlinked
+/// download dirs (macOS `/var` -> `/private/var`) still match. The title is the file name.
+async fn infer_provenance(cfg: &Config, path: &Path) -> Provenance {
+    let title = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let (source, source_id) = match inferred_source(cfg, path).await {
+        Some((kind, id)) => (kind.to_owned(), id.to_owned()),
+        None => ("local".to_owned(), String::new()),
+    };
+    Provenance {
+        source,
+        source_id,
+        title,
+        source_url: String::new(),
+    }
+}
+
+/// The `(type, id)` of the enabled online row whose download folder holds `path` directly.
+async fn inferred_source<'a>(cfg: &'a Config, path: &Path) -> Option<(&'static str, &'a str)> {
+    let parent = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    let parent = tokio::fs::canonicalize(parent).await.ok()?;
+    for row in &cfg.sources {
+        // An id that isn't `[a-z0-9-]` could name a folder outside the download dir.
+        if !row.enabled || !row.kind.is_online() || !valid_id(&row.id) {
+            continue;
+        }
+        let dir = cfg.daemon.download_dir.join(&row.id);
+        if tokio::fs::canonicalize(&dir).await.ok().as_ref() == Some(&parent) {
+            return Some((row.kind.as_str(), &row.id));
+        }
+    }
+    None
 }

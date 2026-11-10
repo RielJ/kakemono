@@ -10,6 +10,7 @@ mod files;
 mod hooks;
 mod manual;
 mod pick_from_disk;
+mod provenance;
 mod reload_setter;
 mod rotation;
 mod state;

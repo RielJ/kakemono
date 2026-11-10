@@ -54,6 +54,7 @@ use tokio::sync::{Notify, broadcast};
 
 pub use deps::{Clock, Deps, SourcesFactory};
 pub use error::{EngineError, SourceOpError};
+pub use ops::Provenance;
 
 use crate::downloader::{DownloadEnv, SourceLocks};
 use crate::events::EngineEvent;
