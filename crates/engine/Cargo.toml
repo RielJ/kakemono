@@ -16,6 +16,7 @@ kakemono-platform.workspace = true
 kakemono-fs.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
+futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
