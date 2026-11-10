@@ -78,6 +78,7 @@ pub fn defaults_for_home(home: &Path) -> Config {
             orientation: PickerOrientation::Auto,
             force_x11: false,
             close_on_blur: true,
+            blur_nsfw: true,
             placement: PickerPlacement::Edge,
             custom: None,
         },

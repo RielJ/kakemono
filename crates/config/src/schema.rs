@@ -317,6 +317,8 @@ pub struct PickerConfig {
     pub force_x11: bool,
     /// Close the picker when it loses focus. New; default `true`.
     pub close_on_blur: bool,
+    /// Blur NSFW browse previews in the picker until hover or focus. New; default `true`.
+    pub blur_nsfw: bool,
     /// `edge` (default) or `custom` (user dragged it; see `custom`). New.
     pub placement: PickerPlacement,
     /// Saved user position, used when `placement = "custom"`. New.

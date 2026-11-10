@@ -14,4 +14,5 @@ mod legacy_guard;
 mod migrate;
 mod migrate_file;
 mod paths;
+mod picker_blur;
 mod sources_schema;
