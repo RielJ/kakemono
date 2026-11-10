@@ -189,6 +189,21 @@ jobs:
               ;;
           esac
 
+      # Without mainBinaryName, the app installs as kakemono.exe and collides
+      # with the sidecar. An administrative install unpacks the MSI's files.
+      - name: Check the MSI holds kakemono-ui.exe and kakemono.exe
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem "target/${{ matrix.target }}/release/bundle/msi/*.msi" | Select-Object -First 1
+          $dir = Join-Path $env:RUNNER_TEMP "msi"
+          Start-Process msiexec -ArgumentList "/a", "`"$($msi.FullName)`"", "/qn", "TARGETDIR=`"$dir`"" -Wait
+          foreach ($exe in "kakemono-ui.exe", "kakemono.exe") {
+            $found = Get-ChildItem $dir -Recurse -Filter $exe
+            if (-not $found) { throw "$exe is not in $($msi.Name)" }
+            $found.FullName
+          }
+
       # The .app directory is not uploaded; the dmg carries it.
       - uses: actions/upload-artifact@v4
         with:
