@@ -1,7 +1,7 @@
 import { useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 
 import type { Config } from '../../shared/api'
-import { deleteSourceFiles, errorMessage, nextWallpaper, openSourceFolder } from '../../shared/api'
+import { deleteSourceFiles, errorMessage, openSourceFolder } from '../../shared/api'
 import type { SourceEntry } from '../../shared/bindings/SourceEntry'
 import type { SourceType } from '../../shared/bindings/SourceType'
 import { SOURCE_TYPES, isOnline, newSourceId, takesInput } from '../sourceTypes'
@@ -14,9 +14,9 @@ interface Props {
   config: Config
   onChange: (config: Config) => void
   /**
-   * Change and write now; resolves once saved, rejects with the reason. Use and Remove wait on
-   * it before changing the wallpaper or deleting files. Without it they fall back to
-   * `onChange`, whose write is delayed, so the follow-up can run before the save lands.
+   * Change and write now; resolves once saved, rejects with the reason. Use Only These waits on
+   * it to report a failed save; Remove waits on it before deleting files. Without it they fall
+   * back to `onChange`, whose write is delayed, so the follow-up can run before the save lands.
    */
   onCommit?: (config: Config) => Promise<void>
 }
@@ -28,7 +28,7 @@ type Editing = { kind: SourceType; id: string | null; initial?: string } | null
 
 /**
  * The General tab's Images table, after Variety: one row per `[[sources]]` entry with an
- * Enabled box, the type and the location, and Add…, Edit…, Remove…, Open Folder and Use under
+ * Enabled box, the type and the location, and Add…, Edit…, Remove…, Open Folder and Use Only These under
  * it. Rows multi-select with shift- and cmd/ctrl-click or the arrow keys.
  */
 export default function SourcesTable({ config, onChange, onCommit }: Props) {
@@ -214,11 +214,9 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
     setMessage(null)
     setBusy(true)
     try {
+      // Switches sources only; the current wallpaper stays until the next change.
       const next = sources.map((s) => ({ ...s, enabled: selected.has(s.id) }))
-      if (!(await commit({ ...config, sources: next }))) return
-      await nextWallpaper().catch((err: unknown) =>
-        setMessage({ tone: 'danger', text: `Saved, but the wallpaper didn't change: ${errorMessage(err)}` }),
-      )
+      await commit({ ...config, sources: next })
     } finally {
       setBusy(false)
     }
@@ -329,10 +327,10 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
           type="button"
           className="btn"
           disabled={chosen.length === 0 || busy}
-          title="Use only the selected sources and change the wallpaper now"
+          title="Turn on only the selected sources. The wallpaper changes at the next change, not now."
           onClick={() => void use()}
         >
-          Use
+          Use Only These
         </button>
       </div>
       {editing && (

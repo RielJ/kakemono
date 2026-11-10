@@ -163,38 +163,38 @@ describe('SourcesTable', () => {
     expect(document.activeElement).toBe(row(0))
   })
 
-  it('Use enables only the selected rows, saves, then changes the wallpaper', async () => {
+  it('Use Only These enables only the selected rows and saves, leaving the wallpaper alone', async () => {
     const { commits, user } = await setup()
     await user.click(within(row(1)).getByText('Wallhaven'))
     await user.keyboard('[MetaLeft>]')
     await user.click(within(row(2)).getByText('Folder'))
     await user.keyboard('[/MetaLeft]')
     expect(api.nextWallpaper).not.toHaveBeenCalled()
-    await user.click(button('Use'))
+    await user.click(button('Use Only These'))
     expect(commits).toHaveLength(1)
     expect(commits[0].sources.map((s) => s.enabled)).toEqual([false, true, true, false])
-    expect(api.nextWallpaper).toHaveBeenCalledTimes(1)
+    expect(api.nextWallpaper).not.toHaveBeenCalled()
   })
 
-  it('Use is disabled with nothing selected', async () => {
+  it('Use Only These is disabled with nothing selected', async () => {
     await setup()
-    expect((button('Use') as HTMLButtonElement).disabled).toBe(true)
+    expect((button('Use Only These') as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it('Use does not change the wallpaper when the save fails, and says why', async () => {
+  it('Use Only These says why when the save fails', async () => {
     const { user } = await setup({ commit: 'fail' })
     await user.click(within(row(1)).getByText('Wallhaven'))
-    await user.click(button('Use'))
+    await user.click(button('Use Only These'))
     expect(api.nextWallpaper).not.toHaveBeenCalled()
     expect(screen.getByRole('alert').textContent).toMatch('disk full')
   })
 
-  it('Use falls back to onChange without onCommit', async () => {
+  it('Use Only These falls back to onChange without onCommit', async () => {
     const { changes, user } = await setup({ commit: 'none' })
     await user.click(within(row(1)).getByText('Wallhaven'))
-    await user.click(button('Use'))
+    await user.click(button('Use Only These'))
     expect(changes[changes.length - 1].sources.map((s) => s.enabled)).toEqual([false, true, false, false])
-    expect(api.nextWallpaper).toHaveBeenCalledTimes(1)
+    expect(api.nextWallpaper).not.toHaveBeenCalled()
   })
 
   describe('Remove', () => {

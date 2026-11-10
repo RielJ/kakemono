@@ -65,7 +65,7 @@ Numbers refer to the inventory the user picked from.
    (`downloads/<source-id>/`). Local sources never delete user files.
 9. **Open Folder** opens the selected row's folder: the user's folder for local sources, and
    `downloads/<source-id>/` for online ones.
-10. **Use** enables only the selected rows, disables the rest, and changes the wallpaper now.
+10. **Use Only These** enables only the selected rows and disables the rest. The current wallpaper stays until the next change.
 11. **Download a wallpaper every [N] [unit]** checkbox + interval (default 10 minutes, enabled).
     The download folder (`[daemon] download_dir`) is shown on Advanced.
 12. **Limit download folder to [N] MB, deleting the oldest files when necessary** checkbox +
