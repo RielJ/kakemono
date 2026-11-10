@@ -4,9 +4,21 @@
  * ←/→ move (↑/↓ when the strip is vertical), Home/End jump, Enter or Space sets, F favourites,
  * Delete or Backspace trashes, Shift+F10 or the Menu key opens the context menu, Esc closes,
  * ⌘Z / Ctrl+Z undoes a pending trash.
+ *
+ * Tab keys (plan "Picker layout and keys") work even in an empty strip: the cross-axis arrows
+ * (↑/↓ when the strip is horizontal, ←/→ when it is vertical) switch tabs, 1–5 jump to a
+ * tab, and [ / ] cycle the Sources source filter. Tab keeps its native focus behaviour.
  */
+
+/** One step backwards or forwards; the caller wraps around. */
+export type Step = -1 | 1
+
 export type KeyAction =
   | { kind: 'move'; to: number }
+  | { kind: 'tab'; delta: Step }
+  /** 0-based: `1` gives index 0. */
+  | { kind: 'tabIndex'; index: number }
+  | { kind: 'filter'; delta: Step }
   | { kind: 'set' }
   | { kind: 'favorite' }
   | { kind: 'trash' }
@@ -22,6 +34,29 @@ export interface KeyInput {
   metaKey?: boolean
 }
 
+/** The number keys that jump to a tab, in tab order. */
+const TAB_KEYS = ['1', '2', '3', '4', '5']
+
+/** The tab or filter action for `key`, or `null`. Modifiers are checked by the caller. */
+function tabKeyAction(key: string, vertical: boolean): KeyAction | null {
+  const nextTab = vertical ? 'ArrowRight' : 'ArrowDown'
+  const prevTab = vertical ? 'ArrowLeft' : 'ArrowUp'
+  switch (key) {
+    case nextTab:
+      return { kind: 'tab', delta: 1 }
+    case prevTab:
+      return { kind: 'tab', delta: -1 }
+    case ']':
+      return { kind: 'filter', delta: 1 }
+    case '[':
+      return { kind: 'filter', delta: -1 }
+    default: {
+      const index = TAB_KEYS.indexOf(key)
+      return index === -1 ? null : { kind: 'tabIndex', index }
+    }
+  }
+}
+
 /** What `event` does in a strip of `count` items with `active` focused, or `null`. */
 export function keyAction(event: KeyInput, vertical: boolean, active: number, count: number): KeyAction | null {
   const { key, shiftKey = false, altKey = false, ctrlKey = false, metaKey = false } = event
@@ -29,7 +64,10 @@ export function keyAction(event: KeyInput, vertical: boolean, active: number, co
   if (command && !altKey && !shiftKey && key.toLowerCase() === 'z') return { kind: 'undo' }
   if (key === 'Escape') return { kind: 'close' }
   if (key === 'ContextMenu' || (shiftKey && key === 'F10')) return count > 0 ? { kind: 'menu' } : null
-  if (command || altKey || count === 0) return null
+  if (command || altKey) return null
+  const tab = tabKeyAction(key, vertical)
+  if (tab) return tab
+  if (count === 0) return null
 
   const next = vertical ? 'ArrowDown' : 'ArrowRight'
   const prev = vertical ? 'ArrowUp' : 'ArrowLeft'

@@ -15,11 +15,46 @@ describe('keyAction', () => {
     expect(h('End')).toEqual({ kind: 'move', to: 4 })
   })
 
-  it('uses ↑/↓ for a vertical strip and ignores the cross axis', () => {
+  it('uses ↑/↓ for a vertical strip', () => {
     expect(v('ArrowDown')).toEqual({ kind: 'move', to: 3 })
     expect(v('ArrowUp')).toEqual({ kind: 'move', to: 1 })
-    expect(v('ArrowRight')).toBeNull()
-    expect(h('ArrowDown')).toBeNull()
+  })
+
+  it('switches tabs with the cross-axis arrows', () => {
+    expect(h('ArrowDown')).toEqual({ kind: 'tab', delta: 1 })
+    expect(h('ArrowUp')).toEqual({ kind: 'tab', delta: -1 })
+    expect(v('ArrowRight')).toEqual({ kind: 'tab', delta: 1 })
+    expect(v('ArrowLeft')).toEqual({ kind: 'tab', delta: -1 })
+  })
+
+  it('jumps to a tab with 1–5', () => {
+    expect(h('1')).toEqual({ kind: 'tabIndex', index: 0 })
+    expect(h('3')).toEqual({ kind: 'tabIndex', index: 2 })
+    expect(h('5')).toEqual({ kind: 'tabIndex', index: 4 })
+    expect(h('0')).toBeNull()
+    expect(h('6')).toBeNull()
+  })
+
+  it('cycles the source filter with [ and ]', () => {
+    expect(h(']')).toEqual({ kind: 'filter', delta: 1 })
+    expect(h('[')).toEqual({ kind: 'filter', delta: -1 })
+  })
+
+  it('handles tab keys in an empty strip', () => {
+    const empty = (key: string, vertical = false) => keyAction({ key }, vertical, 0, 0)
+    expect(empty('ArrowDown')).toEqual({ kind: 'tab', delta: 1 })
+    expect(empty('ArrowLeft', true)).toEqual({ kind: 'tab', delta: -1 })
+    expect(empty('2')).toEqual({ kind: 'tabIndex', index: 1 })
+    expect(empty(']')).toEqual({ kind: 'filter', delta: 1 })
+  })
+
+  it('leaves modified tab keys to the system', () => {
+    for (const mods of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }]) {
+      expect(h('ArrowDown', mods)).toBeNull()
+      expect(h('1', mods)).toBeNull()
+      expect(h('[', mods)).toBeNull()
+      expect(h(']', mods)).toBeNull()
+    }
   })
 
   it('maps the action keys', () => {
@@ -43,8 +78,9 @@ describe('keyAction', () => {
     expect(h('z', { metaKey: true, shiftKey: true })).toBeNull()
   })
 
-  it('only closes or undoes in an empty strip', () => {
+  it('only closes, undoes or switches tabs in an empty strip', () => {
     expect(keyAction({ key: 'ArrowRight' }, false, 0, 0)).toBeNull()
+    expect(keyAction({ key: 'Home' }, false, 0, 0)).toBeNull()
     expect(keyAction({ key: 'Enter' }, false, 0, 0)).toBeNull()
     expect(keyAction({ key: 'ContextMenu' }, false, 0, 0)).toBeNull()
     expect(keyAction({ key: 'Escape' }, false, 0, 0)).toEqual({ kind: 'close' })
