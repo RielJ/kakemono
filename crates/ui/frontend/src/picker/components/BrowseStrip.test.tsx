@@ -37,6 +37,14 @@ class FakeObserver {
   takeRecords(): IntersectionObserverEntry[] {
     return []
   }
+  /**
+   * Waits until a live observer watches a target, then reports it in view. The sentinel's
+   * observer is made in a passive effect, which can run after the DOM update a test waited for.
+   */
+  static async showWhenObserved() {
+    await vi.waitFor(() => expect(FakeObserver.instances.some((o) => !o.disconnected && o.targets.size > 0)).toBe(true))
+    act(() => FakeObserver.showAll())
+  }
   /** Reports every live observer's targets as scrolled into view. */
   static showAll() {
     for (const o of FakeObserver.instances.filter((x) => !x.disconnected)) {
@@ -118,7 +126,7 @@ describe('BrowseStrip', () => {
       renderStrip()
       await strip()
       expect(browsePage).toHaveBeenCalledExactlyOnceWith({ session: null, page: 0, source: null })
-      act(() => FakeObserver.showAll())
+      await FakeObserver.showWhenObserved()
       await vi.waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(20))
       expect(browsePage).toHaveBeenLastCalledWith({ session: 's1', page: 1, source: null })
     })
@@ -131,7 +139,7 @@ describe('BrowseStrip', () => {
         renderStrip()
         const list = await strip()
         scrolled.mockClear()
-        act(() => FakeObserver.showAll())
+        await FakeObserver.showWhenObserved()
         await vi.waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(20))
         expect(scrolled).not.toHaveBeenCalled()
         await user.keyboard('{ArrowRight}')
@@ -166,7 +174,7 @@ describe('BrowseStrip', () => {
       renderStrip()
       await strip()
       for (let p = 1; p < 30; p++) {
-        act(() => FakeObserver.showAll())
+        await FakeObserver.showWhenObserved()
         await vi.waitFor(() => expect(screen.getAllByRole('option')).toHaveLength((p + 1) * 10))
       }
       const reload = await screen.findByRole('button', { name: 'Reload' })
@@ -364,7 +372,7 @@ describe('BrowseStrip', () => {
       renderStrip()
       await strip()
       browsePage.mockRejectedValueOnce({ kind: 'daemon_unreachable', message: 'gone' })
-      act(() => FakeObserver.showAll())
+      await FakeObserver.showWhenObserved()
       const retry = await screen.findByRole('button', { name: 'Retry' })
       expect(screen.getByText('gone')).toBeTruthy()
       expect(screen.getAllByRole('option')).toHaveLength(10)

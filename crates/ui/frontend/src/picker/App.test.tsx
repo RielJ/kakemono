@@ -422,6 +422,14 @@ class FakeObserver {
   takeRecords(): IntersectionObserverEntry[] {
     return []
   }
+  /**
+   * Waits until a live observer watches a target, then reports it in view. The sentinel's
+   * observer is made in a passive effect, which can run after the DOM update a test waited for.
+   */
+  static async showWhenObserved() {
+    await vi.waitFor(() => expect(FakeObserver.instances.some((o) => !o.disconnected && o.targets.size > 0)).toBe(true))
+    act(() => FakeObserver.showAll())
+  }
   /** Reports every live observer's targets as scrolled into view. */
   static showAll() {
     for (const o of FakeObserver.instances.filter((i) => !i.disconnected)) {
@@ -492,7 +500,7 @@ describe('tabs', () => {
     expect(activeLabel(list)).toBe('W0 — local')
     expect(screen.getAllByRole('option')[0].getAttribute('aria-selected')).toBe('true')
 
-    act(() => FakeObserver.showAll())
+    await FakeObserver.showWhenObserved()
     await vi.waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(45))
     expect(api.listTab).toHaveBeenLastCalledWith('downloaded', 40)
     // The last page said there is no more: the sentinel is gone.
