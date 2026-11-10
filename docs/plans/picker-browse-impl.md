@@ -646,7 +646,7 @@ Gate commands:
   1. Delete `thumbnails`, `list_thumbnails`, `MAX_THUMBNAILS` and `listThumbnails`. `capabilities_cover_every_command_the_frontend_invokes` proves nothing still calls them.
   2. Document the tabs, keys, per-provider behaviour, rate-limit messages, `blur_nsfw`, and privacy: previews are fetched by the daemon and cached for 24 h in `<cache>/previews`.
 - **Verify:** `scripts/gate.sh full protocol sources engine cli ui config` and `npm run typecheck && npm test`
-- **Manual:** the Task 23 end-to-end run on macOS, plus one Linux run (X11, bottom edge, horizontal).
+- **Manual:** the Task 23 end-to-end run on macOS. Linux and Windows runs are deferred: development targets macOS only until the core design settles.
 
 ## Task 25: Config `[picker] blur_nsfw` + Settings toggle
 
