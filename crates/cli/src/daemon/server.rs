@@ -356,10 +356,20 @@ impl Server {
                 },
             )),
             Request::Subscribe => Response::err("subscribe: only valid on a connection"),
-            // Temporary until the engine can browse (picker-browse Task 14 replaces these).
-            Request::Browse { .. } | Request::BrowseUse { .. } => {
-                Response::err("browse not available yet")
-            }
+            Request::Browse {
+                session,
+                page,
+                source,
+            } => data(
+                self.engine
+                    .browse(session.as_deref(), page, source.as_deref())
+                    .await,
+            ),
+            Request::BrowseUse {
+                source_id,
+                remote_id,
+                action,
+            } => data(self.engine.browse_use(&source_id, &remote_id, action).await),
         }
     }
 

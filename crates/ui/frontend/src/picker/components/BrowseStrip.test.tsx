@@ -289,9 +289,9 @@ describe('BrowseStrip', () => {
       expect(await screen.findByText(INTERNET_OFF)).toBeTruthy()
       cleanup()
 
-      browsePage.mockRejectedValueOnce({ kind: 'daemon', message: 'browse not available yet' })
+      browsePage.mockRejectedValueOnce({ kind: 'daemon', message: 'daemon error' })
       renderStrip()
-      expect(await screen.findByText('Couldn’t browse sources: browse not available yet')).toBeTruthy()
+      expect(await screen.findByText('Couldn’t browse sources: daemon error')).toBeTruthy()
       fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
       await strip()
       cleanup()

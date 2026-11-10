@@ -36,7 +36,7 @@ impl crate::error::Kinded for LinkError {
         use crate::error::ErrorKind;
         match self {
             Self::Client(ClientError::DaemonNotRunning { .. }) => ErrorKind::DaemonNotRunning,
-            Self::Client(ClientError::Timeout) => ErrorKind::DaemonTimeout,
+            Self::Client(ClientError::Timeout(_)) => ErrorKind::DaemonTimeout,
             Self::Client(_) | Self::Daemon(_) => ErrorKind::Daemon,
             Self::Decode { .. } => ErrorKind::Internal,
         }
@@ -52,7 +52,7 @@ impl LinkError {
     /// True when the daemon took longer than the request timeout to answer. It may still
     /// finish the request.
     pub fn is_timeout(&self) -> bool {
-        matches!(self, Self::Client(ClientError::Timeout))
+        matches!(self, Self::Client(ClientError::Timeout(_)))
     }
 }
 

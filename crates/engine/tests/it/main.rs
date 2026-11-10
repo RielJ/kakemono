@@ -5,6 +5,8 @@
 //! `cargo test --test it <module>::`.
 
 mod browse_preview;
+mod browse_session;
+mod browse_use;
 mod common;
 mod engine_core;
 mod files;

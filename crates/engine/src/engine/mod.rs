@@ -52,10 +52,11 @@ use kakemono_sources::SourceSet;
 use reqwest::Client;
 use tokio::sync::{Notify, broadcast};
 
-pub use deps::{Clock, Deps, SourcesFactory};
-pub use error::{EngineError, SourceOpError};
+pub use deps::{BrowseDeps, Clock, Deps, SourcesFactory};
+pub use error::{BrowseError, EngineError, SourceOpError};
 pub use ops::Provenance;
 
+use crate::browse::session::Browser;
 use crate::downloader::{DownloadEnv, SourceLocks};
 use crate::events::EngineEvent;
 use crate::facts::{self, FactsCache};
@@ -108,6 +109,8 @@ pub(crate) struct Inner {
     /// Set while [`Engine::run`] runs: a second loop would race the first on the
     /// single-waiter notifies.
     pub(crate) running: AtomicBool,
+    /// Browse sessions and the browsed-item index ([`crate::browse::session`]).
+    pub(crate) browser: Browser,
 }
 
 /// The wallpaper engine. Cheap to clone; clones share everything.
@@ -146,6 +149,7 @@ impl Engine {
             state_path.with_file_name(facts::CACHE_FILE),
         ));
         let (events, _) = broadcast::channel(EVENT_CAPACITY);
+        let browser = Browser::new(deps.browse.clone());
         Ok(Self {
             inner: Arc::new(Inner {
                 op: tokio::sync::Mutex::new(()),
@@ -167,6 +171,7 @@ impl Engine {
                 source_locks: SourceLocks::default(),
                 pending: Mutex::new(None),
                 running: AtomicBool::new(false),
+                browser,
             }),
         })
     }

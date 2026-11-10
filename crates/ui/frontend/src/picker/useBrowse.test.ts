@@ -163,9 +163,9 @@ describe('useBrowse', () => {
     const { result } = renderHook(() => useBrowse({ memory: { current: null } }))
     await waitFor(() => expect(result.current.error).toEqual({ kind: 'internet_off', message: INTERNET_OFF }))
 
-    browsePage.mockRejectedValueOnce({ kind: 'daemon', message: 'browse not available yet' })
+    browsePage.mockRejectedValueOnce({ kind: 'daemon', message: 'daemon error' })
     act(() => result.current.reload())
-    await waitFor(() => expect(result.current.error).toEqual({ kind: 'failed', message: 'browse not available yet' }))
+    await waitFor(() => expect(result.current.error).toEqual({ kind: 'failed', message: 'daemon error' }))
     expect(result.current.loading).toBe(false)
 
     browsePage.mockResolvedValueOnce(listing({ items: range(0, 10) }))

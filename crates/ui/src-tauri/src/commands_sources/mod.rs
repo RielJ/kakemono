@@ -91,7 +91,7 @@ impl SourceError {
 impl From<LinkError> for SourceError {
     fn from(err: LinkError) -> Self {
         match err {
-            LinkError::Client(err @ ClientError::Timeout) => Self::Timeout(err.to_string()),
+            LinkError::Client(err @ ClientError::Timeout(_)) => Self::Timeout(err.to_string()),
             LinkError::Client(err) => Self::Unreachable(err.to_string()),
             other => Self::Command(CommandError::Link(other)),
         }
@@ -569,9 +569,15 @@ mod tests {
 
     #[test]
     fn a_timeout_has_its_own_kind() {
-        let timeout = LinkError::Client(kakemono_protocol::client::ClientError::Timeout);
+        let timeout = LinkError::Client(kakemono_protocol::client::ClientError::Timeout(
+            std::time::Duration::from_secs(100),
+        ));
         let err = SourceError::from(timeout);
         assert_eq!(err.kind(), ErrorKind::DaemonTimeout);
+        assert_eq!(
+            err.to_string(),
+            "the kakemono daemon did not answer in time (it may still finish): request timed out after 100s"
+        );
         let json = serde_json::to_value(&err).unwrap();
         assert_eq!(json["kind"], "daemon_timeout");
     }

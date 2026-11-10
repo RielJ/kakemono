@@ -4,7 +4,7 @@ use std::io;
 use std::path::PathBuf;
 
 use kakemono_platform::api::SetError;
-use kakemono_sources::ProviderError;
+use kakemono_sources::{DownloadError, GuardError, ProviderError};
 use tokio::task::JoinError;
 
 use crate::downloader::DownloadFailure;
@@ -100,6 +100,47 @@ pub enum SourceOpError {
     /// `check_source` for a type that is neither local nor online.
     #[error("unsupported source type")]
     Unsupported,
+}
+
+/// Why `browse` or `browse_use` failed. Crosses IPC as its `Display` string, shown as is.
+#[derive(Debug, thiserror::Error)]
+pub enum BrowseError {
+    /// `[daemon] internet` is off.
+    #[error("Internet access is off")]
+    InternetOff,
+    /// The engine was built without [`BrowseDeps`](crate::engine::BrowseDeps).
+    #[error("browsing is not available in this daemon")]
+    NotAvailable,
+    /// The source filter or item names an id that isn't an enabled online `[[sources]]` row.
+    #[error("no enabled online source {0:?}")]
+    UnknownSource(String),
+    /// A page past the next one of the session. `produced` pages exist (`0..produced`).
+    #[error("browse page {page} is out of range: the session has {produced} page(s)")]
+    PageOutOfRange { page: u32, produced: u32 },
+    /// `browse_use` for an item no longer in the item index (evicted, or never browsed).
+    #[error("That preview expired — scroll or reopen to refresh.")]
+    ItemExpired,
+    /// The item's source id can't name a download folder.
+    #[error("invalid source id {0:?}")]
+    InvalidId(String),
+    /// The provider couldn't give the full image URL (e.g. a Wallhaven page scrape failed).
+    #[error(transparent)]
+    Resolve(ProviderError),
+    /// The provider gave something that isn't a URL.
+    #[error("{0}: invalid image URL")]
+    BadUrl(&'static str),
+    /// The SSRF guard refused the image URL or a redirect.
+    #[error(transparent)]
+    Guard(#[from] GuardError),
+    /// The full-image download failed.
+    #[error("download image: {0}")]
+    Download(#[source] DownloadError),
+    /// The download took longer than `BrowseLimits::use_timeout`.
+    #[error("download image: no answer within {}s", .0.as_secs())]
+    DownloadTimeout(std::time::Duration),
+    /// Setting the wallpaper or copying to favorites failed.
+    #[error(transparent)]
+    Engine(#[from] EngineError),
 }
 
 /// The download failures' texts joined with `"; "`.

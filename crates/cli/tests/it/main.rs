@@ -4,6 +4,7 @@
 //! linked separately against the crate and all its dependencies. Run one module with
 //! `cargo test --test it <module>::`.
 
+mod browse;
 mod cli;
 mod daemon;
 mod detect;

@@ -207,7 +207,7 @@ pub async fn browse_use_on(
     timeout: Duration,
 ) -> SrcResult<BrowseUseData> {
     let response = match link.call_alone_with_timeout(request, timeout).await {
-        Err(LinkError::Client(ClientError::Timeout)) => {
+        Err(LinkError::Client(ClientError::Timeout(_))) => {
             return Err(SourceError::StillDownloading);
         }
         other => other?,
@@ -452,13 +452,13 @@ mod tests {
         let (_dir, endpoint) = temp_endpoint();
         let _server = serve(
             &endpoint,
-            vec!["{\"ok\":false,\"error\":\"browse not available yet\"}".into()],
+            vec!["{\"ok\":false,\"error\":\"Internet access is off\"}".into()],
         );
         let link = DaemonLink::new(endpoint);
         let err = browse_on(&link, None, 0, None).await.expect_err("refused");
         assert_eq!(
             (err.kind(), err.to_string()),
-            (ErrorKind::Daemon, "browse not available yet".to_owned())
+            (ErrorKind::Daemon, "Internet access is off".to_owned())
         );
     }
 
