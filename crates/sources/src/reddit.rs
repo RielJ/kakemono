@@ -1,13 +1,18 @@
 //! Reddit provider: image posts from the hot listing of one subreddit (one `[[sources]]` row).
 //!
-//! Port of Go `internal/providers/reddit/reddit.go`. Go read the post `url` only (no
-//! `preview` images), so there is nothing to HTML-unescape.
+//! Port of Go `internal/providers/reddit/reddit.go`. `fetch` reads the post `url` only, like Go.
+//! `browse` also reads `preview` images, whose URLs Reddit HTML-escapes (`&amp;`) unless asked
+//! for `raw_json=1`; browse asks and still unescapes.
 
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
 
+use crate::browse::{
+    BrowseBatch, BrowseCursor, BrowseSupport, ImageRef, RemoteItem, sanitize_remote_id,
+};
 use crate::de;
+use crate::guard;
 use crate::http;
 use crate::provider::{Provider, ProviderError, WallpaperResult};
 
@@ -20,8 +25,18 @@ const PAGE_ORIGIN: &str = "https://www.reddit.com";
 /// Posts with a lower score are skipped.
 pub(crate) const MIN_SCORE: i64 = 100;
 
-/// Posts requested per listing.
+/// Posts requested per listing by `fetch`.
 const LIMIT: &str = "100";
+
+/// Posts requested per listing by `browse`.
+const BROWSE_LIMIT: &str = "25";
+
+/// Narrowest preview resolution `browse` uses, in pixels.
+const MIN_PREVIEW_WIDTH: u32 = 320;
+
+/// Hosts of browse previews and full images (see [`Provider::media_hosts`]). Posts whose image
+/// or preview is elsewhere are dropped from browse.
+const MEDIA_HOSTS: &[&str] = &["i.redd.it", "preview.redd.it", "i.imgur.com"];
 
 /// A valid subreddit name: 1 to 50 of `A-Z a-z 0-9 _ +` (`+` joins subreddits, as Reddit
 /// allows). The name goes into the request path, so nothing else can be held here.
@@ -97,6 +112,16 @@ impl Reddit {
         let path = format!("/r/{}/hot.json", self.subreddit);
         http::endpoint(&self.base_url, &path, &[("limit", LIMIT)])
     }
+
+    /// `{base}/r/{subreddit}/hot.json?[after={after}&]limit=25&raw_json=1`.
+    fn browse_url(&self, after: Option<&str>) -> url::Url {
+        let path = format!("/r/{}/hot.json", self.subreddit);
+        let mut params = vec![("limit", BROWSE_LIMIT), ("raw_json", "1")];
+        if let Some(after) = after {
+            params.push(("after", after));
+        }
+        http::endpoint(&self.base_url, &path, &params)
+    }
 }
 
 #[async_trait]
@@ -114,6 +139,100 @@ impl Provider for Reddit {
         let listing: Listing = http::read_json(response, "reddit").await?;
         Ok(filter_image_posts(listing, self.subreddit.as_str()))
     }
+
+    fn browse_support(&self) -> BrowseSupport {
+        BrowseSupport::Paged
+    }
+
+    fn media_hosts(&self) -> &'static [&'static str] {
+        MEDIA_HOSTS
+    }
+
+    /// One hot-listing batch of 25 posts, from `cursor` (Reddit's `after`) on; `query` is
+    /// ignored. Ends when the listing's `after` is empty.
+    async fn browse(
+        &self,
+        _query: &str,
+        cursor: Option<&BrowseCursor>,
+    ) -> Result<BrowseBatch, ProviderError> {
+        let after = cursor.map(|c| c.0.as_str());
+        let request = self.client.get(self.browse_url(after));
+        let response = http::send_fail_fast(request, "reddit").await?;
+        let response = http::check_status(response).map_err(|s| s.into_provider_error("reddit"))?;
+        let listing: Listing = http::read_json(response, "reddit").await?;
+        Ok(browse_batch(listing, self.subreddit.as_str()))
+    }
+}
+
+/// The browsable posts of `listing` and the cursor of the next listing.
+fn browse_batch(listing: Listing, subreddit: &str) -> BrowseBatch {
+    let ListingData { after, children } = listing.data;
+    let items = children
+        .into_iter()
+        .filter_map(|child| browse_item(child.data, subreddit))
+        .collect();
+    BrowseBatch {
+        items,
+        next: after.filter(|a| !a.is_empty()).map(BrowseCursor),
+    }
+}
+
+/// `post` as a browse item, or `None` when it is NSFW, scores below [`MIN_SCORE`], has no
+/// name, is not a supported image, or has its image or preview outside [`MEDIA_HOSTS`].
+fn browse_item(post: Post, subreddit: &str) -> Option<RemoteItem> {
+    if post.over_18 || post.score < MIN_SCORE || post.name.is_empty() {
+        return None;
+    }
+    let image_url = resolve_image_url(&post.url)?;
+    let image = post.preview.images.into_iter().next().unwrap_or_default();
+    let preview_url = smallest_preview(&image.resolutions).unwrap_or_else(|| image_url.clone());
+    if !is_media_url(&image_url) || !is_media_url(&preview_url) {
+        return None;
+    }
+    let size = |n: u32| (n > 0).then_some(n);
+    Some(RemoteItem {
+        remote_id: sanitize_remote_id(&post.name),
+        source_url: source_url(post.permalink, &post.id, subreddit),
+        preview_url,
+        image: ImageRef::Direct(image_url),
+        title: post.title,
+        author: post.author,
+        width: size(image.source.width),
+        height: size(image.source.height),
+        // `over_18` posts are dropped above (plan Decisions §5).
+        nsfw: false,
+    })
+}
+
+/// URL of the narrowest resolution at least [`MIN_PREVIEW_WIDTH`] wide, unescaped.
+fn smallest_preview(resolutions: &[ImageSource]) -> Option<String> {
+    resolutions
+        .iter()
+        .filter(|r| r.width >= MIN_PREVIEW_WIDTH && !r.url.is_empty())
+        .min_by_key(|r| r.width)
+        .map(|r| unescape_amp(&r.url))
+}
+
+/// `url` with Reddit's HTML escaping of `&` undone.
+fn unescape_amp(url: &str) -> String {
+    url.replace("&amp;", "&")
+}
+
+/// Whether `url` parses and passes the SSRF guard's checks for [`MEDIA_HOSTS`].
+fn is_media_url(url: &str) -> bool {
+    url::Url::parse(url).is_ok_and(|u| guard::check_url(&u, MEDIA_HOSTS).is_ok())
+}
+
+/// The post page: `permalink` under [`PAGE_ORIGIN`], an absolute `permalink` as is, or a
+/// page built from the post `id` when there is no permalink.
+fn source_url(permalink: String, id: &str, subreddit: &str) -> String {
+    if permalink.is_empty() {
+        format!("{PAGE_ORIGIN}/r/{subreddit}/comments/{id}")
+    } else if permalink.starts_with("http") {
+        permalink
+    } else {
+        format!("{PAGE_ORIGIN}{permalink}")
+    }
 }
 
 /// Image posts with a score of at least [`MIN_SCORE`], in listing order.
@@ -126,15 +245,8 @@ fn filter_image_posts(listing: Listing, subreddit: &str) -> Vec<WallpaperResult>
         .filter(|post| post.score >= MIN_SCORE)
         .filter_map(|post| {
             let image_url = resolve_image_url(&post.url)?;
-            let source_url = if post.permalink.is_empty() {
-                format!("{PAGE_ORIGIN}/r/{subreddit}/comments/{}", post.id)
-            } else if post.permalink.starts_with("http") {
-                post.permalink
-            } else {
-                format!("{PAGE_ORIGIN}{}", post.permalink)
-            };
             Some(WallpaperResult {
-                source_url,
+                source_url: source_url(post.permalink, &post.id, subreddit),
                 image_url,
                 title: post.title,
                 author: post.author,
@@ -180,6 +292,9 @@ struct Listing {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct ListingData {
+    /// Fullname of the last post, the `after` of the next listing; `null` at the end.
+    #[serde(deserialize_with = "de::null_default")]
+    after: Option<String>,
     #[serde(deserialize_with = "de::null_default")]
     children: Vec<Child>,
 }
@@ -207,6 +322,53 @@ struct Post {
     permalink: String,
     #[serde(deserialize_with = "de::null_default")]
     score: i64,
+    /// Fullname, e.g. `t3_abc`: the browse `remote_id`.
+    #[serde(deserialize_with = "de::null_default")]
+    name: String,
+    #[serde(deserialize_with = "de::null_default")]
+    over_18: bool,
+    /// Lenient, so a `preview` of an unexpected shape cannot fail `fetch`, which ignores it.
+    #[serde(deserialize_with = "lenient")]
+    preview: Preview,
+}
+
+/// Decodes `T`, or `T::default()` when the value is `null` or does not fit `T`.
+fn lenient<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned + Default,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value(value).unwrap_or_default())
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Preview {
+    #[serde(deserialize_with = "de::null_default")]
+    images: Vec<PreviewImage>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct PreviewImage {
+    /// The full-size image; only its size is used.
+    #[serde(deserialize_with = "de::null_default")]
+    source: ImageSource,
+    /// Scaled copies, in no guaranteed order.
+    #[serde(deserialize_with = "de::null_default")]
+    resolutions: Vec<ImageSource>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct ImageSource {
+    #[serde(deserialize_with = "de::null_default")]
+    url: String,
+    #[serde(deserialize_with = "de::null_default")]
+    width: u32,
+    #[serde(deserialize_with = "de::null_default")]
+    height: u32,
 }
 
 #[cfg(test)]
@@ -245,6 +407,79 @@ mod tests {
             resolve_image_url("https://i.imgur.com/abc.gifv").as_deref(),
             Some("https://i.imgur.com/abc.gifv")
         );
+    }
+
+    fn res(url: &str, width: u32) -> ImageSource {
+        ImageSource {
+            url: url.into(),
+            width,
+            height: 0,
+        }
+    }
+
+    #[test]
+    fn smallest_preview_picks_narrowest_at_least_320() {
+        let resolutions = [res("a", 640), res("b", 216), res("c", 320), res("d", 960)];
+        assert_eq!(smallest_preview(&resolutions).as_deref(), Some("c"));
+    }
+
+    #[test]
+    fn smallest_preview_is_none_when_all_are_narrow() {
+        assert_eq!(smallest_preview(&[res("a", 108), res("b", 319)]), None);
+    }
+
+    #[test]
+    fn smallest_preview_skips_empty_urls() {
+        assert_eq!(
+            smallest_preview(&[res("", 320), res("b", 640)]).as_deref(),
+            Some("b")
+        );
+    }
+
+    #[test]
+    fn smallest_preview_unescapes_amp() {
+        let resolutions = [res("https://preview.redd.it/a.jpg?width=320&amp;s=x", 320)];
+        assert_eq!(
+            smallest_preview(&resolutions).as_deref(),
+            Some("https://preview.redd.it/a.jpg?width=320&s=x")
+        );
+    }
+
+    #[test]
+    fn media_url_accepts_listed_https_hosts() {
+        for url in [
+            "https://i.redd.it/a.jpg",
+            "https://preview.redd.it/a.jpg?width=320&s=x",
+            "https://i.imgur.com/a.jpg",
+        ] {
+            assert!(is_media_url(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn media_url_rejects_unlisted_hosts_http_and_garbage() {
+        for url in [
+            "https://example.com/a.jpg",
+            "https://imgur.com/a.jpg",
+            "https://external-preview.redd.it/a.jpg",
+            "https://i.redd.it.evil.test/a.jpg",
+            "http://i.redd.it/a.jpg",
+            "not a url",
+        ] {
+            assert!(!is_media_url(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn malformed_preview_does_not_fail_decoding() {
+        let listing: Listing = serde_json::from_str(
+            r#"{"data":{"children":[
+                {"data":{"id":"a","score":100,"url":"https://e.com/a.jpg",
+                         "preview":{"images":"oops"}}}
+            ]}}"#,
+        )
+        .unwrap();
+        assert_eq!(filter_image_posts(listing, "pics").len(), 1);
     }
 
     #[test]
