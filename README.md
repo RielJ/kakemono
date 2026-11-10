@@ -1,18 +1,64 @@
 # kakemono
 
-kakemono is a wallpaper manager for macOS, Linux, and Windows. A small daemon downloads wallpapers from Bing, Wallhaven, Unsplash, Reddit, NASA APOD, or your own folders, and changes the wallpaper on a timer. It picks different sources and search queries for light and dark mode, keeps a history you can step back through, and saves favorites.
+kakemono is a wallpaper manager for macOS, Linux, and Windows. A small daemon downloads wallpapers from Bing, Wallhaven, Unsplash, Reddit, NASA APOD, or your own folders, and changes the wallpaper on a timer. It keeps a history you can step back through, saves favorites, and can prefer dark images in dark mode and light images in light mode.
 
-The `kakemono` binary is both the daemon and the command-line client. The optional kakemono app adds a tray icon, a thumbnail picker, and a settings window.
+The `kakemono` binary is both the daemon and the command-line client. The kakemono app adds a menu-bar (tray) icon, a thumbnail picker for browsing and setting wallpapers, and a settings window.
 
 kakemono replaces the Go `wallpaperd`, and reads its config and history. To switch, follow [docs/migration.md](docs/migration.md).
 
 ## Install
 
-kakemono builds with stable Rust 1.99 or newer.
+Prebuilt downloads are on the [Releases](https://github.com/RielJ/kakemono/releases) page. Each release has two kinds of file:
 
-### The command-line tool and daemon
+- **The app** (`kakemono_<version>_<arch>.dmg`, `.deb`, `.rpm`, `.AppImage`, `.msi`, or `-setup.exe`). It contains the `kakemono` binary too, so most people need only this.
+- **The command-line tool alone** (`kakemono-<version>-<target>.tar.gz`, or `.zip` on Windows), for servers and window managers where you don't want the app.
 
-From a clone of this repository:
+`SHA256SUMS` lists a checksum for every file.
+
+The builds are not signed, so each system warns about them the first time.
+
+### macOS
+
+1. Open the `.dmg` for your Mac (`aarch64` for Apple silicon, `x64` for Intel) and drag **kakemono** to **Applications**.
+2. Because the app is not signed, macOS says that it "is damaged" or "cannot be opened". To allow it, run:
+
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/kakemono.app
+   ```
+
+3. Open kakemono. It starts the daemon and puts its icon in the menu bar.
+4. To use the command-line tool, link it onto your `PATH`:
+
+   ```sh
+   ln -s /Applications/kakemono.app/Contents/MacOS/kakemono ~/.local/bin/kakemono
+   ```
+
+On a MacBook with a notch, macOS hides menu-bar icons that don't fit beside it. If you can't see the kakemono icon, quit some menu-bar apps or use a menu-bar manager such as Ice or Bartender.
+
+### Linux
+
+Install the package for your distribution:
+
+```sh
+sudo apt install ./kakemono_<version>_amd64.deb      # Debian, Ubuntu
+sudo dnf install ./kakemono-<version>-1.x86_64.rpm   # Fedora
+```
+
+Or make the AppImage executable and run it: `chmod +x kakemono_<version>_amd64.AppImage`.
+
+The packages install `kakemono` and `kakemono-ui` into `/usr/bin`. The tray icon needs a StatusNotifier host: KDE Plasma and most bars (waybar, for example) have one. On GNOME, install the AppIndicator extension.
+
+On a Linux machine without a desktop app, or on ARM, use the `tar.gz` and copy `kakemono` onto your `PATH`.
+
+### Windows
+
+Run the `.msi` or the `-setup.exe`. SmartScreen warns that the publisher is unknown: click **More info**, then **Run anyway**. The installer adds kakemono to the Start menu. Its icon is in the notification area; Windows can hide it behind the **^** arrow.
+
+The `.zip` contains `kakemono.exe` alone.
+
+### Build from source
+
+kakemono builds with stable Rust 1.99 or newer. For the command-line tool and daemon only, run this in a clone of this repository:
 
 ```sh
 cargo install --locked --path crates/cli
@@ -20,15 +66,13 @@ cargo install --locked --path crates/cli
 
 The command installs `kakemono` into `~/.cargo/bin`.
 
-### The app (tray, picker, and settings)
-
-The app is a Tauri 2 project in `crates/ui`. It needs Node.js and npm. On Linux it also needs the WebKitGTK development packages. On Debian and Ubuntu:
+The app is a Tauri 2 project in `crates/ui`, and also needs Node.js 26 or newer (`.node-version`). On Linux it needs the WebKitGTK development packages too. On Debian and Ubuntu:
 
 ```sh
 sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
 ```
 
-Build the bundle, which also contains the `kakemono` binary:
+To build the app bundle, which contains the `kakemono` binary:
 
 ```sh
 scripts/build-sidecar.sh
@@ -37,7 +81,7 @@ npm ci
 TAURI_APP_PATH=../src-tauri npm run tauri -- build --config ../src-tauri/tauri.bundle.conf.json
 ```
 
-The bundles go to `target/release/bundle/`. On macOS, copy `kakemono.app` to `/Applications`.
+The bundles go to `target/release/bundle/`.
 
 ### Start the daemon at login
 
@@ -59,7 +103,7 @@ On Linux, the systemd unit needs your session's environment, and many tiling com
 
 ```sh
 kakemono daemon          # start the daemon in the background
-kakemono next            # download and set a new wallpaper now
+kakemono next            # set a new wallpaper now
 kakemono status          # show the current wallpaper
 kakemono prev            # go back in the history
 kakemono favorite        # copy the current wallpaper to the favorites folder
@@ -166,34 +210,80 @@ kakemono ignores unknown keys. A section with some keys missing uses the default
 |---|---|---|
 | `rotation_enabled` | `true` | Change the wallpaper on a timer. |
 | `interval` | `"30m"` | Time between changes, as a Go duration: `"45s"`, `"30m"`, `"2h30m"`. An invalid or zero value falls back to 30 minutes. |
-| `download_dir` | `"~/Pictures/Wallpapers/cache"` | Where downloads go. |
-| `cache_size` | `50` | The number of downloads to keep in `download_dir`. |
+| `download_dir` | `"~/Pictures/Wallpapers/cache"` | Where downloads go, one folder per source. |
 | `trash_dir` | `"~/Pictures/Wallpapers/trash"` | Where `trash` moves files. |
 | `socket_path` | unset | The daemon socket. Unset means the platform default (see [Files](#files)). Ignored on Windows. |
 | `rotate_on_theme_change` | `true` | Set a new wallpaper when the system switches between light and dark mode. |
 | `reapply_on_space_change` | `false` | macOS: set the current wallpaper again when you switch Spaces. See [docs/migration.md](docs/migration.md#spaces-get-the-wallpaper-only-when-they-are-current). |
 
-### Sources
+### Change and download settings in `[daemon]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `change_on_start` | `false` | Change the wallpaper once when the daemon starts. |
+| `internet` | `true` | Allow online sources. With `false`, kakemono uses only the images already on disk. |
+| `download_enabled` | `true` | Download new images from the online sources in the background. |
+| `download_interval` | `"10m"` | Time between background downloads, one image each time. |
+| `download_limit_mb_enabled`, `download_limit_mb` | `true`, `500` | Keep the download folder under this size. kakemono deletes the oldest downloads first, and never deletes favorites, the current wallpaper, or files in local sources. |
+| `manual_dir` | `<download_dir>/manual` | Where images go that you drop on Settings or fetch from a URL. |
+
+A wallpaper change picks an image that is already on disk, from the enabled sources. The background downloader keeps that pool fresh. If the pool is empty, the change downloads one image first.
+
+### Sources: `[[sources]]`
+
+Each source is one `[[sources]]` row. You can have several rows of the same type, for example two Wallhaven searches.
+
+```toml
+[[sources]]
+id = "wh-nature"          # a-z, 0-9 and "-", at most 32; names the folder downloads/<id>/
+enabled = true
+type = "wallhaven"
+location = "nature"
+
+[[sources]]
+id = "pictures"
+type = "folder"
+location = "~/Pictures/Wallpapers"
+```
+
+| `type` | `location` |
+|---|---|
+| `wallhaven` | Search keywords, or a wallhaven.cc search URL. Empty for the latest images. |
+| `unsplash` | Search keywords. Empty for the editorial feed. Needs `[unsplash] access_key`. |
+| `reddit` | A subreddit, such as `EarthPorn`. |
+| `bing` | Empty. The images of the day. |
+| `apod` | Empty. NASA's Astronomy Picture of the Day. |
+| `folder` | A folder. kakemono picks its images at random, subfolders included. |
+| `album-name`, `album-date` | A folder, shown in file-name or file-date order. |
+| `images` | Image files. |
+
+With no `[[sources]]` rows, kakemono uses Bing, Wallhaven "nature", and the favorites folder. Settings has a sources table with **Add…**, which is the easiest way to edit them.
+
+Settings shared by every row of a type go in a section named after the type:
 
 | Section | Keys and defaults |
 |---|---|
-| `[bing]` | `enabled = true`, `market = "en-US"` |
-| `[wallhaven]` | `enabled = false`, `api_key = ""`, `purity = "100"`, `sorting = "random"`, `categories = "111"` |
-| `[unsplash]` | `enabled = false`, `access_key = ""` |
-| `[reddit]` | `enabled = false`, `subreddits = ["EarthPorn", "wallpapers"]` |
-| `[apod]` | `enabled = false`, `api_key = "DEMO_KEY"` |
-| `[local]` | `enabled = false`, `dirs = []`, `recursive = true` |
+| `[wallhaven]` | `api_key = ""`, `purity = "100"`, `sorting = "random"`, `categories = "111"` |
+| `[unsplash]` | `access_key = ""` |
+| `[bing]` | `market = "en-US"` |
+| `[apod]` | `api_key = "DEMO_KEY"` |
 
 Wallhaven works without an API key. `purity` is three digits for SFW, sketchy, and NSFW. `categories` is three digits for general, anime, and people. `sorting` is one of `random`, `toplist`, `date_added`, `relevance`, `views`, `favorites`, and `hot`.
 
-### `[light]` and `[dark]`
+Config files from older versions, with `[light]`, `[dark]`, and an `enabled` key per provider, are converted to `[[sources]]` rows on the first start. [docs/migration.md](docs/migration.md#sources-list-2026-07) describes the conversion.
 
-| Key | `[light]` default | `[dark]` default |
+### `[filters]`
+
+Filters are soft: if no image passes all of them, kakemono uses the image that passes the most.
+
+| Key | Default | Meaning |
 |---|---|---|
-| `sources` | `["bing"]` | `["bing"]` |
-| `queries` | `["landscape", "nature"]` | `["space", "night", "dark"]` |
-
-For each change, kakemono tries the enabled sources from the list for the current theme, in random order, with one random query. If none of the listed sources is enabled, it uses any enabled source.
+| `landscape` | `false` | Only images wider than they are tall. |
+| `min_size_enabled`, `min_size_percent` | `false`, `80` | Only images at least this percentage (50, 80, or 100) of the screen size. |
+| `brightness` | `"off"` | `dark`, `light`, or `system`: dark images in dark mode and light images in light mode. |
+| `color_enabled`, `color` | `false`, `"#3b82f6"` | Prefer images whose main colour is close to this colour. |
+| `rating_enabled`, `min_rating` | `false`, `4` | Only images with an EXIF or XMP rating of at least this (1–5). |
+| `name_regex_enabled`, `name_regex` | `false`, `""` | Only images whose file name matches this regular expression. |
 
 ### `[favorites]`
 
@@ -206,6 +296,7 @@ For each change, kakemono tries the enabled sources from the list for the curren
 | Key | Default | Meaning |
 |---|---|---|
 | `position` | `"bottom"` | The screen edge for the picker: `bottom`, `top`, `left`, or `right`. |
+| `orientation` | `"auto"` | `horizontal`, `vertical`, or `auto`: vertical on the left and right edges. |
 | `close_on_blur` | `true` | Hide the picker when it loses focus. |
 | `placement` | `"edge"` | `edge` uses `position`. `custom` uses `custom`. Dragging the picker sets both. |
 | `custom` | unset | `{ x = 10, y = 20, monitor = "DP-1" }` |
@@ -215,6 +306,12 @@ For each change, kakemono tries the enabled sources from the list for the curren
 ### `[desktop]`
 
 Linux only. It selects the wallpaper backend: `backend`, `set_command`, `persistent`, `fit`, `theme`, and `managed_by`. The daemon fills it in on the first start. [docs/linux-backends.md](docs/linux-backends.md) describes every key and backend. On macOS and Windows, kakemono always uses the system API and ignores `backend` and `set_command`.
+
+### `[ui]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `appearance` | `"light"` | The colour scheme of the settings window: `light`, `dark`, or `system`. |
 
 ### `[hooks]`
 
