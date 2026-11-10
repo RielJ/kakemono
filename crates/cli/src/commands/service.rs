@@ -263,14 +263,18 @@ mod tests {
         let next = run_with(&f.manager, &mut buf, action, async || answers)
             .await
             .unwrap();
+        // The root as printed, and as JSON writes it (each `\` escaped).
+        let root = f.root.to_string_lossy();
         let text = String::from_utf8(buf)
             .unwrap()
-            .replace(&*f.root.to_string_lossy(), "<tmp>");
+            .replace(&*root, "<tmp>")
+            .replace(&root.replace('\\', "\\\\"), "<tmp>");
         (next, slash_tmp_paths(&text))
     }
 
-    /// Writes the separators in `<tmp>` paths as `/`, so the Linux and macOS layouts snapshot the
-    /// same on a Windows host. Other backslashes, such as the `HKCU\...` key, stay.
+    /// Writes the separators in `<tmp>` paths as `/` (JSON's escaped `\\` too), so the Linux and
+    /// macOS layouts snapshot the same on a Windows host. Other backslashes, such as the
+    /// `HKCU\...` key, stay.
     fn slash_tmp_paths(text: &str) -> String {
         let mut out = String::with_capacity(text.len());
         let mut rest = text;
@@ -280,7 +284,7 @@ mod tests {
             let end = tail
                 .find(|c: char| c.is_whitespace() || c == ')')
                 .unwrap_or(tail.len());
-            out.push_str(&tail[..end].replace('\\', "/"));
+            out.push_str(&tail[..end].replace("\\\\", "/").replace('\\', "/"));
             rest = &tail[end..];
         }
         out.push_str(rest);

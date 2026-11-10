@@ -377,7 +377,8 @@ mod tests {
         .expect("open");
         let launches = recorder.0.into_inner();
         assert_eq!(launches.len(), 1);
-        assert_eq!(argv(&launches[0]), format!("{} --picker", ui("/usr/bin")));
+        let expected = format!("{} --picker", ui("/usr/bin")).replace('\\', "/");
+        assert_eq!(argv(&launches[0]), expected);
     }
 
     #[test]
