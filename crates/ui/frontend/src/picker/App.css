@@ -607,10 +607,28 @@ body {
   }
 }
 
-/* The next page's slot: a blank card that is also the paging sentinel. */
+/* The next page's slot: a card with a spinner that is also the paging sentinel. */
 .option-skeleton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: default;
   pointer-events: none;
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 2px solid var(--border);
+  border-top-color: var(--text-muted);
+  animation: spin 800ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* After the strip: Retry for a failed page, Reload at the 300 cap, and source problems. */

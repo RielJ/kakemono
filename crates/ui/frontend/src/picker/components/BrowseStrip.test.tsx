@@ -123,6 +123,32 @@ describe('BrowseStrip', () => {
       expect(browsePage).toHaveBeenLastCalledWith({ session: 's1', page: 1, source: null })
     })
 
+    it('a new page keeps the strip where it was scrolled; a key move still scrolls', async () => {
+      const scrolled = vi.fn()
+      Element.prototype.scrollIntoView = scrolled
+      try {
+        const user = userEvent.setup()
+        renderStrip()
+        const list = await strip()
+        scrolled.mockClear()
+        act(() => FakeObserver.showAll())
+        await vi.waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(20))
+        expect(scrolled).not.toHaveBeenCalled()
+        await user.keyboard('{ArrowRight}')
+        expect(scrolled).toHaveBeenCalledTimes(1)
+        expect(scrolled.mock.contexts[0]).toBe(activeOption(list))
+      } finally {
+        Reflect.deleteProperty(Element.prototype, 'scrollIntoView')
+      }
+    })
+
+    it('the next-page slot shows a loading spinner', async () => {
+      renderStrip()
+      const list = await strip()
+      const slot = list.querySelector('.option-skeleton')
+      expect(slot?.querySelector('.spinner')).toBeTruthy()
+    })
+
     it('moving the keyboard within 3 items of the end loads more', async () => {
       const user = userEvent.setup()
       renderStrip()
@@ -274,6 +300,8 @@ describe('BrowseStrip', () => {
         'T1 — wallhaven',
         'r2 by Ann — wallhaven',
       ])
+      // No native hover tooltip on a wallpaper tile.
+      expect(options.every((o) => !o.hasAttribute('title'))).toBe(true)
       expect(options[0].querySelector('img')).toBeNull()
       expect(options[0].querySelector('.placeholder')).not.toBeNull()
       expect(options[1].querySelector('img')?.getAttribute('src')).toBe('thumb://localhost/1')

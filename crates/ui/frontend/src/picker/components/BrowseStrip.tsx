@@ -10,6 +10,7 @@ import {
 } from '../../shared/api'
 import { keyAction, type KeyAction } from '../keys'
 import { useBrowse, type UseBrowseOptions } from '../useBrowse'
+import { useActiveInView } from '../useActiveInView'
 import { useSentinel } from '../useSentinel'
 import ContextMenu, { type MenuItem } from './ContextMenu'
 import Icon from './Icon'
@@ -175,10 +176,7 @@ export default function BrowseStrip({ vertical, notices, blurNsfw, memory }: Pro
   const paging = !done && !capped
   useSentinel(sentinelRef, { onVisible: loadMore, busy: !ready || !paging || loadingMore || moreError !== null })
 
-  useEffect(() => {
-    document.getElementById(optionId(activeIndex))?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
-    // optionId only depends on the stable idPrefix.
-  }, [activeIndex, items.length])
+  useActiveInView(optionId(activeIndex))
 
   // The wheel scrolls along the strip whichever way it turns.
   useEffect(() => {
@@ -287,7 +285,11 @@ export default function BrowseStrip({ vertical, notices, blurNsfw, memory }: Pro
             />
           )
         })}
-        {paging && items.length > 0 && <div ref={sentinelRef} className="option option-skeleton" aria-hidden="true" />}
+        {paging && items.length > 0 && (
+          <div ref={sentinelRef} className="option option-skeleton" aria-hidden="true">
+            <span className="spinner" />
+          </div>
+        )}
       </div>
       {showEnd && (
         <div className="browse-end">
@@ -379,7 +381,6 @@ function RemoteOption({ id, item, active, busy, blurred, onClick, onContextMenu,
       aria-busy={busy || undefined}
       data-active={active || undefined}
       data-blurred={blurred || undefined}
-      title={label}
       onClick={onClick}
       onContextMenu={onContextMenu}
       onPointerEnter={() => onHover(true)}

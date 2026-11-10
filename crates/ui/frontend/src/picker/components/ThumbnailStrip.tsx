@@ -13,6 +13,7 @@ import {
 import { useDaemonEvents } from '../../shared/useDaemonEvents'
 import { keyAction, type KeyAction } from '../keys'
 import { commitTrash, MESSAGES, UNDO_MS } from '../trash'
+import { useActiveInView } from '../useActiveInView'
 import { useSentinel } from '../useSentinel'
 import ContextMenu, { type MenuItem } from './ContextMenu'
 import Icon from './Icon'
@@ -302,10 +303,7 @@ export default function ThumbnailStrip({ tab, vertical, notices }: StripProps) {
     }
   }, [flushTrash])
 
-  useEffect(() => {
-    document.getElementById(optionId(activeIndex))?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
-    // optionId only depends on the stable idPrefix.
-  }, [activeIndex, visible.length])
+  useActiveInView(optionId(activeIndex))
 
   // The wheel scrolls along the strip whichever way it turns.
   useEffect(() => {
@@ -414,7 +412,6 @@ function Option({ id, thumb, active, onClick, onContextMenu }: OptionProps) {
       aria-selected={thumb.isCurrent}
       aria-label={label}
       data-active={active || undefined}
-      title={label}
       onClick={onClick}
       onContextMenu={onContextMenu}
     >

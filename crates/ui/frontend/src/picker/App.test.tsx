@@ -117,6 +117,8 @@ describe('picker listbox', () => {
       'Beach — local',
       'c.jpg — wallhaven',
     ])
+    // No native hover tooltip on a wallpaper tile.
+    expect(options.every((o) => !o.hasAttribute('title'))).toBe(true)
     expect(options.map((o) => o.getAttribute('aria-selected'))).toEqual(['false', 'true', 'false'])
     expect(document.activeElement).toBe(list)
     expect(activeLabel(list)).toBe('Beach — local')
