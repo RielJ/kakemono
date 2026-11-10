@@ -16,11 +16,13 @@ use kakemono_engine::state::State;
 use kakemono_engine::{Deps, Engine};
 use kakemono_platform::api::{Platform, Theme};
 use kakemono_platform::fake::{ManualSignals, RecordingSetter};
-use kakemono_protocol::endpoint::Endpoint;
+use kakemono_protocol::endpoint::{Endpoint, test_socket_path};
 use kakemono_sources::SourceSet;
 use tempfile::TempDir;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+
+use crate::support::real_dir;
 
 const NOW: &str = "2026-03-04T05:06:07.890+08:00";
 
@@ -56,8 +58,15 @@ impl Daemon {
         cmd
     }
 
+    /// Replaces the root with `[ROOT]`; on Windows also `\` with `/`, so one snapshot states
+    /// the paths for every OS.
     fn redact(&self, text: &str) -> String {
-        text.replace(self.root.to_str().unwrap(), "[ROOT]")
+        let text = text.replace(self.root.to_str().unwrap(), "[ROOT]");
+        if cfg!(windows) {
+            text.replace('\\', "/")
+        } else {
+            text
+        }
     }
 
     async fn stop(mut self) {
@@ -109,10 +118,11 @@ fn pics_row(root: &Path) -> SourceEntry {
     }
 }
 
-/// A daemon on `<tmp>/run/k.sock` whose `next` always returns `<tmp>/pics/one.jpg`.
+/// A daemon on `test_socket_path(<tmp>, "k.sock")` whose `next` always returns
+/// `<tmp>/pics/one.jpg`.
 async fn start_with(state: State, theme: Theme, interval: &str) -> Daemon {
     let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().canonicalize().unwrap();
+    let root = real_dir(dir.path());
     std::fs::create_dir(root.join("pics")).unwrap();
     std::fs::write(root.join("pics").join("one.jpg"), b"fake image data").unwrap();
     let setter = RecordingSetter::new();
@@ -128,7 +138,7 @@ async fn start_with(state: State, theme: Theme, interval: &str) -> Daemon {
     let engine = Engine::new(cfg.clone(), state, root.join("state.json"), deps).unwrap();
 
     let lock = lock::acquire(&root.join("run")).unwrap();
-    let socket = root.join("run/k.sock");
+    let socket = test_socket_path(&root, "k.sock");
     let listener = server::bind(&Endpoint::new(&socket).unwrap(), &lock)
         .await
         .unwrap();
@@ -291,7 +301,7 @@ async fn socket_from_env_and_config() {
     )
     .unwrap();
     let mut cmd = d.bare_cmd();
-    cmd.env("KAKEMONO_SOCKET", d.root.join("nope.sock"))
+    cmd.env("KAKEMONO_SOCKET", test_socket_path(&d.root, "nope.sock"))
         .arg("resume");
     let out = run(cmd).await;
     assert_eq!(out.code, 0, "{}", out.stderr);
@@ -303,8 +313,8 @@ async fn socket_from_env_and_config() {
 #[tokio::test]
 async fn daemon_not_running_message() {
     let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().canonicalize().unwrap();
-    let socket = root.join("nobody.sock");
+    let root = real_dir(dir.path());
+    let socket = test_socket_path(&root, "nobody.sock");
     let mut cmd = isolated_cmd(&root);
     cmd.arg("--socket").arg(&socket).arg("status");
     let out = run(cmd).await;
@@ -326,7 +336,7 @@ async fn daemon_not_running_message() {
 #[tokio::test]
 async fn config_error_prints_its_cause_once() {
     let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().canonicalize().unwrap();
+    let root = real_dir(dir.path());
     std::fs::write(root.join("config.toml"), "interval = [\n").unwrap();
     let mut cmd = isolated_cmd(&root);
     cmd.arg("detect");
@@ -348,7 +358,7 @@ async fn config_error_prints_its_cause_once() {
 #[tokio::test]
 async fn config_path_and_init() {
     let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().canonicalize().unwrap();
+    let root = real_dir(dir.path());
     let mut cmd = isolated_cmd(&root);
     cmd.args(["config", "path"]);
     let out = run(cmd).await;
@@ -374,7 +384,7 @@ async fn config_path_and_init() {
 #[tokio::test]
 async fn completions_and_unavailable_commands() {
     let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().canonicalize().unwrap();
+    let root = real_dir(dir.path());
     let mut cmd = isolated_cmd(&root);
     cmd.args(["completions", "zsh"]);
     let out = run(cmd).await;
@@ -400,7 +410,7 @@ async fn pick_missing_ui_hint() {
         return;
     }
     let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().canonicalize().unwrap();
+    let root = real_dir(dir.path());
     let bin = root.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     std::fs::create_dir_all(root.join("empty")).unwrap();
@@ -421,12 +431,15 @@ async fn pick_missing_ui_hint() {
         .arg("pick");
     let out = run(cmd).await;
     assert_eq!(out.code, 1, "{}", out.stderr);
-    let stderr = out.stderr.replace(root.to_str().unwrap(), "[ROOT]");
+    let stderr = out.stderr;
     assert!(
         stderr.contains("cannot find kakemono-ui (the kakemono tray, picker and settings app)"),
         "{stderr}"
     );
-    assert!(stderr.contains("  [ROOT]/bin\n"), "{stderr}");
+    assert!(
+        stderr.contains(&format!("  {}\n", bin.display())),
+        "{stderr}"
+    );
     assert!(
         stderr.contains(
             "Install the kakemono app, put kakemono-ui on your PATH, or set KAKEMONO_UI to its path."
@@ -438,15 +451,19 @@ async fn pick_missing_ui_hint() {
 #[tokio::test]
 async fn ui_override_that_is_not_a_file_is_reported() {
     let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().canonicalize().unwrap();
+    let root = real_dir(dir.path());
+    let nope = root.join("nope");
     let mut cmd = isolated_cmd(&root);
-    cmd.env("KAKEMONO_UI", root.join("nope")).arg("settings");
+    cmd.env("KAKEMONO_UI", &nope).arg("settings");
     let out = run(cmd).await;
     assert_eq!(out.code, 1);
     assert_eq!(
-        out.stderr.replace(root.to_str().unwrap(), "[ROOT]"),
-        "KAKEMONO_UI is set to [ROOT]/nope, which is not a file; unset it or point it at the \
-         kakemono-ui binary\n"
+        out.stderr,
+        format!(
+            "KAKEMONO_UI is set to {}, which is not a file; unset it or point it at the \
+             kakemono-ui binary\n",
+            nope.display()
+        )
     );
 }
 

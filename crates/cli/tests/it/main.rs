@@ -11,3 +11,4 @@ mod detect;
 mod epipe;
 mod reload_desktop;
 mod server;
+mod support;

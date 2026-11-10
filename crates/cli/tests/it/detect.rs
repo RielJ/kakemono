@@ -4,6 +4,7 @@
 use std::path::Path;
 
 use assert_cmd::Command;
+use kakemono_protocol::endpoint::test_socket_path;
 use predicates::prelude::*;
 use tempfile::TempDir;
 
@@ -16,7 +17,7 @@ fn isolated_cmd(root: &Path) -> Command {
         .env("XDG_STATE_HOME", root.join("xdg-state"))
         .env("XDG_CACHE_HOME", root.join("xdg-cache"))
         .env("KAKEMONO_CONFIG", root.join("config.toml"))
-        .env("KAKEMONO_SOCKET", root.join("no-daemon.sock"))
+        .env("KAKEMONO_SOCKET", test_socket_path(root, "no-daemon.sock"))
         .env_remove("VISUAL")
         .env_remove("EDITOR");
     cmd
