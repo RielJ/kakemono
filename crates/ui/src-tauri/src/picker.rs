@@ -26,8 +26,8 @@ use kakemono_config::paths::Paths;
 use kakemono_config::schema::{PickerConfig, PickerCustom, PickerPlacement};
 use serde_json::json;
 use tauri::{
-    AppHandle, LogicalSize, Manager, PhysicalPosition, PhysicalSize, Runtime, Theme, WebviewUrl,
-    WebviewWindow, WebviewWindowBuilder, WindowEvent, window::Color,
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, Runtime, Theme,
+    WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent, window::Color,
 };
 
 use crate::commands::CommandError;
@@ -42,6 +42,9 @@ pub const TITLE: &str = PICKER_TITLE;
 /// Blur right after showing is ignored. The Go picker had the same 800 ms guard "to avoid
 /// closing immediately on launch": focus can bounce while the window maps.
 pub const BLUR_GRACE: Duration = Duration::from_millis(800);
+/// Emitted to the picker window each time [`show`] brings it up, after it has focus. The page
+/// refreshes its open tab on it.
+pub const SHOWN_EVENT: &str = "picker-shown";
 /// Tier 1 captures a drag this long after the last `Moved` event.
 pub const MOVE_DEBOUNCE: Duration = Duration::from_millis(300);
 /// A captured position within this many px of where the picker was put is not a drag.
@@ -288,6 +291,13 @@ pub fn show<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWindow<R>> {
     show_with(app, &load_picker())
 }
 
+/// Tells the picker page it was shown. Failing to is logged, not fatal: the window is up.
+fn emit_shown<R: Runtime>(window: &WebviewWindow<R>) {
+    if let Err(err) = window.emit_to(PICKER_LABEL, SHOWN_EVENT, ()) {
+        tracing::warn!(error = %err, "cannot emit {SHOWN_EVENT}");
+    }
+}
+
 /// [`show`] with the config read on the blocking pool.
 pub async fn show_async<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWindow<R>> {
     let config = tauri::async_runtime::spawn_blocking(load_picker).await?;
@@ -321,6 +331,7 @@ fn show_with<R: Runtime>(
     window.show()?;
     window.unminimize()?;
     window.set_focus()?;
+    emit_shown(&window);
 
     if !state.kind().positions_itself() && state.kind() != PlacerKind::Noop {
         let kind = state.kind();
@@ -529,6 +540,21 @@ mod tests {
     fn title_is_the_constant_compositor_rules_match() {
         assert_eq!(TITLE, "kakemono-picker");
         assert_eq!(TITLE, PICKER_LABEL);
+    }
+
+    #[test]
+    fn shown_event_name_is_the_one_the_frontend_listens_for() {
+        assert_eq!(SHOWN_EVENT, "picker-shown");
+    }
+
+    #[test]
+    fn show_with_emits_shown_after_focusing_the_picker() {
+        let source = include_str!("picker.rs");
+        let body = &source[source.find("fn show_with<").expect("show_with")..];
+        let body = &body[..body.find("\n}\n").expect("end of show_with")];
+        let focus = body.find("window.set_focus()?").expect("focus");
+        let emit = body.find("emit_shown(&window)").expect("emit");
+        assert!(focus < emit, "the picker refreshes once it has focus");
     }
 
     #[test]

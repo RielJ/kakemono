@@ -13,7 +13,7 @@ use tauri::State;
 use ts_rs::TS;
 
 use super::{CmdResult, blocking, locate_config};
-use crate::thumbs::Thumbs;
+use crate::thumbs::{ListKind, Thumbs};
 
 /// The picker shows at most this many entries, as the Go picker did.
 pub const MAX_THUMBNAILS: usize = 100;
@@ -54,7 +54,7 @@ pub async fn thumbnails(thumbs: State<'_, Arc<Thumbs>>) -> CmdResult<Vec<Thumbna
         let mut roots = vec![cfg.daemon.download_dir.clone(), cfg.favorites.dir];
         roots.extend(dirs.into_iter().map(|d| d.path));
         let paths: Vec<&str> = list.iter().map(|t| t.path.as_str()).collect();
-        let urls = thumbs.admit(&roots, &paths);
+        let urls = thumbs.admit(ListKind::Legacy, &roots, &paths);
         for (thumb, url) in list.iter_mut().zip(urls) {
             thumb.image_url = url;
         }
