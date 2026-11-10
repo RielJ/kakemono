@@ -6,6 +6,7 @@ import {
   browsePage,
   browseUse,
   checkSource,
+  currentThumbnail,
   deleteSourceFiles,
   desktopBackend,
   detectDesktop,
@@ -212,6 +213,13 @@ describe('shared/api', () => {
     await expect(importDroppedFile('naïve photo.png', bytes)).resolves.toEqual(info)
     expect(calls).toEqual([{ cmd: 'import_dropped_file', args: bytes }])
     expect(options).toEqual([{ headers: { 'x-file-name': 'na%C3%AFve%20photo.png' } }])
+  })
+
+  it('sends current_thumbnail with no args and returns the entry or null', async () => {
+    const entry = { path: '/w/a.jpg', source: 'wallhaven', title: 'a', isCurrent: true, imageUrl: 'thumb://localhost/1' }
+    const calls = recordIPC(() => entry)
+    await expect(currentThumbnail()).resolves.toEqual(entry)
+    expect(calls).toEqual([{ cmd: 'current_thumbnail', args: {} }])
   })
 
   it('sends tab_thumbnails with the tab and offset and returns the page', async () => {

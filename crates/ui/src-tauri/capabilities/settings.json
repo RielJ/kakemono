@@ -18,7 +18,7 @@
     "allow-resume",
     "allow-favorite",
     "allow-trash",
-    "allow-thumbnails",
+    "allow-current-thumbnail",
     "allow-check-source",
     "allow-download-now",
     "allow-delete-source-files",
