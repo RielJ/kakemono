@@ -1,18 +1,63 @@
 //! The real path behind a file name, also for files that don't exist yet.
 
+use std::ffi::OsStr;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+
+use crate::busy;
 
 /// Symlink hops followed before giving up, as Linux's `MAXSYMLINKS`.
 const MAX_SYMLINK_HOPS: usize = 40;
+
+/// Times to resolve again when another writer replaced the file mid-resolve; see [`resolve`].
+const MAX_REPLACED_RETRIES: usize = 100;
 
 /// The file `path` names after following symlinks.
 ///
 /// An existing file gives its canonical path. A missing one (including the target of a dangling
 /// symlink) gives the canonical path of its nearest existing ancestor joined with the rest, so a
 /// file has the same resolved path before and after it is created.
+///
+/// On Windows, `canonicalize` opens the file and asks the handle for its path, which races with
+/// another writer renaming a new file over it. The open can be refused while the rename runs,
+/// which is retried (see [`busy::retry`]). If the rename lands between the open and the query,
+/// the handle is left on the replaced file, which NTFS has moved to `\$Extend\$Deleted`. That
+/// path is never the answer, so the path is resolved again.
 pub(crate) fn resolve(path: &Path) -> io::Result<PathBuf> {
+    busy::retry(|| resolve_settled(path))
+}
+
+/// [`resolve`], once the open succeeded.
+fn resolve_settled(path: &Path) -> io::Result<PathBuf> {
+    for _ in 0..MAX_REPLACED_RETRIES {
+        let resolved = resolve_once(path)?;
+        if !(cfg!(windows) && is_ntfs_deleted(&resolved)) {
+            return Ok(resolved);
+        }
+    }
+    Err(io::Error::other(format!(
+        "{} kept being replaced while it was resolved",
+        path.display()
+    )))
+}
+
+/// Whether `path` is inside NTFS's `\$Extend\$Deleted`, where a replaced file waits for its last
+/// handle to close.
+fn is_ntfs_deleted(path: &Path) -> bool {
+    let names: Vec<&OsStr> = path
+        .components()
+        .filter_map(|c| match c {
+            Component::Normal(name) => Some(name),
+            _ => None,
+        })
+        .collect();
+    names
+        .windows(2)
+        .any(|w| w[0].eq_ignore_ascii_case("$Extend") && w[1].eq_ignore_ascii_case("$Deleted"))
+}
+
+fn resolve_once(path: &Path) -> io::Result<PathBuf> {
     match fs::canonicalize(path) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
             resolve_missing(&follow_dangling_link(path)?)
@@ -82,6 +127,18 @@ mod tests {
         fs::create_dir(dir.path().join("sub")).unwrap();
         fs::write(&path, "x").unwrap();
         assert_eq!(before, resolve(&path).unwrap());
+    }
+
+    #[test]
+    fn ntfs_deleted_paths_are_recognised() {
+        let deleted = if cfg!(windows) {
+            r"\\?\C:\$Extend\$Deleted\000400000004BEE832637B1C"
+        } else {
+            "/$Extend/$deleted/000400000004BEE832637B1C"
+        };
+        assert!(is_ntfs_deleted(Path::new(deleted)));
+        assert!(!is_ntfs_deleted(Path::new("/tmp/$Extend/state.json")));
+        assert!(!is_ntfs_deleted(Path::new("/tmp/$Deleted/state.json")));
     }
 
     #[cfg(unix)]

@@ -8,6 +8,7 @@
 //! - [`copy_unique`] and [`copy_unique_into`]: copy without ever overwriting, using Go's
 //!   `<stem>_<unix nanos>.<ext>` collision name.
 
+mod busy;
 mod copy;
 mod create;
 mod lock;
