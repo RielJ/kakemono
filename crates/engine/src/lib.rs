@@ -2,6 +2,7 @@
 //! trash, manual fetch and import), the image pool and its filters, the rotation loop, the
 //! background downloader, file management, events and hooks.
 
+pub mod browse;
 pub mod downloader;
 pub mod engine;
 pub mod events;
