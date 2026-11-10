@@ -4,7 +4,7 @@ use std::io;
 use std::path::PathBuf;
 
 use kakemono_platform::api::SetError;
-use kakemono_sources::ProviderError;
+use kakemono_sources::{DownloadError, GuardError, ProviderError};
 use tokio::task::JoinError;
 
 use crate::downloader::DownloadFailure;
@@ -120,6 +120,27 @@ pub enum BrowseError {
     /// `browse_use` for an item no longer in the item index (evicted, or never browsed).
     #[error("That preview expired — scroll or reopen to refresh.")]
     ItemExpired,
+    /// The item's source id can't name a download folder.
+    #[error("invalid source id {0:?}")]
+    InvalidId(String),
+    /// The provider couldn't give the full image URL (e.g. a Wallhaven page scrape failed).
+    #[error(transparent)]
+    Resolve(ProviderError),
+    /// The provider gave something that isn't a URL.
+    #[error("{0}: invalid image URL")]
+    BadUrl(&'static str),
+    /// The SSRF guard refused the image URL or a redirect.
+    #[error(transparent)]
+    Guard(#[from] GuardError),
+    /// The full-image download failed.
+    #[error("download image: {0}")]
+    Download(#[source] DownloadError),
+    /// The download took longer than `BrowseLimits::use_timeout`.
+    #[error("download image: no answer within {}s", .0.as_secs())]
+    DownloadTimeout(std::time::Duration),
+    /// Setting the wallpaper or copying to favorites failed.
+    #[error(transparent)]
+    Engine(#[from] EngineError),
 }
 
 /// The download failures' texts joined with `"; "`.

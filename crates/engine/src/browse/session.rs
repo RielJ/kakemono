@@ -54,6 +54,9 @@ pub struct BrowseLimits {
     pub idle_ttl: Duration,
     /// Items kept for `browse_use` (2000).
     pub index_cap: usize,
+    /// How long `browse_use` may take to resolve and download the full image (100 s, under
+    /// the UI's 120 s `browse_use` timeout).
+    pub use_timeout: Duration,
 }
 
 impl Default for BrowseLimits {
@@ -65,6 +68,7 @@ impl Default for BrowseLimits {
             sessions: 4,
             idle_ttl: Duration::from_secs(30 * 60),
             index_cap: 2000,
+            use_timeout: Duration::from_secs(100),
         }
     }
 }
@@ -88,7 +92,6 @@ struct IndexEntry {
     used: u64,
     item: Arc<IndexedItem>,
     /// Where `browse_use` saved the full image.
-    #[cfg_attr(not(test), expect(dead_code, reason = "read by browse_use (Task 13)"))]
     downloaded: Option<PathBuf>,
 }
 
@@ -131,7 +134,6 @@ impl ItemIndex {
     }
 
     /// The item and where it was downloaded, marking it used.
-    #[cfg_attr(not(test), expect(dead_code, reason = "used by browse_use (Task 13)"))]
     pub(crate) fn get(
         &mut self,
         source_id: &str,
@@ -146,7 +148,6 @@ impl ItemIndex {
     }
 
     /// Records where the item was downloaded (no-op once it was evicted).
-    #[cfg_attr(not(test), expect(dead_code, reason = "used by browse_use (Task 13)"))]
     pub(crate) fn set_downloaded(&mut self, source_id: &str, remote_id: &str, path: PathBuf) {
         if let Some(entry) = self
             .entries

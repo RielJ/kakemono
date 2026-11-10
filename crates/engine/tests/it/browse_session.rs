@@ -46,7 +46,6 @@ pub struct Scripted {
     cursors: Mutex<Vec<Option<String>>>,
 }
 
-#[expect(dead_code, reason = "used by browse_use.rs (Task 13)")]
 impl Scripted {
     pub fn new(name: &'static str, mode: Mode) -> Self {
         Self {
@@ -178,7 +177,6 @@ pub fn ids(prefix: &str, n: usize) -> Vec<String> {
     (1..=n).map(|i| format!("{prefix}{i}")).collect()
 }
 
-#[expect(dead_code, reason = "used by browse_use.rs (Task 13)")]
 pub struct Browsing {
     _dir: TempDir,
     pub root: PathBuf,
@@ -186,7 +184,6 @@ pub struct Browsing {
     pub engine: Engine,
 }
 
-#[expect(dead_code, reason = "used by browse_use.rs (Task 13)")]
 impl Browsing {
     pub fn downloads(&self) -> PathBuf {
         self.root.join("downloads")
@@ -215,7 +212,6 @@ pub struct BrowseBuilder {
     edit: Option<ConfigEdit>,
 }
 
-#[expect(dead_code, reason = "used by browse_use.rs (Task 13)")]
 impl BrowseBuilder {
     pub fn new(sources: Vec<(&'static str, Arc<dyn Provider>)>) -> Self {
         Self {
@@ -271,19 +267,24 @@ impl BrowseBuilder {
         if let Some(edit) = self.edit {
             edit(&mut cfg, &root);
         }
-        let set = SourceSet::fake(
-            self.sources
-                .iter()
-                .map(|(id, p)| (*id, Arc::clone(p), ""))
-                .collect(),
-        );
+        // Every scripted source, except one whose `[[sources]]` row is disabled.
+        let sources = self.sources;
+        let factory = move |cfg: &Config, _: reqwest::Client| {
+            SourceSet::fake(
+                sources
+                    .iter()
+                    .filter(|(id, _)| !cfg.sources.iter().any(|r| r.id == *id && !r.enabled))
+                    .map(|(id, p)| (*id, Arc::clone(p), ""))
+                    .collect(),
+            )
+        };
         let setter = RecordingSetter::new();
         let platform = Platform {
             setter: Arc::new(setter.clone()),
             signals: Arc::new(ManualSignals::new(Theme::Light)),
         };
         let mut deps = Deps::new(platform, kakemono_sources::http::client().unwrap())
-            .with_sources(set)
+            .with_sources_factory(factory)
             .with_clock(crate::common::now);
         if self.browse {
             let http = kakemono_sources::guarded_client(self.guard, &self.hosts).unwrap();
@@ -705,9 +706,10 @@ fn default_limits_match_the_plan() {
             limits.idle_ttl.as_secs(),
             limits.source_deadline.as_secs(),
             limits.total.as_secs(),
-            limits.max_calls
+            limits.max_calls,
+            limits.use_timeout.as_secs()
         ),
-        (4, 2000, 30 * 60, 8, 20, 3)
+        (4, 2000, 30 * 60, 8, 20, 3, 100)
     );
 }
 
@@ -734,4 +736,70 @@ async fn the_error_texts_are_pinned() {
             "That preview expired — scroll or reopen to refresh.",
         ]
     );
+}
+
+/// The picker reopens by asking page 0 of its old session again.
+#[tokio::test]
+async fn resuming_a_live_session_at_page_zero_returns_its_first_page() {
+    let (a, b, f) = two_sources();
+    let first = f.engine.browse(None, 0, None).await.unwrap();
+    f.engine
+        .browse(Some(&first.session), 1, None)
+        .await
+        .unwrap();
+    let calls = (a.calls(), b.calls());
+    let resumed = f
+        .engine
+        .browse(Some(&first.session), 0, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            resumed.session.as_str(),
+            resumed.restarted,
+            resumed.page,
+            remote_ids(&resumed),
+            (a.calls(), b.calls())
+        ),
+        (first.session.as_str(), false, 0, remote_ids(&first), calls)
+    );
+}
+
+#[tokio::test]
+async fn resuming_an_unknown_session_at_page_zero_restarts() {
+    let (_a, _b, f) = two_sources();
+    let page = f.engine.browse(Some("gone"), 0, None).await.unwrap();
+    assert_eq!(
+        (
+            page.restarted,
+            page.page,
+            page.session != "gone",
+            page.items.len()
+        ),
+        (true, 0, true, 10)
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn resuming_an_expired_session_at_page_zero_restarts() {
+    let (_a, _b, f) = two_sources();
+    let first = f.engine.browse(None, 0, None).await.unwrap();
+    tokio::time::advance(BrowseLimits::default().idle_ttl + std::time::Duration::from_secs(1))
+        .await;
+    let resumed = f
+        .engine
+        .browse(Some(&first.session), 0, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        (resumed.restarted, resumed.session != first.session),
+        (true, true)
+    );
+}
+
+#[tokio::test]
+async fn internet_off_text_is_the_shared_one() {
+    let f = BrowseBuilder::new(Vec::new()).internet(false).build();
+    let err = f.engine.browse(None, 0, None).await.unwrap_err();
+    assert_eq!(err.to_string(), "Internet access is off");
 }
