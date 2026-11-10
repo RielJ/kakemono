@@ -292,7 +292,7 @@ mod tests {
     }
 
     fn ui(dir: &str) -> String {
-        format!("{dir}/{}", ui_file_name())
+        Path::new(dir).join(ui_file_name()).display().to_string()
     }
 
     #[test]

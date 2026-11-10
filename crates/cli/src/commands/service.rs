@@ -266,7 +266,25 @@ mod tests {
         let text = String::from_utf8(buf)
             .unwrap()
             .replace(&*f.root.to_string_lossy(), "<tmp>");
-        (next, text)
+        (next, slash_tmp_paths(&text))
+    }
+
+    /// Writes the separators in `<tmp>` paths as `/`, so the Linux and macOS layouts snapshot the
+    /// same on a Windows host. Other backslashes, such as the `HKCU\...` key, stay.
+    fn slash_tmp_paths(text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        let mut rest = text;
+        while let Some(at) = rest.find("<tmp>") {
+            out.push_str(&rest[..at]);
+            let tail = &rest[at..];
+            let end = tail
+                .find(|c: char| c.is_whitespace() || c == ')')
+                .unwrap_or(tail.len());
+            out.push_str(&tail[..end].replace('\\', "/"));
+            rest = &tail[end..];
+        }
+        out.push_str(rest);
+        out
     }
 
     const STATUS_JSON: ServiceAction = ServiceAction::Status { json: true };

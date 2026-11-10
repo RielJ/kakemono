@@ -121,8 +121,6 @@ mod tests {
         let rt = dir.path().join("run");
         let guard = acquire(&rt).unwrap();
         assert_eq!(guard.path(), rt.join(LOCK_FILE_NAME));
-        let text = std::fs::read_to_string(guard.path()).unwrap();
-        assert_eq!(text.trim(), std::process::id().to_string());
 
         let err = acquire(&rt).unwrap_err();
         match &err {
@@ -138,11 +136,11 @@ mod tests {
             err.to_string().starts_with("daemon is already running ("),
             "{err}"
         );
-        // A failed attempt must not wipe the holder's PID.
+        drop(guard);
+        // The holder wrote its PID, and the failed attempt did not wipe it. This reads after the
+        // drop because Windows blocks reads of a locked file.
         let text = std::fs::read_to_string(rt.join(LOCK_FILE_NAME)).unwrap();
         assert_eq!(text.trim(), std::process::id().to_string());
-
-        drop(guard);
         let again = acquire(&rt).unwrap();
         drop(again);
     }
