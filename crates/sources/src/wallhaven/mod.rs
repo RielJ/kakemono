@@ -5,8 +5,12 @@
 //! - API mode ([`api`]): `GET /api/v1/search` with the key.
 //! - Scrape mode ([`scrape`]): no key; parses the public `/search` HTML, then up to
 //!   [`scrape::MAX_PAGES`] wallpaper pages, waiting `scrape_delay` (plus jitter) before each one.
+//!   Scrape browse reads only the search page; `resolve_image` fetches the one wallpaper page
+//!   the user picks.
 //!
-//! Every request goes through [`http::send_with_retry`] (429/503 back-off on the tokio clock).
+//! Every `fetch` request goes through [`http::send_with_retry`] (429/503 back-off on the tokio
+//! clock). `browse` requests go through [`http::send_fail_fast`]: the picker is waiting, so a
+//! 429/503 is an error at once.
 
 use std::time::Duration;
 
@@ -14,6 +18,7 @@ use async_trait::async_trait;
 use kakemono_config::schema::WallhavenConfig;
 use reqwest::{Client, Response, StatusCode};
 
+use crate::browse::{BrowseBatch, BrowseCursor, BrowseSupport, ImageRef, RemoteItem};
 use crate::http::{self, BadStatus};
 use crate::provider::{Provider, ProviderError, WallpaperResult};
 
@@ -36,6 +41,10 @@ pub const DEFAULT_CATEGORIES: &str = "111";
 
 /// Query parameter that carries the API key.
 pub(crate) const API_KEY_PARAM: &str = "apikey";
+
+/// Hosts of previews (`th.wallhaven.cc`) and full images (`w.wallhaven.cc`), and of the
+/// wallpaper pages that scrape mode resolves (`wallhaven.cc`).
+const MEDIA_HOSTS: &[&str] = &["wallhaven.cc"];
 
 use crate::http::{REDACTED, redact_url};
 
@@ -153,6 +162,34 @@ impl Wallhaven {
             },
         })
     }
+
+    /// `GET url` once, for browse ([`http::send_fail_fast`]); only 200 counts as success.
+    ///
+    /// 429/503 become [`ProviderError::RateLimitedFor`]; any other non-200 status gives the
+    /// same `{context}: unexpected status {code} for <url>` text as `fetch`. URLs in errors
+    /// have the API key redacted.
+    async fn get_ok_fail_fast(
+        &self,
+        url: url::Url,
+        context: &str,
+    ) -> Result<Response, ProviderError> {
+        let response = http::send_fail_fast(self.client.get(url.clone()), context).await?;
+        http::check_status(response).map_err(|bad| match bad {
+            // `send_fail_fast` already returned 429 as `RateLimitedFor`; kept for totality.
+            BadStatus::RateLimited => ProviderError::RateLimitedFor {
+                message: format!(
+                    "{context}: rate limited (status {})",
+                    StatusCode::TOO_MANY_REQUESTS.as_u16()
+                ),
+                retry_after_secs: None,
+            },
+            BadStatus::Unauthorized(status) | BadStatus::Other(status) => GetError::Status {
+                status,
+                url: redact_url(&url),
+            }
+            .into_provider_error(context),
+        })
+    }
 }
 
 impl std::fmt::Debug for Wallhaven {
@@ -184,6 +221,33 @@ impl Provider for Wallhaven {
             self.fetch_api(query).await
         } else {
             self.fetch_scrape(query).await
+        }
+    }
+
+    fn browse_support(&self) -> BrowseSupport {
+        BrowseSupport::Paged
+    }
+
+    fn media_hosts(&self) -> &'static [&'static str] {
+        MEDIA_HOSTS
+    }
+
+    async fn browse(
+        &self,
+        query: &str,
+        cursor: Option<&BrowseCursor>,
+    ) -> Result<BrowseBatch, ProviderError> {
+        if self.uses_api() {
+            self.browse_api(query, cursor).await
+        } else {
+            self.browse_scrape(query, cursor).await
+        }
+    }
+
+    async fn resolve_image(&self, item: &RemoteItem) -> Result<String, ProviderError> {
+        match &item.image {
+            ImageRef::Direct(url) => Ok(url.clone()),
+            ImageRef::Page(page) => self.resolve_page(page).await,
         }
     }
 }

@@ -1,0 +1,50 @@
+{
+  "data": [
+    {
+      "id": "abc123",
+      "url": "https://wallhaven.cc/w/abc123",
+      "short_url": "https://whvn.cc/abc123",
+      "purity": "sfw",
+      "category": "general",
+      "resolution": "1920x1080",
+      "file_size": 512000,
+      "path": "https://w.wallhaven.cc/full/ab/wallhaven-abc123.jpg",
+      "thumbs": {
+        "large": "https://th.wallhaven.cc/lg/ab/abc123.jpg",
+        "original": "https://th.wallhaven.cc/orig/ab/abc123.jpg",
+        "small": "https://th.wallhaven.cc/small/ab/abc123.jpg"
+      },
+      "uploader": {"username": "artist1"}
+    },
+    {
+      "id": "def456",
+      "url": "https://wallhaven.cc/w/def456",
+      "short_url": "https://whvn.cc/def456",
+      "purity": "sketchy",
+      "category": "anime",
+      "resolution": "3840x2160",
+      "file_size": 2048000,
+      "path": "https://w.wallhaven.cc/full/de/wallhaven-def456.png",
+      "thumbs": {
+        "large": "https://th.wallhaven.cc/lg/de/def456.jpg",
+        "original": "https://th.wallhaven.cc/orig/de/def456.jpg",
+        "small": "https://th.wallhaven.cc/small/de/def456.jpg"
+      }
+    },
+    {
+      "id": "nothumb",
+      "url": "https://wallhaven.cc/w/nothumb",
+      "purity": "sfw",
+      "resolution": "1920x1080",
+      "path": "https://w.wallhaven.cc/full/no/wallhaven-nothumb.jpg"
+    }
+  ],
+  "meta": {
+    "current_page": 1,
+    "last_page": 3,
+    "per_page": "24",
+    "total": 70,
+    "query": "nature",
+    "seed": "Xy12Ab"
+  }
+}
