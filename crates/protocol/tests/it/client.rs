@@ -240,7 +240,8 @@ async fn missing_socket_is_daemon_not_running() {
         "{err:?}"
     );
     assert!(msg.starts_with(HINT_PREFIX), "{msg}");
-    assert!(msg.contains(&*path.to_string_lossy()), "{msg}");
+    // Quoted like Go's %q, so a Windows pipe path shows its `\` escaped.
+    assert!(msg.contains(&format!("{:?}", path.display())), "{msg}");
     assert!(!client::is_running(&endpoint).await);
 }
 
