@@ -1,0 +1,556 @@
+---
+source: crates/platform/tests/it/linux_resolve.rs
+expression: rows
+---
+[
+  {
+    "name": "gnome_wayland",
+    "backend": "gnome",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "gnome:wayland",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "XDG_CURRENT_DESKTOP has \"gnome\" → gnome"
+    ]
+  },
+  {
+    "name": "ubuntu_gnome",
+    "backend": "gnome",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "ubuntu+gnome:wayland",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "XDG_CURRENT_DESKTOP has \"ubuntu\" → gnome"
+    ]
+  },
+  {
+    "name": "pop_gnome_x11",
+    "backend": "gnome",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "pop+gnome:x11",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "XDG_CURRENT_DESKTOP has \"pop\" → gnome"
+    ]
+  },
+  {
+    "name": "budgie",
+    "backend": "gnome",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "budgie+gnome:x11",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "XDG_CURRENT_DESKTOP has \"budgie\" → gnome"
+    ]
+  },
+  {
+    "name": "kde_x11",
+    "backend": "kde",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "kde:x11",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "XDG_CURRENT_DESKTOP has \"kde\" → kde"
+    ]
+  },
+  {
+    "name": "kde_wayland",
+    "backend": "kde",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "kde:wayland",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "XDG_CURRENT_DESKTOP has \"kde\" → kde"
+    ]
+  },
+  {
+    "name": "kde_full_session_only",
+    "backend": "kde",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "unknown:x11",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "KDE_FULL_SESSION=true → kde"
+    ]
+  },
+  {
+    "name": "xfce_without_xfconf_on_bus",
+    "backend": "xfce",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "xfce:x11",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "XDG_CURRENT_DESKTOP has \"xfce\" → xfce",
+      "warning: org.xfce.Xfconf is not on the session bus"
+    ]
+  },
+  {
+    "name": "x_cinnamon",
+    "backend": "cinnamon",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "x-cinnamon:x11",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "XDG_CURRENT_DESKTOP has \"x-cinnamon\" → cinnamon"
+    ]
+  },
+  {
+    "name": "mate_missing_gsettings",
+    "backend": "mate",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "mate:x11",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "XDG_CURRENT_DESKTOP has \"mate\" → mate",
+      "warning: gsettings is not on PATH"
+    ]
+  },
+  {
+    "name": "lxqt",
+    "backend": "pcmanfm-qt",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "lxqt:x11",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "XDG_CURRENT_DESKTOP has \"lxqt\" → pcmanfm-qt"
+    ]
+  },
+  {
+    "name": "lxde",
+    "backend": "pcmanfm",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "lxde:x11",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "XDG_CURRENT_DESKTOP has \"lxde\" → pcmanfm"
+    ]
+  },
+  {
+    "name": "session_desktop_fallback",
+    "backend": "kde",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "plasma:x11",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "DESKTOP_SESSION has \"plasma\" → kde"
+    ]
+  },
+  {
+    "name": "cosmic",
+    "backend": "command",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "cosmic:wayland",
+    "hint": "COSMIC has no wallpaper command kakemono can drive yet. Set `[desktop] set_command` to a command that sets the wallpaper, or run `kakemono doctor`.",
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "XDG_CURRENT_DESKTOP has \"cosmic\" → command"
+    ]
+  },
+  {
+    "name": "cosmic_with_set_command",
+    "backend": "command",
+    "set_command": [
+      "cosmic-bg-set",
+      "{path}"
+    ],
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "cosmic:wayland",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "XDG_CURRENT_DESKTOP has \"cosmic\" → command",
+      "using [desktop] set_command"
+    ]
+  },
+  {
+    "name": "hyprland_running_hyprpaper",
+    "backend": "hyprpaper",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "hyprland:wayland",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "hyprpaper is running → hyprpaper"
+    ]
+  },
+  {
+    "name": "hyprland_awww_only",
+    "backend": "awww",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "hyprland:wayland",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "Hyprland (HYPRLAND_INSTANCE_SIGNATURE) with awww installed → awww"
+    ]
+  },
+  {
+    "name": "hyprland_swww_only",
+    "backend": "swww",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "hyprland:wayland",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "Hyprland (HYPRLAND_INSTANCE_SIGNATURE) with swww installed → swww"
+    ]
+  },
+  {
+    "name": "hyprland_running_swww_daemon_beats_hyprpaper",
+    "backend": "swww",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "hyprland:wayland",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "swww-daemon is running → swww"
+    ]
+  },
+  {
+    "name": "hyprland_nothing_installed",
+    "backend": "unconfigured",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "hyprland:wayland",
+    "hint": "No wallpaper backend detected. Run `kakemono doctor`, or set `[desktop] set_command`.",
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "Hyprland, but none of hyprpaper, awww, swww or swaybg is installed",
+      "Wayland session, but none of awww, swww, swaybg or wbg is installed"
+    ]
+  },
+  {
+    "name": "sway",
+    "backend": "sway",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "sway:wayland",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "sway (SWAYSOCK) → sway (swaymsg output * bg)"
+    ]
+  },
+  {
+    "name": "niri_swaybg_only",
+    "backend": "swaybg",
+    "set_command": null,
+    "persistent": true,
+    "origin": "detected",
+    "session_key": "niri:wayland",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "niri (NIRI_SOCKET) with swaybg installed → swaybg"
+    ]
+  },
+  {
+    "name": "niri_wbg_only",
+    "backend": "wbg",
+    "set_command": null,
+    "persistent": true,
+    "origin": "detected",
+    "session_key": "niri:wayland",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "niri (NIRI_SOCKET) with wbg installed → wbg"
+    ]
+  },
+  {
+    "name": "niri_nothing",
+    "backend": "unconfigured",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "niri:wayland",
+    "hint": "No wallpaper backend detected. Run `kakemono doctor`, or set `[desktop] set_command`.",
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "niri (NIRI_SOCKET), but none of awww, swww, swaybg or wbg is installed"
+    ]
+  },
+  {
+    "name": "niri_running_awww_daemon",
+    "backend": "awww",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "niri:wayland",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "awww-daemon is running → awww"
+    ]
+  },
+  {
+    "name": "wpaperd_running",
+    "backend": "command",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "niri:wayland",
+    "hint": "wpaperd is running and manages the wallpaper itself (control it with `wpaperctl`). Stop wpaperd so kakemono can pick a backend, or set `[desktop] set_command`.",
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "wpaperd is running → command"
+    ]
+  },
+  {
+    "name": "river_tty_session_type",
+    "backend": "swww",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "river:wayland",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "Wayland session with swww installed → swww"
+    ]
+  },
+  {
+    "name": "i3_feh",
+    "backend": "feh",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "i3:x11",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "X11 session with feh installed → feh"
+    ]
+  },
+  {
+    "name": "i3_xwallpaper",
+    "backend": "xwallpaper",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "i3:x11",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "X11 session with xwallpaper installed → xwallpaper"
+    ]
+  },
+  {
+    "name": "openbox_hsetroot",
+    "backend": "hsetroot",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "unknown:x11",
+    "hint": null,
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "X11 session with hsetroot installed → hsetroot"
+    ]
+  },
+  {
+    "name": "x11_nothing_installed",
+    "backend": "unconfigured",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "i3:x11",
+    "hint": "No wallpaper backend detected. Run `kakemono doctor`, or set `[desktop] set_command`.",
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "X11 session, but none of xwallpaper, feh, nitrogen or hsetroot is installed"
+    ]
+  },
+  {
+    "name": "pinned_user",
+    "backend": "swaybg",
+    "set_command": null,
+    "persistent": true,
+    "origin": "config",
+    "session_key": "gnome:wayland",
+    "hint": null,
+    "reasons": [
+      "backend = \"swaybg\" is pinned (managed_by = \"user\")"
+    ]
+  },
+  {
+    "name": "pinned_hand_written_no_detected_session",
+    "backend": "feh",
+    "set_command": [
+      "feh",
+      "--no-fehbg",
+      "--bg-center",
+      "{path}"
+    ],
+    "persistent": false,
+    "origin": "config",
+    "session_key": "i3:x11",
+    "hint": null,
+    "reasons": [
+      "backend = \"feh\" is set in the config (no detected_session)",
+      "set_command overrides the preset argv"
+    ]
+  },
+  {
+    "name": "pinned_command_persistent",
+    "backend": "command",
+    "set_command": [
+      "mpvpaper",
+      "*",
+      "{path}"
+    ],
+    "persistent": true,
+    "origin": "config",
+    "session_key": "niri:wayland",
+    "hint": null,
+    "reasons": [
+      "backend = \"command\" is pinned (managed_by = \"user\")"
+    ]
+  },
+  {
+    "name": "pinned_command_without_set_command",
+    "backend": "command",
+    "set_command": null,
+    "persistent": false,
+    "origin": "config",
+    "session_key": "niri:wayland",
+    "hint": "`[desktop] backend = \"command\"` needs `[desktop] set_command`. Run `kakemono doctor`.",
+    "reasons": [
+      "backend = \"command\" is pinned (managed_by = \"user\")"
+    ]
+  },
+  {
+    "name": "pinned_api_backend_ignores_set_command",
+    "backend": "gnome",
+    "set_command": null,
+    "persistent": false,
+    "origin": "config",
+    "session_key": "gnome:wayland",
+    "hint": null,
+    "reasons": [
+      "backend = \"gnome\" is pinned (managed_by = \"user\")",
+      "set_command is ignored by the gnome backend"
+    ]
+  },
+  {
+    "name": "saved_detection_same_session",
+    "backend": "awww",
+    "set_command": [
+      "awww",
+      "img",
+      "{path}"
+    ],
+    "persistent": false,
+    "origin": "config",
+    "session_key": "hyprland:wayland",
+    "hint": null,
+    "reasons": [
+      "backend = \"awww\" was detected for this session (hyprland:wayland)",
+      "set_command overrides the preset argv"
+    ]
+  },
+  {
+    "name": "session_drift",
+    "backend": "gnome",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "gnome:wayland",
+    "hint": null,
+    "reasons": [
+      "session drift: detected_session = \"hyprland:wayland\" but this session is \"gnome:wayland\"; re-detecting",
+      "XDG_CURRENT_DESKTOP has \"gnome\" → gnome"
+    ]
+  },
+  {
+    "name": "session_drift_to_x11_preset_drops_old_command",
+    "backend": "feh",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "i3:x11",
+    "hint": null,
+    "reasons": [
+      "session drift: detected_session = \"hyprland:wayland\" but this session is \"i3:x11\"; re-detecting",
+      "X11 session with feh installed → feh"
+    ]
+  },
+  {
+    "name": "native_means_detect",
+    "backend": "xfce",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "xfce:x11",
+    "hint": null,
+    "reasons": [
+      "backend = \"native\" means \"detect\" on Linux",
+      "XDG_CURRENT_DESKTOP has \"xfce\" → xfce"
+    ]
+  },
+  {
+    "name": "empty_environment",
+    "backend": "unconfigured",
+    "set_command": null,
+    "persistent": false,
+    "origin": "detected",
+    "session_key": "unknown:unknown",
+    "hint": "No wallpaper backend detected. Run `kakemono doctor`, or set `[desktop] set_command`.",
+    "reasons": [
+      "backend = \"auto\"; detecting",
+      "no graphical session found (no WAYLAND_DISPLAY, DISPLAY or XDG_SESSION_TYPE)"
+    ]
+  }
+]

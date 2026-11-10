@@ -2,9 +2,9 @@
 
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use kakemono_fs::PathLock;
 use toml_edit::DocumentMut;
 
 use crate::defaults::{defaults_for_home, home_dir};
@@ -115,13 +115,14 @@ impl FileMigration {
     }
 }
 
-/// Serialises migrations within this process. [`write_atomic`] names its temp file by PID, so two
-/// threads (the UI's commands run on a blocking pool) must not write the same file at once.
-/// Between processes, the `.bak` claim and the identical (deterministic) output keep it safe.
-static MIGRATE_LOCK: Mutex<()> = Mutex::new(());
-
-fn migrate_lock() -> MutexGuard<'static, ()> {
-    MIGRATE_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+/// Locks `path` against other writers in this process: [`patch`](crate::edit::patch) and the other
+/// migrations (the UI's commands run on a blocking pool). Between processes, the `.bak` claim and
+/// the identical (deterministic) output keep it safe.
+fn migrate_lock(path: &Path) -> Result<PathLock, ConfigError> {
+    PathLock::acquire(path).map_err(|source| ConfigError::Read {
+        path: path.to_owned(),
+        source,
+    })
 }
 
 /// The file's bytes and its migrated text, or `None` when it is missing, not valid TOML, or has
@@ -161,7 +162,7 @@ fn read_and_migrate(
 /// `config.toml.bak.<unix-ts>` is used. The file is only rewritten (with [`write_atomic`]) after
 /// the backup exists. On error the file is unchanged; [`parse_str`] still migrates in memory.
 pub fn migrate_file(path: &Path, home: &Path) -> Result<Option<FileMigration>, ConfigError> {
-    let _guard = migrate_lock();
+    let _lock = migrate_lock(path)?;
     let Some((original, doc, report)) = read_and_migrate(path, home)? else {
         return Ok(None);
     };
@@ -189,7 +190,7 @@ pub fn migrate_legacy_file(
     primary: &Path,
     home: &Path,
 ) -> Result<Option<FileMigration>, ConfigError> {
-    let _guard = migrate_lock();
+    let _lock = migrate_lock(primary)?;
     if primary.exists() {
         return Ok(None);
     }

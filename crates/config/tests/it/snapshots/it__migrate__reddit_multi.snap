@@ -1,0 +1,29 @@
+---
+source: crates/config/tests/it/migrate.rs
+expression: text
+---
+# --- Sources ---
+# Migrated from [light], [dark] and the per-provider settings.
+[[sources]]
+id = "bing-3caa"
+enabled = false
+type = "bing"
+location = ""
+
+[[sources]]
+id = "rd-d345"
+enabled = true
+type = "reddit"
+location = "EarthPorn"
+
+[[sources]]
+id = "rd-d097"
+enabled = true
+type = "reddit"
+location = "wallpapers"
+
+[[sources]]
+id = "rd-1337"
+enabled = true
+type = "reddit"
+location = "spaceporn"

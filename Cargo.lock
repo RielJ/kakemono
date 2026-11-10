@@ -2468,6 +2468,7 @@ dependencies = [
  "chrono",
  "etcetera",
  "insta",
+ "kakemono-fs",
  "serde",
  "serde_json",
  "shell-words",
@@ -2503,6 +2504,13 @@ dependencies = [
  "tokio-util",
  "tracing",
  "wiremock",
+]
+
+[[package]]
+name = "kakemono-fs"
+version = "2.0.0-alpha.0"
+dependencies = [
+ "tempfile",
 ]
 
 [[package]]

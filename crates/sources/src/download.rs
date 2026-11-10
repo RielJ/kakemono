@@ -13,6 +13,9 @@ use crate::http;
 /// A download smaller than this is treated as an error page, not an image (Go `minImageSize`).
 pub const MIN_IMAGE_BYTES: u64 = 10 * 1024;
 
+/// The largest image any source or a manual fetch accepts: 64 MiB.
+pub const MAX_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
+
 /// Highest numeric suffix tried when the target file name is taken (`name-1.jpg` ...).
 const MAX_COLLISION_SUFFIX: u32 = 9999;
 

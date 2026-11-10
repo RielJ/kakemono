@@ -1,0 +1,10 @@
+---
+source: crates/platform/tests/it/service.rs
+expression: "systemd::compositor_snippets(Path::new(\"/home/u/.local/bin/kakemono\"))"
+---
+The unit starts with graphical-session.target. If your compositor doesn't start that target, or the daemon can't see your session, start the daemon from the compositor config instead (it refuses to run twice, so this is safe alongside the unit):
+  Hyprland (hyprland.conf):  exec-once = /home/u/.local/bin/kakemono daemon
+  sway (config):             exec /home/u/.local/bin/kakemono daemon
+  niri (config.kdl):         spawn-at-startup "/home/u/.local/bin/kakemono" "daemon"
+To let the unit see the session, import it first, e.g. in Hyprland:
+  exec-once = dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP HYPRLAND_INSTANCE_SIGNATURE

@@ -1,0 +1,17 @@
+[package]
+name = "kakemono-fs"
+description = "kakemono file helpers: atomic writes, per-path locks for read-modify-write, and copies that never overwrite"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

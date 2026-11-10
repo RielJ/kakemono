@@ -3,9 +3,10 @@
 //! Every edit re-parses the result as a [`Config`] before writing, so a patch can't leave a file
 //! that no longer loads.
 
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::io;
+use std::path::Path;
 
+use kakemono_fs::UpdateError;
 use serde_json::{Map, Value as Json};
 use toml_edit::{Array, ArrayOfTables, DocumentMut, InlineTable, Item, Table, TableLike, Value};
 
@@ -15,10 +16,31 @@ use crate::load::parse_str;
 use crate::schema::{Config, DesktopConfig};
 
 /// Reads `path` (an empty document if it doesn't exist), runs `f`, checks the result still loads,
-/// and writes it atomically (temp file + rename, keeping the file mode; new files are 0600).
+/// and writes it with [`kakemono_fs::update`]: atomically, keeping the file mode (new files are
+/// 0600) and any symlink, under a per-file lock so concurrent patches in this process don't lose
+/// each other's changes.
 ///
 /// `f` returns `Err(reason)` to abort without writing; that becomes [`ConfigError::InvalidPatch`].
 pub fn patch<F>(path: &Path, f: F) -> Result<(), ConfigError>
+where
+    F: FnOnce(&mut DocumentMut) -> Result<(), String>,
+{
+    create_parent(path)?;
+    kakemono_fs::update(path, |old| patched(path, old, f)).map_err(|e| match e {
+        UpdateError::Read(source) => ConfigError::Read {
+            path: path.to_owned(),
+            source,
+        },
+        UpdateError::Rejected(e) => e,
+        UpdateError::Write(source) => ConfigError::Write {
+            path: path.to_owned(),
+            source,
+        },
+    })
+}
+
+/// The new file text for [`patch`]: `old` (or an empty document) edited by `f` and validated.
+fn patched<F>(path: &Path, old: Option<&[u8]>, f: F) -> Result<Vec<u8>, ConfigError>
 where
     F: FnOnce(&mut DocumentMut) -> Result<(), String>,
 {
@@ -26,16 +48,10 @@ where
         path: path.to_owned(),
         reason,
     };
-    let text = match std::fs::read_to_string(path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(source) => {
-            return Err(ConfigError::Read {
-                path: path.to_owned(),
-                source,
-            });
-        }
-    };
+    let text = std::str::from_utf8(old.unwrap_or_default()).map_err(|e| ConfigError::Read {
+        path: path.to_owned(),
+        source: io::Error::new(io::ErrorKind::InvalidData, e),
+    })?;
     let mut doc: DocumentMut = text.parse().map_err(|source| ConfigError::EditParse {
         path: path.to_owned(),
         source: Box::new(source),
@@ -43,7 +59,7 @@ where
     f(&mut doc).map_err(invalid)?;
     let out = doc.to_string();
     let _: Config = parse_str(&out, &home_dir()).map_err(|e| invalid(e.to_string()))?;
-    write_atomic(path, out.as_bytes())
+    Ok(out.into_bytes())
 }
 
 /// Replaces the `[desktop]` keys with `desktop`, keeping comments and unknown keys. `None` fields
@@ -228,12 +244,19 @@ fn to_value(j: &Json) -> Result<Value, String> {
     })
 }
 
-/// Writes `bytes` to `path` via a temp file in the same directory and a rename.
+/// Writes `bytes` to `path` with [`kakemono_fs::atomic_write`], creating the folder first.
+///
+/// This doesn't lock the file; a read-modify-write goes through [`patch`] or holds a
+/// [`kakemono_fs::PathLock`].
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> {
-    let write_err = |source| ConfigError::Write {
+    create_parent(path)?;
+    kakemono_fs::atomic_write(path, bytes).map_err(|source| ConfigError::Write {
         path: path.to_owned(),
         source,
-    };
+    })
+}
+
+fn create_parent(path: &Path) -> Result<(), ConfigError> {
     let dir = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -241,33 +264,133 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> {
     std::fs::create_dir_all(dir).map_err(|source| ConfigError::CreateDir {
         path: dir.to_owned(),
         source,
-    })?;
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "config.toml".to_owned());
-    let tmp: PathBuf = dir.join(format!(".{name}.tmp.{}", std::process::id()));
+    })
+}
 
-    let result = (|| {
-        let mut opts = std::fs::OpenOptions::new();
-        opts.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            opts.mode(0o600);
+#[cfg(test)]
+mod tests {
+    use std::sync::Barrier;
+    use std::sync::mpsc::{self, RecvTimeoutError};
+    use std::time::Duration;
+
+    use serde_json::json;
+
+    use super::*;
+
+    const ROUNDS: usize = 50;
+
+    /// Runs `body` on its own thread; a deadlock fails the test with "timed out" instead of
+    /// hanging the run, and a panic in `body` is passed on.
+    fn within_deadline(body: impl FnOnce() + Send + 'static) {
+        const DEADLINE: Duration = Duration::from_secs(10);
+        let (tx, rx) = mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            body();
+            let _ = tx.send(());
+        });
+        match rx.recv_timeout(DEADLINE) {
+            Ok(()) => {}
+            Err(RecvTimeoutError::Timeout) => panic!("timed out after {DEADLINE:?}"),
+            Err(RecvTimeoutError::Disconnected) => {
+                if let Err(panic) = handle.join() {
+                    std::panic::resume_unwind(panic);
+                }
+            }
         }
-        let mut f = opts.open(&tmp)?;
-        f.write_all(bytes)?;
-        if let Ok(meta) = std::fs::metadata(path) {
-            f.set_permissions(meta.permissions())?;
-        }
-        f.sync_all()?;
-        drop(f);
-        std::fs::rename(&tmp, path)
-    })();
-    if let Err(e) = result {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(write_err(e));
     }
-    Ok(())
+
+    fn interval(path: &Path) -> String {
+        let text = std::fs::read_to_string(path).unwrap();
+        parse_str(&text, &home_dir()).unwrap().daemon.interval
+    }
+
+    #[test]
+    fn concurrent_patches_of_different_keys_both_survive() {
+        within_deadline(|| {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config.toml");
+            std::fs::write(&path, "# keep me\n[daemon]\ninterval = \"1h\"\n").unwrap();
+            let barrier = Barrier::new(2);
+
+            std::thread::scope(|s| {
+                let writers = [("interval", "daemon"), ("theme", "ui")].map(|(key, table)| {
+                    let (path, barrier) = (&path, &barrier);
+                    s.spawn(move || {
+                        barrier.wait();
+                        for round in 0..ROUNDS {
+                            let value = match key {
+                                "interval" => json!(format!("{}m", round + 1)),
+                                _ => json!(if round % 2 == 0 { "dark" } else { "light" }),
+                            };
+                            apply_patch(path, &json!({ table: { key: value } })).unwrap();
+                        }
+                    })
+                });
+                for writer in writers {
+                    writer.join().unwrap();
+                }
+            });
+
+            let text = std::fs::read_to_string(&path).unwrap();
+            assert!(text.starts_with("# keep me\n"), "{text}");
+            assert_eq!(interval(&path), format!("{ROUNDS}m"), "{text}");
+            let doc: DocumentMut = text.parse().unwrap();
+            assert_eq!(doc["ui"]["theme"].as_str(), Some("light"), "{text}");
+        });
+    }
+
+    #[test]
+    fn concurrent_writes_use_unique_temp_files() {
+        within_deadline(|| {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config.toml");
+            let barrier = Barrier::new(4);
+
+            std::thread::scope(|s| {
+                for writer in 0..4 {
+                    let (path, barrier) = (&path, &barrier);
+                    s.spawn(move || {
+                        barrier.wait();
+                        for round in 0..ROUNDS {
+                            let body = format!("# writer {writer} round {round}\n").repeat(64);
+                            write_atomic(path, body.as_bytes()).unwrap();
+                        }
+                    });
+                }
+            });
+
+            let text = std::fs::read_to_string(&path).unwrap();
+            let first = text.lines().next().unwrap();
+            assert_eq!(text, format!("{first}\n").repeat(64), "torn write");
+            let names: Vec<_> = std::fs::read_dir(dir.path())
+                .unwrap()
+                .map(|e| e.unwrap().file_name())
+                .collect();
+            assert_eq!(names, ["config.toml"], "temp files left behind");
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn patch_through_a_symlink_keeps_the_link() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let dotfiles = dir.path().join("dotfiles");
+        std::fs::create_dir(&dotfiles).unwrap();
+        let target = dotfiles.join("config.toml");
+        std::fs::write(&target, "# managed by stow\n[daemon]\ninterval = \"1h\"\n").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640)).unwrap();
+        let link = dir.path().join("config.toml");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        apply_patch(&link, &json!({ "daemon": { "interval": "2h" } })).unwrap();
+
+        assert!(std::fs::symlink_metadata(&link).unwrap().is_symlink());
+        assert_eq!(interval(&target), "2h");
+        let text = std::fs::read_to_string(&target).unwrap();
+        assert!(text.starts_with("# managed by stow\n"), "{text}");
+        let mode = std::fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o640);
+    }
 }

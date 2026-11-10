@@ -1,0 +1,21 @@
+---
+source: crates/cli/tests/it/server.rs
+expression: transcript
+---
+{"ok":true,"data":{"current":null,"paused":false,"interval":"45m","theme":"light","history_count":0,"history_index":-1}}
+{"ok":false,"error":"manager: already at the beginning of history"}
+{"ok":false,"error":"manager: no current wallpaper"}
+{"ok":true,"data":{"path":"[ROOT]/a\u003cb\u003e\u0026c.jpg","source":"local","source_url":"","image_url":"","title":"a\u003cb\u003e\u0026c.jpg","author":"","width":0,"height":0,"set_at":"2026-03-04T05:06:07+08:00"}}
+{"ok":true,"data":{"current":{"path":"[ROOT]/a\u003cb\u003e\u0026c.jpg","source":"local","source_url":"","image_url":"","title":"a\u003cb\u003e\u0026c.jpg","author":"","width":0,"height":0,"set_at":"2026-03-04T05:06:07+08:00"},"paused":false,"interval":"45m","theme":"light","history_count":1,"history_index":0}}
+{"ok":true}
+{"ok":true}
+{"ok":true}
+{"ok":true}
+{"ok":false,"error":"set: missing required argument 'path'"}
+{"ok":false,"error":"set: missing required argument 'path'"}
+{"ok":false,"error":"manager: file not found: stat /definitely/not/here.jpg: no such file or directory"}
+{"ok":true,"data":{"version":"[VERSION]"}}
+{"ok":true,"data":{"version":"[VERSION]","pid":"[PID]","backend":{"name":"fake","detail":"RecordingSetter"},"theme":"light"}}
+{"ok":false,"error":"unknown command: \"bogus\""}
+{"ok":false,"error":"unknown command: \"\""}
+{"ok":true,"data":{"current":{"path":"[ROOT]/a\u003cb\u003e\u0026c.jpg","source":"local","source_url":"","image_url":"","title":"a\u003cb\u003e\u0026c.jpg","author":"","width":0,"height":0,"set_at":"2026-03-04T05:06:07+08:00"},"paused":false,"interval":"45m","theme":"light","history_count":1,"history_index":0}}

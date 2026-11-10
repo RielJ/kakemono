@@ -11,6 +11,10 @@
 //! ```sh
 //! KAKEMONO_REAL_DESKTOP_TEST=1 cargo test -p kakemono-platform --test macos_set_roundtrip -- --ignored
 //! ```
+//!
+//! `--list` answers in libtest's terse format so cargo-nextest can list this binary: the one
+//! test shows up only under `--ignored`, so `cargo nextest run` skips it and
+//! `cargo nextest run --run-ignored only` runs it (still gated by the env var).
 
 /// Env var that must be `1`, in addition to `--ignored`, before the wallpaper is touched.
 const OPT_IN_ENV: &str = "KAKEMONO_REAL_DESKTOP_TEST";
@@ -22,7 +26,18 @@ fn real_desktop_opt_in() -> bool {
     ignored && env_opt_in
 }
 
+/// libtest's `--list --format terse` output: the test is listed as ignored only.
+fn print_list() {
+    if std::env::args().skip(1).any(|a| a == "--ignored") {
+        println!("macos_set_roundtrip: test");
+    }
+}
+
 fn main() {
+    if std::env::args().skip(1).any(|a| a == "--list") {
+        print_list();
+        return;
+    }
     if !real_desktop_opt_in() {
         println!(
             "macos_set_roundtrip: skipped; pass --ignored to run (and set {OPT_IN_ENV}=1; \

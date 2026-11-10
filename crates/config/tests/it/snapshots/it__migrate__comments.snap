@@ -1,0 +1,26 @@
+---
+source: crates/config/tests/it/migrate.rs
+expression: text
+---
+# My kakemono config
+
+[daemon]
+# Rotate every quarter hour
+interval = "15m"
+# Where downloads go
+download_dir = "~/Pictures/Wallpapers/cache"
+
+[bing]
+market = "en-GB"
+
+# Favorites live here
+[favorites]
+dir = "~/Pictures/Wallpapers/favorites"
+
+# --- Sources ---
+# Migrated from [light], [dark] and the per-provider settings.
+[[sources]]
+id = "bing-3caa"
+enabled = true
+type = "bing"
+location = ""

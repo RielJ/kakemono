@@ -1,0 +1,18 @@
+---
+source: crates/platform/tests/it/service.rs
+expression: uninstall_argvs
+---
+[
+  [
+    "systemctl",
+    "--user",
+    "disable",
+    "--now",
+    "kakemono.service"
+  ],
+  [
+    "systemctl",
+    "--user",
+    "daemon-reload"
+  ]
+]

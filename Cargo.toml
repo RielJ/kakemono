@@ -3,6 +3,7 @@ resolver = "3"
 # crates/ui/src-tauri joins in Task 40.
 members = [
     "crates/protocol",
+    "crates/fs",
     "crates/config",
     "crates/sources",
     "crates/platform",
@@ -24,6 +25,7 @@ publish = false
 [workspace.dependencies]
 # Internal crates
 kakemono-protocol = { path = "crates/protocol" }
+kakemono-fs = { path = "crates/fs" }
 kakemono-config = { path = "crates/config" }
 kakemono-sources = { path = "crates/sources" }
 kakemono-platform = { path = "crates/platform" }
@@ -164,6 +166,19 @@ unsafe_op_in_unsafe_fn = "deny"
 dbg_macro = "warn"
 todo = "warn"
 unimplemented = "warn"
+
+# Build speed (Cargo book, "Optimizing Build Performance"): line tables are enough for panic
+# backtraces, and dependencies get no debug info. Less to generate and far less to link.
+# For a full debugger session: `cargo build --profile debugging`.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.debugging]
+inherits = "dev"
+debug = true
 
 [profile.release]
 lto = "thin"

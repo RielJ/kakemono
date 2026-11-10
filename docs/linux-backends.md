@@ -100,7 +100,7 @@ The preset backends run one command per `set`. `{path}` is the absolute image pa
 | `pcmanfm` | `pcmanfm --set-wallpaper {path} --wallpaper-mode=crop` | `=fit` | `=center` | `=stretch` | `=tile` |
 | `pcmanfm-qt` | `pcmanfm-qt --set-wallpaper {path} --wallpaper-mode=zoom` | `=fit` | `=center` | `=stretch` | `=tile` |
 
-The snapshot `crates/platform/tests/snapshots/linux_presets__presets.snap` holds the full argv of every preset. `cargo test -p kakemono-platform --test linux_presets` checks it.
+The snapshot `crates/platform/tests/it/snapshots/it__linux_presets__presets.snap` holds the full argv of every preset. `cargo test -p kakemono-platform --test linux_presets` checks it.
 
 `swaybg` and `wbg` keep running while they show the wallpaper. kakemono starts a new instance for each `set`, waits for it to draw, and then stops the old one. It records the PID in `<runtime dir>/setter.pid` and takes over that process when the daemon restarts.
 

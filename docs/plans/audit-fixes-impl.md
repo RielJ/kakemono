@@ -15,16 +15,27 @@ file). All of it lands before Task 27 of `variety-sources-impl.md`. The five ful
 - **Behaviour and wire format.** Keep the Go-compatible output text and the IPC JSON unless the finding says
   otherwise. Golden and snapshot tests must not change unless the task says so.
 - **Build isolation.** Each lane uses its own `CARGO_TARGET_DIR` under `~/.tmp/` and deletes it at the end.
-  Lanes never share `target/`.
+  Lanes never share `target/`. sccache (`rustc-wrapper` in `~/.cargo/config.toml`) shares compiled
+  dependencies across lanes, so leave it on.
+- **Fast loop while working.** `scripts/gate.sh quick <crate>...` (check plus that crate's tests). Run one
+  test module with `cargo nextest run -p <crate> -E 'test(<module>::)'`. Never `touch` sources to force a
+  rebuild. Never run the full gate more than once per task.
+- **No test may hang.** Tests that take locks, spawn threads or wait on I/O fail within a bounded time
+  (`tokio::time::timeout`, or a thread plus `recv_timeout`). A deliberately broken "watch it fail" version
+  must fail with a timeout, not hang. nextest kills any test after 2 minutes (`.config/nextest.toml`).
+- **Integration tests.** One test binary per crate: `crates/<crate>/tests/it/main.rs` with one module per
+  file. Add new files there, never directly under `tests/`. Snapshots live in `tests/it/snapshots/` with the
+  `it__` prefix.
 - **Other platforms.** Linux-only and Windows-only code is checked with
   `cargo clippy --target x86_64-unknown-linux-gnu` and `--target x86_64-pc-windows-msvc` (check only, no
-  linking). Both targets are installed.
-- **Gate.** A task is done when all of these pass:
-  - `cargo test --workspace --all-features`
-  - `cargo clippy --workspace --all-targets --all-features -- -D warnings`, for the host and for the other
-    targets the task touched
+  linking). Both targets are installed. `scripts/gate.sh full <crate>...` runs these for the named crates.
+- **Gate.** A task is done when `KK_LANES=<lanes running> scripts/gate.sh full <crates the task touched
+  that have OS-specific code>` passes once. It runs, in order:
   - `cargo fmt --all -- --check`
-  - the frontend `tsc` and `vitest`, if the task touched the frontend or the bindings
+  - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+  - `cargo nextest run --workspace --all-features`, then `cargo test --workspace --all-features --doc`
+  - clippy for the Linux and Windows targets on the named crates
+  - plus the frontend `tsc` and `vitest`, if the task touched the frontend or the bindings
 
 ## Phase A0: shared file helpers (runs alone first)
 
@@ -39,7 +50,12 @@ file). All of it lands before Task 27 of `variety-sources-impl.md`. The five ful
   - `PathLock`: an in-process lock keyed by the canonical path, held across a read-modify-write.
   - `update(path, |old: Option<&[u8]>| -> Result<Vec<u8>, E>)`: runs a whole read-modify-write under that lock
     and writes the result with `atomic_write`.
-  - `copy_unique(src, dir)`: moved from `engine/src/files.rs:477`. It never overwrites; it adds a `-N` suffix.
+  - `copy_unique(src, dst) -> PathBuf`: moved from `engine/src/files.rs:477`, with the same semantics. The caller
+    picks the destination name (trash passes an already-suffixed `dst`). It never overwrites: on a collision it
+    writes Go's `<stem>_<unix nanos>.<ext>` and returns the path it wrote, so on-disk names don't change. Each
+    name is claimed with `create_new` and retried with a new nanos name a bounded number of times; a copy that
+    fails after the claim removes the partial file.
+  - `copy_unique_into(src, dir) -> PathBuf`: takes the file name from `src` and calls `copy_unique`.
 - **Adopt it in `config/src/edit.rs`** (fixes H1 and M4). `apply_patch` and the other writers in that file run
   through `update`. `MIGRATE_LOCK` in `load.rs` uses the same `PathLock`.
 - **Shared image size limit.** Add `pub const MAX_IMAGE_BYTES: u64 = 64 * 1024 * 1024` to
@@ -48,7 +64,8 @@ file). All of it lands before Task 27 of `variety-sources-impl.md`. The five ful
 - **Tests:**
   - two threads patching different keys of one file in a loop: the file always parses and both keys survive;
   - a symlinked config stays a symlink after a patch;
-  - `copy_unique` never overwrites on a name collision;
+  - `copy_unique` never overwrites on a name collision, and the new name has Go's shape;
+  - concurrent `copy_unique` calls to one name never overwrite each other;
   - unique temp names under concurrent writes;
   - permissions are kept.
 - **Files owned:** `crates/fs/**`, the workspace `Cargo.toml` (members and the workspace dependency only),

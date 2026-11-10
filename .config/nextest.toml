@@ -1,0 +1,15 @@
+# cargo-nextest settings: https://nexte.st/docs/configuration/
+#
+# Local: `cargo nextest run --workspace`. Doctests are not run by nextest; run them with
+# `cargo test --workspace --doc`.
+
+[profile.default]
+# A test that runs past 30 s is reported as slow; after 4 periods (2 min) it is killed and
+# fails. A deadlocked test must fail, not hang the run.
+slow-timeout = { period = "30s", terminate-after = 4 }
+# Finish the run and report every failure, not only the first.
+fail-fast = false
+
+[profile.ci]
+fail-fast = false
+slow-timeout = { period = "60s", terminate-after = 5 }
