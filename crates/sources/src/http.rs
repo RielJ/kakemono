@@ -137,6 +137,59 @@ pub async fn send_with_retry(request: RequestBuilder) -> Result<Response, reqwes
     }
 }
 
+/// Sends `request` once, for browse paths where the UI is waiting: a 429 or 503 is an error
+/// at once, never a sleep.
+///
+/// - 429 Too Many Requests and 503 Service Unavailable become
+///   [`ProviderError::RateLimitedFor`] with `{context}: rate limited (status {code})` and the
+///   [`retry_after_secs`] hint. The message is the same with or without a hint.
+/// - Transport errors become [`ProviderError::Request`], URL passed through [`redact_url`].
+/// - Any other status is returned as `Ok`, so the provider still runs its status checks.
+///
+/// Fetch paths keep [`send_with_retry`]: the engine downloader's back-off matches only
+/// [`ProviderError::RateLimited`].
+///
+/// # Errors
+///
+/// See above.
+pub async fn send_fail_fast(
+    request: RequestBuilder,
+    context: &str,
+) -> Result<Response, ProviderError> {
+    let response = request
+        .send()
+        .await
+        .map_err(|e| ProviderError::request(context, redact_error(e)))?;
+    let status = response.status();
+    if !is_retryable(status) {
+        return Ok(response);
+    }
+    let retry_after_secs = retry_after_secs(response.headers());
+    tracing::debug!(
+        url = %redact_url(response.url()),
+        status = status.as_u16(),
+        ?retry_after_secs,
+        "rate limited, not retrying"
+    );
+    Err(ProviderError::RateLimitedFor {
+        message: format!("{context}: rate limited (status {})", status.as_u16()),
+        retry_after_secs,
+    })
+}
+
+/// Whole seconds a `Retry-After` header asks to wait, rounded up: delta-seconds (`"60"`) or
+/// an HTTP-date (a past date gives 0). `None` when the header is missing or unparseable.
+#[must_use]
+pub fn retry_after_secs(headers: &HeaderMap) -> Option<u64> {
+    retry_after_secs_at(headers, SystemTime::now())
+}
+
+/// [`retry_after_secs`] measured from `now`.
+fn retry_after_secs_at(headers: &HeaderMap, now: SystemTime) -> Option<u64> {
+    let delay = retry_after(headers, now)?;
+    Some(delay.as_secs() + u64::from(delay.subsec_nanos() > 0))
+}
+
 /// A non-200 API status, classified once for every provider so a 429 means the same thing
 /// everywhere. Providers turn it into their own error text, or use
 /// [`BadStatus::into_provider_error`].
@@ -396,6 +449,48 @@ mod tests {
         assert_eq!(retry_after(&HeaderMap::new(), now), None);
         assert_eq!(retry_after(&headers("soon"), now), None);
         assert_eq!(retry_after(&headers("-1"), now), None);
+    }
+
+    #[test]
+    fn retry_after_secs_delta_seconds() {
+        assert_eq!(retry_after_secs(&headers("60")), Some(60));
+    }
+
+    #[test]
+    fn retry_after_secs_http_date() {
+        let now = httpdate::parse_http_date("Wed, 21 Oct 2015 07:28:00 GMT").unwrap();
+        assert_eq!(
+            retry_after_secs_at(&headers("Wed, 21 Oct 2015 07:29:00 GMT"), now),
+            Some(60)
+        );
+    }
+
+    #[test]
+    fn retry_after_secs_rounds_partial_seconds_up() {
+        let now = httpdate::parse_http_date("Wed, 21 Oct 2015 07:28:00 GMT").unwrap()
+            + Duration::from_millis(500);
+        assert_eq!(
+            retry_after_secs_at(&headers("Wed, 21 Oct 2015 07:28:05 GMT"), now),
+            Some(5)
+        );
+    }
+
+    #[test]
+    fn retry_after_secs_past_date_is_zero() {
+        assert_eq!(
+            retry_after_secs(&headers("Wed, 21 Oct 2015 07:28:00 GMT")),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn retry_after_secs_missing() {
+        assert_eq!(retry_after_secs(&HeaderMap::new()), None);
+    }
+
+    #[test]
+    fn retry_after_secs_garbage() {
+        assert_eq!(retry_after_secs(&headers("soon")), None);
     }
 
     #[test]

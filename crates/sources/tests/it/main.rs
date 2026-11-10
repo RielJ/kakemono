@@ -8,6 +8,7 @@ mod apod;
 mod bing;
 mod browse_contract;
 mod common;
+mod guard;
 mod http;
 mod reddit;
 mod unsplash;
