@@ -184,8 +184,13 @@ jobs:
               ;;
             Linux)
               deb="$(ls "$bundle"/deb/*.deb)"
-              dpkg-deb -c "$deb" | grep -E '\./usr/bin/kakemono$'
-              dpkg-deb -c "$deb" | grep -E '\./usr/bin/kakemono-ui$'
+              # Entries may or may not start with ./, depending on the tool.
+              files="$(dpkg-deb -c "$deb" | awk '{print $NF}' | sed 's|^\./||')"
+              for bin in usr/bin/kakemono usr/bin/kakemono-ui; do
+                grep -qx "$bin" <<<"$files" || {
+                  echo "$bin is not in $deb:"; echo "$files"; exit 1
+                }
+              done
               ;;
           esac
 
