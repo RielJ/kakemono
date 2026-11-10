@@ -10,7 +10,6 @@
     "allow-app-info",
     "allow-status",
     "allow-daemon-connection",
-    "allow-thumbnails",
     "allow-tab-thumbnails",
     "allow-browse-page",
     "allow-browse-use",

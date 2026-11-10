@@ -87,7 +87,7 @@ Last reviewed: Task 44 (picker). Settings has its own review in Task 46.
 
 - [x] Images load from `thumb://localhost/<id>`, or `http://thumb.localhost/<id>` on
   Windows. The id is opaque and different on every run, and the URL never contains a path.
-- [x] Only files listed by `thumbnails` are admitted. Both the file and the roots
+- [x] Only files listed by `tab_thumbnails` (or `current_thumbnail`) are admitted. Both the file and the roots
   (download, favourites and `[local]` dirs) are canonicalised, so a symlink out of a root is
   refused (`thumbs::tests::thumbs_symlink_from_download_dir_to_ssh_is_not_admitted`).
   Anything not admitted returns 403.

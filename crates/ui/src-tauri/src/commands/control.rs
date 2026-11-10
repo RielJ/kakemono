@@ -139,7 +139,7 @@ mod tests {
         std::fs::write(&secret, b"key").unwrap();
         let thumbs = Thumbs::new(dir.path().join("cache"));
         thumbs.admit(
-            crate::thumbs::ListKind::Legacy,
+            crate::thumbs::ListKind::Downloaded,
             &[dir.path()],
             &[listed.to_str().unwrap()],
         );

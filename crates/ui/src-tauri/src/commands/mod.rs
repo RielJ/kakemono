@@ -10,7 +10,8 @@
 //! - `config`: `get_config`, `save_config` and the reload after a save.
 //! - `control`: status, next/prev, pause/resume, favorite, trash, `set_file`.
 //! - `platform`: `reveal`, `open_folder`, `app_info`.
-//! - `listing`: the picker's `thumbnails` list and the folders it reads.
+//! - `listing`: the picker tabs (`tab_thumbnails`), the Settings card's `current_thumbnail`,
+//!   and the folders they read.
 
 use crate::daemon_link::LinkError;
 use crate::error::{ErrorKind, Kinded, serialize_as_wire_error};

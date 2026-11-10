@@ -192,11 +192,11 @@ export function setFile(path: string): Promise<void> {
 }
 
 /**
- * Picker strip entries: history (newest first), then images from the folders of enabled
- * sources (online downloads, then `manual`, then local sources), then favorites.
+ * The current wallpaper as a picker entry, its `thumb://` URL admitted for the Settings
+ * window's "Now showing" card; `null` when nothing is showing or the file is gone.
  */
-export function listThumbnails(): Promise<Thumbnail[]> {
-  return invoke<Thumbnail[]>('thumbnails')
+export function currentThumbnail(): Promise<Thumbnail | null> {
+  return invoke<Thumbnail | null>('current_thumbnail')
 }
 
 /**

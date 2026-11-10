@@ -19,7 +19,7 @@ pub const COMMANDS: &[&str] = &[
     "favorite",
     "trash",
     "set_file",
-    "thumbnails",
+    "current_thumbnail",
     "tab_thumbnails",
     "browse_page",
     "browse_use",

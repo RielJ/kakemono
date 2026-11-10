@@ -2,8 +2,8 @@
 //! ([`crate::thumbs::Thumbs::admit`]).
 //!
 //! - `tab_thumbnails { tab, offset }`: one [`PickerTab`], paged ([`TAB_PAGE`]).
-//! - `thumbnails` (legacy, one list): history, then images from the source folders, then
-//!   favorites.
+//! - `current_thumbnail`: the current wallpaper alone, for the Settings window's "Now
+//!   showing" card ([`ListKind::Current`]).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -20,9 +20,6 @@ use ts_rs::TS;
 use super::{CmdResult, blocking, locate_config};
 use crate::thumbs::{ListKind, Thumbs};
 
-/// The picker shows at most this many entries, as the Go picker did.
-pub const MAX_THUMBNAILS: usize = 100;
-
 // ── Picker entries ──────────────────────────────────────────────────────────
 
 /// One picker entry, in the Go picker's JSON shape.
@@ -38,25 +35,15 @@ pub struct Thumbnail {
     pub image_url: String,
 }
 
-/// `thumbnails` → history (newest first), then the folders of enabled sources (online
-/// downloads, then `manual_dir`, then local sources), then the favourites dir
-/// ([`thumbnail_dirs`]); de-duplicated, missing files skipped, at most [`MAX_THUMBNAILS`].
-/// The listed files become the `thumb://` allowlist.
+/// `current_thumbnail` → the current wallpaper as a picker entry flagged current, admitted
+/// for `thumb://` under [`ListKind::Current`] (which replaces only the last current; the
+/// picker tabs keep theirs). `null` when nothing is showing or the file is gone.
 #[tauri::command]
-pub async fn thumbnails(thumbs: State<'_, Arc<Thumbs>>) -> CmdResult<Vec<Thumbnail>> {
+pub async fn current_thumbnail(thumbs: State<'_, Arc<Thumbs>>) -> CmdResult<Option<Thumbnail>> {
     let thumbs = Arc::clone(&thumbs);
     blocking(move || {
         let (cfg, state) = load_listing_inputs()?;
-        let dirs = thumbnail_dirs(&cfg);
-        let mut list = list_thumbnails(&state, &dirs);
-        let mut roots = vec![cfg.daemon.download_dir.clone(), cfg.favorites.dir];
-        roots.extend(dirs.into_iter().map(|d| d.path));
-        let paths: Vec<&str> = list.iter().map(|t| t.path.as_str()).collect();
-        let urls = thumbs.admit(ListKind::Legacy, &roots, &paths);
-        for (thumb, url) in list.iter_mut().zip(urls) {
-            thumb.image_url = url;
-        }
-        Ok(list)
+        Ok(current_entry(&thumbs, &cfg, &state))
     })
     .await
 }
@@ -93,50 +80,31 @@ pub fn read_state(path: &Path) -> StateView {
     }
 }
 
-/// Pure listing logic behind [`thumbnails`]: history, then the images in `dirs` in order.
-pub fn list_thumbnails(state: &StateView, dirs: &[ThumbDir]) -> Vec<Thumbnail> {
-    let current = state
-        .current
-        .as_ref()
-        .map(|c| c.path.as_str())
-        .unwrap_or("");
-    let mut seen = HashSet::new();
-    let mut out = Vec::new();
-
-    for item in state.history.iter().flatten().rev() {
-        if item.path.is_empty()
-            || !Path::new(&item.path).exists()
-            || !seen.insert(item.path.clone())
-        {
-            continue;
-        }
-        out.push(Thumbnail {
-            path: item.path.clone(),
-            source: item.source.clone(),
-            title: item.title.clone(),
-            is_current: item.path == current,
-            image_url: String::new(),
-        });
+/// [`current_thumbnail`] after the config and state are read. The roots are every picker
+/// tab's folders, so the card shows any wallpaper the picker could; a current file outside
+/// them gets an empty `image_url`.
+pub fn current_entry(thumbs: &Thumbs, cfg: &Config, state: &StateView) -> Option<Thumbnail> {
+    let current = state.current.as_ref()?;
+    if current.path.is_empty() || !Path::new(&current.path).is_file() {
+        thumbs.admit::<&Path>(ListKind::Current, &[], &[]);
+        return None;
     }
-    for dir in dirs {
-        if out.len() >= MAX_THUMBNAILS {
-            break;
-        }
-        for (path, stem) in list_images(dir, MAX_THUMBNAILS) {
-            if !seen.insert(path.clone()) {
-                continue;
-            }
-            out.push(Thumbnail {
-                is_current: path == current,
-                path,
-                source: dir.source.clone(),
-                title: stem,
-                image_url: String::new(),
-            });
-        }
-    }
-    out.truncate(MAX_THUMBNAILS);
-    out
+    let roots: Vec<PathBuf> = PickerTab::ALL
+        .into_iter()
+        .flat_map(|tab| tab_dirs(cfg, tab))
+        .map(|dir| dir.path)
+        .collect();
+    let image_url = thumbs
+        .admit(ListKind::Current, &roots, &[current.path.as_str()])
+        .pop()
+        .unwrap_or_default();
+    Some(Thumbnail {
+        path: current.path.clone(),
+        source: current.source.clone(),
+        title: current.title.clone(),
+        is_current: true,
+        image_url,
+    })
 }
 
 // ── Picker tabs ─────────────────────────────────────────────────────────────
@@ -190,6 +158,9 @@ pub async fn tab_thumbnails(
 }
 
 impl PickerTab {
+    /// Every tab, in strip order.
+    pub const ALL: [Self; 4] = [Self::Downloaded, Self::Local, Self::Favorites, Self::Cache];
+
     /// The `thumb://` allowlist this tab's listing replaces.
     pub fn list_kind(self) -> ListKind {
         match self {
@@ -337,7 +308,7 @@ const MAX_WALK_ENTRIES: usize = 10_000;
 
 // ── Picker listing ──────────────────────────────────────────────────────────
 
-/// How [`crate::commands::list_thumbnails`] lists a [`ThumbDir`].
+/// How [`list_images`] lists a [`ThumbDir`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Listing {
     /// Image files directly in the folder.
@@ -354,21 +325,6 @@ pub struct ThumbDir {
     pub path: PathBuf,
     pub source: String,
     pub listing: Listing,
-}
-
-/// Where the picker looks after history: enabled online sources' download folders (config
-/// order), then `manual_dir`, then enabled local sources, then the favorites dir, then the
-/// legacy flat files at the root of `download_dir`. A path that is already listed is skipped.
-pub fn thumbnail_dirs(cfg: &Config) -> Vec<ThumbDir> {
-    let manual = thumb_dir(cfg.daemon.manual_dir_resolved(), "manual", Listing::Flat);
-    // Files saved before per-source folders stay at the root of `download_dir`.
-    let legacy = thumb_dir(cfg.daemon.download_dir.clone(), "cache", Listing::Flat);
-    let dirs = online_dirs(cfg)
-        .chain(std::iter::once(manual))
-        .chain(local_dirs(cfg))
-        .chain([favorites_dir(cfg), legacy])
-        .collect();
-    distinct(dirs)
 }
 
 fn thumb_dir(path: PathBuf, source: &str, listing: Listing) -> ThumbDir {
@@ -507,68 +463,6 @@ mod tests {
     }
 
     #[test]
-    fn thumbnails_list_history_then_source_dirs_in_order() {
-        let dir = tempfile::tempdir().unwrap();
-        let wh = dir.path().join("dl/wh-1");
-        let manual = dir.path().join("dl/manual");
-        let pics = dir.path().join("pics");
-        let favs = dir.path().join("favs");
-        for d in [&wh, &manual, &pics.join("sub"), &favs] {
-            std::fs::create_dir_all(d).unwrap();
-        }
-        let a = wh.join("a.jpg");
-        let b = wh.join("b.PNG");
-        let gone = wh.join("gone.jpg");
-        let dropped = manual.join("m.jpg");
-        let nested = pics.join("sub/n.webp");
-        let fav = favs.join("f.webp");
-        for p in [&a, &b, &dropped, &nested, &fav] {
-            std::fs::write(p, b"x").unwrap();
-        }
-        std::fs::write(wh.join("notes.txt"), b"x").unwrap();
-
-        let state = StateView {
-            current: Some(info(&b, "wallhaven")),
-            history: Some(vec![
-                info(&a, "reddit"),
-                info(&gone, "x"),
-                info(&b, "wallhaven"),
-            ]),
-        };
-        let td = |path: &Path, source: &str, listing| ThumbDir {
-            path: path.to_owned(),
-            source: source.to_owned(),
-            listing,
-        };
-        let dirs = [
-            td(&wh, "wallhaven", Listing::Flat),
-            td(&manual, "manual", Listing::Flat),
-            td(&pics, "folder", Listing::Recursive),
-            td(&favs, "favorites", Listing::Flat),
-        ];
-        let got = list_thumbnails(&state, &dirs);
-        let summary: Vec<(String, &str, bool)> = got
-            .iter()
-            .map(|t| (t.title.clone(), t.source.as_str(), t.is_current))
-            .collect();
-        assert_eq!(
-            summary,
-            vec![
-                ("wallhaven title".to_owned(), "wallhaven", true),
-                ("reddit title".to_owned(), "reddit", false),
-                ("m".to_owned(), "manual", false),
-                ("n".to_owned(), "folder", false),
-                ("f".to_owned(), "favorites", false),
-            ]
-        );
-        assert_eq!(
-            serde_json::to_value(&got[0]).unwrap()["isCurrent"],
-            json!(true),
-            "Go picker JSON shape"
-        );
-    }
-
-    #[test]
     fn state_with_null_history_reads_as_empty() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("state.json");
@@ -587,59 +481,100 @@ mod tests {
         );
     }
 
-    // ── thumbnail_dirs ──
+    // ── current_thumbnail ──
 
-    #[test]
-    fn thumbnail_dirs_list_online_then_manual_then_local_then_favorites() {
-        let root = tempfile::tempdir().unwrap();
-        let mut cfg = cfg_in(root.path());
-        let dl = cfg.daemon.download_dir.clone();
-        let pics = root.path().join("pics");
-        let favs = cfg.favorites.dir.clone();
-        let p = |s: &Path| s.to_string_lossy().into_owned();
-        cfg.sources = vec![
-            row("dir-1", true, SourceType::Folder, &p(&pics)),
-            row("wh-1", true, SourceType::Wallhaven, "forest"),
-            row("off-1", false, SourceType::Unsplash, "x"),
-            row("img-1", true, SourceType::Images, &p(&pics.join("a.jpg"))),
-            row(
-                "aln-1",
-                true,
-                SourceType::AlbumName,
-                &p(&root.path().join("album")),
-            ),
-            row(
-                "dir-off",
-                false,
-                SourceType::Folder,
-                &p(&root.path().join("off")),
-            ),
-            row("unk-1", true, SourceType::Unsupported, "x"),
-            row("bing", true, SourceType::Bing, ""),
-            row("favorites", true, SourceType::Folder, &p(&favs)),
-            row("dir-dup", true, SourceType::Folder, &p(&pics)),
-        ];
-        let got: Vec<(PathBuf, &str, Listing)> = thumbnail_dirs(&cfg)
-            .iter()
-            .map(|d| (d.path.clone(), leak(&d.source), d.listing))
-            .collect();
-        assert_eq!(
-            got,
-            vec![
-                (dl.join("wh-1"), "wallhaven", Listing::Flat),
-                (dl.join("bing"), "bing", Listing::Flat),
-                (dl.join("manual"), "manual", Listing::Flat),
-                (pics.clone(), "folder", Listing::Recursive),
-                (pics.join("a.jpg"), "images", Listing::File),
-                (root.path().join("album"), "album-name", Listing::Flat),
-                (favs, "folder", Listing::Recursive),
-                (dl, "cache", Listing::Flat),
-            ]
-        );
+    fn current(path: &Path) -> StateView {
+        StateView {
+            current: Some(info(path, "wallhaven")),
+            history: None,
+        }
     }
 
-    fn leak(s: &str) -> &'static str {
-        Box::leak(s.to_owned().into_boxed_str())
+    #[test]
+    fn current_thumbnail_admits_the_current_wallpaper() {
+        let root = tempfile::tempdir().unwrap();
+        let (cfg, files) = favorites_with(root.path(), 1);
+        let thumbs = Thumbs::new(root.path().join("thumbs"));
+
+        let got = current_entry(&thumbs, &cfg, &current(&files[0])).expect("a current entry");
+
+        assert_eq!(got.path, path_str(&files[0]));
+        assert_eq!(
+            serde_json::to_value(&got).unwrap()["isCurrent"],
+            json!(true),
+            "picker JSON shape"
+        );
+        assert!(!got.image_url.is_empty(), "inside the favorites root");
+        assert!(thumbs.is_admitted(&files[0]));
+    }
+
+    #[test]
+    fn current_thumbnail_is_none_without_a_current_wallpaper() {
+        let root = tempfile::tempdir().unwrap();
+        let (cfg, _) = favorites_with(root.path(), 1);
+        let thumbs = Thumbs::new(root.path().join("thumbs"));
+        assert_eq!(current_entry(&thumbs, &cfg, &StateView::default()), None);
+    }
+
+    #[test]
+    fn current_thumbnail_is_none_when_the_file_is_gone() {
+        let root = tempfile::tempdir().unwrap();
+        let (cfg, files) = favorites_with(root.path(), 1);
+        std::fs::remove_file(&files[0]).unwrap();
+        let thumbs = Thumbs::new(root.path().join("thumbs"));
+        assert_eq!(current_entry(&thumbs, &cfg, &current(&files[0])), None);
+    }
+
+    #[test]
+    fn current_thumbnail_leaves_the_picker_tabs_admitted() {
+        let root = tempfile::tempdir().unwrap();
+        let (cfg, files) = favorites_with(root.path(), 3);
+        let manual = cfg.daemon.manual_dir_resolved();
+        std::fs::create_dir_all(&manual).unwrap();
+        let elsewhere = manual.join("m.jpg");
+        std::fs::write(&elsewhere, b"x").unwrap();
+        let thumbs = Thumbs::new(root.path().join("thumbs"));
+        let tab = tab_listing(
+            &thumbs,
+            &cfg,
+            &StateView::default(),
+            PickerTab::Favorites,
+            0,
+        );
+
+        current_entry(&thumbs, &cfg, &current(&elsewhere)).expect("a current entry");
+
+        for file in &files {
+            assert!(thumbs.is_admitted(file), "{}", file.display());
+        }
+        for item in &tab.items {
+            let id = item.image_url.rsplit('/').next().unwrap();
+            assert_ne!(
+                thumbs.respond(&format!("/{id}")).status(),
+                403,
+                "{}",
+                item.path
+            );
+        }
+    }
+
+    #[test]
+    fn current_thumbnail_replaces_only_the_previous_current() {
+        let root = tempfile::tempdir().unwrap();
+        let (cfg, _) = favorites_with(root.path(), 0);
+        let manual = cfg.daemon.manual_dir_resolved();
+        std::fs::create_dir_all(&manual).unwrap();
+        let (a, b) = (manual.join("a.jpg"), manual.join("b.jpg"));
+        for file in [&a, &b] {
+            std::fs::write(file, b"x").unwrap();
+        }
+        let thumbs = Thumbs::new(root.path().join("thumbs"));
+
+        current_entry(&thumbs, &cfg, &current(&a)).expect("a");
+        current_entry(&thumbs, &cfg, &current(&b)).expect("b");
+
+        assert!(!thumbs.is_admitted(&a), "the old current is dropped");
+        assert!(thumbs.is_admitted(&b));
     }
 
     #[test]

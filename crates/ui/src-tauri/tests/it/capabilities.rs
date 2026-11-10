@@ -143,7 +143,6 @@ fn capabilities_picker_gets_only_what_the_picker_calls() {
             "set_file",
             "status",
             "tab_thumbnails",
-            "thumbnails",
             "trash",
         ])
     );
@@ -154,6 +153,60 @@ fn capabilities_picker_gets_only_what_the_picker_calls() {
             .collect::<BTreeSet<_>>(),
         set(&["core:default", "core:window:allow-start-dragging"])
     );
+}
+
+#[test]
+fn capabilities_settings_gets_only_what_settings_calls() {
+    assert_eq!(
+        allowed_commands(&capability("settings")),
+        set(&[
+            "app_info",
+            "check_source",
+            "current_thumbnail",
+            "daemon_connection",
+            "delete_source_files",
+            "desktop_backend",
+            "detect_desktop",
+            "download_now",
+            "ensure_daemon",
+            "favorite",
+            "fetch_dropped_url",
+            "get_config",
+            "import_dropped_file",
+            "next",
+            "open_folder",
+            "open_source_folder",
+            "pause",
+            "prev",
+            "reset_picker_position",
+            "resume",
+            "reveal",
+            "save_config",
+            "set_start_at_login",
+            "show_picker",
+            "start_at_login",
+            "status",
+            "test_desktop",
+            "trash",
+        ])
+    );
+}
+
+#[test]
+fn capabilities_legacy_thumbnails_is_gone_and_current_thumbnail_is_settings_only() {
+    assert!(
+        !COMMANDS.contains(&"thumbnails"),
+        "legacy command still registered"
+    );
+    for cap in capabilities() {
+        assert!(
+            !allowed_commands(&cap).contains("thumbnails"),
+            "{} still allows thumbnails",
+            cap["identifier"]
+        );
+    }
+    assert!(allowed_commands(&capability("settings")).contains("current_thumbnail"));
+    assert!(!allowed_commands(&capability("picker")).contains("current_thumbnail"));
 }
 
 #[test]

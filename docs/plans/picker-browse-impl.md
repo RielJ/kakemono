@@ -281,31 +281,39 @@ The window size is unchanged, so `picker_place.rs` is not touched.
 
 ## Overview
 
-- [ ] Task 1: Sources browse contract (types + default `Provider` methods)
-- [ ] Task 2: Protocol `browse`/`browse_use` requests, payloads, bindings, client timeout
-- [ ] Task 3: SSRF guard + guarded client + fail-fast send
-- [ ] Task 4: Wallhaven API browse
-- [ ] Task 5: Wallhaven scrape browse + `resolve_image`
-- [ ] Task 6: Unsplash browse (editorial + search)
-- [ ] Task 7: Reddit browse
-- [ ] Task 8: Bing browse
-- [ ] Task 9: APOD browse
-- [ ] Task 10: Engine provenance (`set_file_with` + inferred provenance)
-- [ ] Task 11: Engine preview cache
-- [ ] Task 12: Engine browse sessions + `Engine::browse`
-- [ ] Task 13: Engine `browse_use`
-- [ ] Task 14: Daemon dispatch + strict guarded client wiring
-- [ ] Task 15: UI `thumbs` per-tab admission by `ListKind` + preview root
-- [ ] Task 16: UI `picker-shown` event
-- [ ] Task 17: UI per-tab paged listings (`tab_thumbnails`), current pinned, cache orphans
-- [ ] Task 18: UI browse commands (`browse_page`, `browse_use`)
-- [ ] Task 19: Frontend api + bindings wrappers
-- [ ] Task 20: Frontend tab keys in `keys.ts`
-- [ ] Task 21: Frontend `TabBar`, `useSentinel` hook, icons, layout CSS
-- [ ] Task 22: Frontend tabbed App with paged on-disk tabs
-- [ ] Task 23: Frontend Sources tab (`BrowseStrip`, paging, states, actions, filter, blur)
-- [ ] Task 24: Remove legacy `thumbnails` command + docs
-- [ ] Task 25: Config `[picker] blur_nsfw` + Settings toggle
+- [x] Task 1: Sources browse contract (types + default `Provider` methods)
+- [x] Task 2: Protocol `browse`/`browse_use` requests, payloads, bindings, client timeout
+- [x] Task 3: SSRF guard + guarded client + fail-fast send
+- [x] Task 4: Wallhaven API browse
+- [x] Task 5: Wallhaven scrape browse + `resolve_image`
+- [x] Task 6: Unsplash browse (editorial + search)
+- [x] Task 7: Reddit browse
+- [x] Task 8: Bing browse
+- [x] Task 9: APOD browse
+- [x] Task 10: Engine provenance (`set_file_with` + inferred provenance)
+- [x] Task 11: Engine preview cache
+- [x] Task 12: Engine browse sessions + `Engine::browse`
+- [x] Task 13: Engine `browse_use`
+- [x] Task 14: Daemon dispatch + strict guarded client wiring
+- [x] Task 15: UI `thumbs` per-tab admission by `ListKind` + preview root
+- [x] Task 16: UI `picker-shown` event
+- [x] Task 17: UI per-tab paged listings (`tab_thumbnails`), current pinned, cache orphans
+- [x] Task 18: UI browse commands (`browse_page`, `browse_use`)
+- [x] Task 19: Frontend api + bindings wrappers
+- [x] Task 20: Frontend tab keys in `keys.ts`
+- [x] Task 21: Frontend `TabBar`, `useSentinel` hook, icons, layout CSS
+- [x] Task 22: Frontend tabbed App with paged on-disk tabs
+- [x] Task 23: Frontend Sources tab (`BrowseStrip`, paging, states, actions, filter, blur)
+- [x] Task 24: Remove legacy `thumbnails` command + docs
+- [x] Task 25: Config `[picker] blur_nsfw` + Settings toggle
+
+Status: tasks 1–25 are done (macOS). Deviations from the plan:
+- Wallhaven scrape browse (no API key) reads one search page, about 24 items, per request.
+- Reddit browse drops `over_18` posts instead of passing them through as `nsfw`.
+- Rate limits use a new `ProviderError::RateLimitedFor` that carries the provider's wait (`retry_after_secs`).
+- Preview downloads ignore a system proxy (the guarded client resolves and pins addresses itself).
+- Task 24 replaced the Settings "Now showing" card's use of `thumbnails` with a new `current_thumbnail` command. It admits only the current file under `ListKind::Current`, so the picker's tab allowlists are untouched; the settings window gets only `allow-current-thumbnail`.
+- The Linux and Windows manual runs are deferred: development targets macOS first.
 
 ### Parallel lanes (each lane owns its own files)
 

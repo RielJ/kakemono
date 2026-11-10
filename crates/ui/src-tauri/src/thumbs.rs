@@ -1,6 +1,6 @@
 //! The `thumb://` protocol: picker thumbnails behind an id → path allowlist (plan §H, Task 44).
 //!
-//! The picker never sends a path. `thumbnails` admits the listed files with [`Thumbs::admit`],
+//! The picker never sends a path. `tab_thumbnails` (and `current_thumbnail`) admits the listed files with [`Thumbs::admit`],
 //! which gives each one an opaque id (a per-process keyed hash of its real path). A request
 //! carries only that id. The allowlist is the only way a file is served:
 //!
@@ -70,8 +70,10 @@ pub enum ListKind {
     /// Remote previews under the daemon's preview root. Untrusted: only files inside the root
     /// are entries, and their size is capped ([`PREVIEW_MAX_EDGE`]).
     Previews,
-    /// The single-list `thumbnails` command.
-    Legacy,
+    /// The current wallpaper, for the Settings window's "Now showing" card
+    /// (`current_thumbnail`). Served like the tabs, but a path outside the roots is not a
+    /// picker entry, so the card never widens what the picker commands accept.
+    Current,
 }
 
 impl ListKind {
@@ -82,21 +84,25 @@ impl ListKind {
         Self::Favorites,
         Self::Cache,
         Self::Previews,
-        Self::Legacy,
+        Self::Current,
     ];
 
     /// Largest width or height this kind may decode; `None` = no cap.
     fn max_edge(self) -> Option<u32> {
         match self {
             Self::Previews => Some(PREVIEW_MAX_EDGE),
-            Self::Downloaded | Self::Local | Self::Favorites | Self::Cache | Self::Legacy => None,
+            Self::Downloaded | Self::Local | Self::Favorites | Self::Cache | Self::Current => None,
         }
     }
 
     /// Whether a listed path outside the roots is still a picker entry ([`Thumbs::is_admitted`]).
-    /// Only for the user's own files; a preview outside the preview root is nothing.
+    /// Only for the picker tabs' own listings; a preview outside the preview root, or a current
+    /// wallpaper outside every root, is nothing.
     fn lists_outside_roots(self) -> bool {
-        self.max_edge().is_none()
+        match self {
+            Self::Downloaded | Self::Local | Self::Favorites | Self::Cache => true,
+            Self::Previews | Self::Current => false,
+        }
     }
 }
 
@@ -641,7 +647,7 @@ mod tests {
         let pic = png(&f.root, "a.png", 1600, 900);
         let urls = f
             .thumbs
-            .admit(ListKind::Legacy, &[&f.root], &[pic.to_str().unwrap()]);
+            .admit(ListKind::Downloaded, &[&f.root], &[pic.to_str().unwrap()]);
         assert!(urls[0].contains(SCHEME), "{urls:?}");
         let res = f.thumbs.respond(&format!("/{}", id_of(&urls[0])));
         assert_eq!(res.status(), StatusCode::OK);
@@ -658,9 +664,11 @@ mod tests {
     fn thumbs_path_outside_the_roots_is_403() {
         let f = fixture();
         let secret = png(&f.outside, "secret.png", 10, 10);
-        let urls = f
-            .thumbs
-            .admit(ListKind::Legacy, &[&f.root], &[secret.to_str().unwrap()]);
+        let urls = f.thumbs.admit(
+            ListKind::Downloaded,
+            &[&f.root],
+            &[secret.to_str().unwrap()],
+        );
         assert_eq!(urls, vec![String::new()], "not admitted");
         // Even its would-be id is unknown.
         let real = std::fs::canonicalize(&secret).unwrap();
@@ -680,9 +688,11 @@ mod tests {
         // `..` in a listed path resolves outside the root: not admitted.
         let sneaky = f.root.join("../secret/secret.png");
         assert!(sneaky.exists());
-        let urls = f
-            .thumbs
-            .admit(ListKind::Legacy, &[&f.root], &[sneaky.to_str().unwrap()]);
+        let urls = f.thumbs.admit(
+            ListKind::Downloaded,
+            &[&f.root],
+            &[sneaky.to_str().unwrap()],
+        );
         assert_eq!(urls, vec![String::new()]);
         // `..` in the request itself, raw and percent-encoded.
         for uri in [
@@ -705,14 +715,14 @@ mod tests {
         std::os::unix::fs::symlink(&secret, &link).unwrap();
         let urls = f
             .thumbs
-            .admit(ListKind::Legacy, &[&f.root], &[link.to_str().unwrap()]);
+            .admit(ListKind::Downloaded, &[&f.root], &[link.to_str().unwrap()]);
         assert_eq!(urls, vec![String::new()], "symlink out of the root");
 
         // Admitted while a real file, then swapped for a symlink before the request.
         let pic = png(&f.root, "swap.png", 10, 10);
         let urls = f
             .thumbs
-            .admit(ListKind::Legacy, &[&f.root], &[pic.to_str().unwrap()]);
+            .admit(ListKind::Downloaded, &[&f.root], &[pic.to_str().unwrap()]);
         let uri = format!("/{}", id_of(&urls[0]));
         std::fs::remove_file(&pic).unwrap();
         std::os::unix::fs::symlink(&secret, &pic).unwrap();
@@ -728,7 +738,7 @@ mod tests {
         std::os::unix::fs::symlink(&pic, &link).unwrap();
         let urls = f
             .thumbs
-            .admit(ListKind::Legacy, &[&f.root], &[link.to_str().unwrap()]);
+            .admit(ListKind::Downloaded, &[&f.root], &[link.to_str().unwrap()]);
         assert_eq!(
             f.thumbs.respond(&format!("/{}", id_of(&urls[0]))).status(),
             200
@@ -756,7 +766,7 @@ mod tests {
         let thumbs = Thumbs::new(tmp.path().join("cache/thumbs"));
         let via_alias = alias.join("wallpaper.png");
         let urls = thumbs.admit(
-            ListKind::Legacy,
+            ListKind::Downloaded,
             &[&downloads, &alias],
             &[link.to_str().unwrap(), via_alias.to_str().unwrap()],
         );
@@ -773,9 +783,9 @@ mod tests {
         let b = png(&f.root, "b.png", 10, 10);
         let first = f
             .thumbs
-            .admit(ListKind::Legacy, &[&f.root], &[a.to_str().unwrap()]);
+            .admit(ListKind::Downloaded, &[&f.root], &[a.to_str().unwrap()]);
         f.thumbs
-            .admit(ListKind::Legacy, &[&f.root], &[b.to_str().unwrap()]);
+            .admit(ListKind::Downloaded, &[&f.root], &[b.to_str().unwrap()]);
         assert_eq!(
             f.thumbs.respond(&format!("/{}", id_of(&first[0]))).status(),
             403
@@ -788,7 +798,7 @@ mod tests {
         let pic = png(&f.root, "a.png", 10, 10);
         let before = f
             .thumbs
-            .admit(ListKind::Legacy, &[&f.root], &[pic.to_str().unwrap()]);
+            .admit(ListKind::Downloaded, &[&f.root], &[pic.to_str().unwrap()]);
         let res = f.thumbs.respond(&format!("/{}", id_of(&before[0])));
         assert_eq!(res.headers()[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
 
@@ -796,7 +806,7 @@ mod tests {
         png(&f.root, "a.png", 20, 20);
         let after = f
             .thumbs
-            .admit(ListKind::Legacy, &[&f.root], &[pic.to_str().unwrap()]);
+            .admit(ListKind::Downloaded, &[&f.root], &[pic.to_str().unwrap()]);
         assert_ne!(before, after);
         let res = f.thumbs.respond(&format!("/{}", id_of(&after[0])));
         let img = image::load_from_memory(res.body()).unwrap();
@@ -810,11 +820,11 @@ mod tests {
         let b = png(&f.root, "b.png", 10, 10);
         let urls = f
             .thumbs
-            .admit(ListKind::Legacy, &[&f.root], &[a.to_str().unwrap()]);
+            .admit(ListKind::Downloaded, &[&f.root], &[a.to_str().unwrap()]);
         f.thumbs.respond(&format!("/{}", id_of(&urls[0])));
         assert_eq!(f.thumbs.with(|allow| allow.keys.len()), 1);
         f.thumbs
-            .admit(ListKind::Legacy, &[&f.root], &[b.to_str().unwrap()]);
+            .admit(ListKind::Downloaded, &[&f.root], &[b.to_str().unwrap()]);
         assert_eq!(f.thumbs.with(|allow| allow.keys.len()), 0);
     }
 
@@ -895,7 +905,7 @@ mod tests {
 
         // Listed outside the roots: no thumbnail, but still a picker entry.
         f.thumbs.admit(
-            ListKind::Legacy,
+            ListKind::Downloaded,
             &[&f.root],
             &[pic.to_str().unwrap(), secret.to_str().unwrap()],
         );
@@ -906,7 +916,7 @@ mod tests {
         assert!(!f.thumbs.is_admitted(&f.outside.join("missing.png")));
 
         f.thumbs
-            .admit(ListKind::Legacy, &[&f.root], &[other.to_str().unwrap()]);
+            .admit(ListKind::Downloaded, &[&f.root], &[other.to_str().unwrap()]);
         assert!(!f.thumbs.is_admitted(&pic), "replaced by the new listing");
         assert!(f.thumbs.is_admitted(&other));
     }
@@ -918,7 +928,7 @@ mod tests {
         let txt = f.root.join("notes.txt");
         std::fs::write(&txt, "hi").unwrap();
         let urls = f.thumbs.admit(
-            ListKind::Legacy,
+            ListKind::Downloaded,
             &[&f.root],
             &[pic.to_str().unwrap(), txt.to_str().unwrap()],
         );
@@ -937,7 +947,7 @@ mod tests {
         std::fs::write(&bad, b"not a jpeg").unwrap();
         let urls = f
             .thumbs
-            .admit(ListKind::Legacy, &[&f.root], &[bad.to_str().unwrap()]);
+            .admit(ListKind::Downloaded, &[&f.root], &[bad.to_str().unwrap()]);
         assert_eq!(
             f.thumbs.respond(&format!("/{}", id_of(&urls[0]))).status(),
             415
@@ -1084,6 +1094,43 @@ mod tests {
     }
 
     #[test]
+    fn admit_current_leaves_the_tab_kinds_admitted() {
+        let f = fixture();
+        let tab = png(&f.root, "tab.png", 10, 10);
+        let current = png(&f.root, "current.png", 10, 10);
+        let tab_urls = f
+            .thumbs
+            .admit(ListKind::Downloaded, &[&f.root], &[tab.to_str().unwrap()]);
+
+        let urls = f
+            .thumbs
+            .admit(ListKind::Current, &[&f.root], &[current.to_str().unwrap()]);
+
+        assert!(f.thumbs.is_admitted(&tab), "Downloaded untouched");
+        assert_eq!(
+            f.thumbs
+                .respond(&format!("/{}", id_of(&tab_urls[0])))
+                .status(),
+            200
+        );
+        assert_eq!(
+            f.thumbs.respond(&format!("/{}", id_of(&urls[0]))).status(),
+            200
+        );
+    }
+
+    #[test]
+    fn admit_current_outside_the_roots_is_not_a_picker_entry() {
+        let f = fixture();
+        let secret = png(&f.outside, "secret.png", 10, 10);
+        let urls = f
+            .thumbs
+            .admit(ListKind::Current, &[&f.root], &[secret.to_str().unwrap()]);
+        assert_eq!(urls, vec![String::new()]);
+        assert!(!f.thumbs.is_admitted(&secret));
+    }
+
+    #[test]
     fn admit_gives_the_same_file_the_same_id_under_every_kind() {
         let f = fixture();
         let pic = png(&f.root, "a.png", 10, 10);
@@ -1173,12 +1220,12 @@ mod tests {
     }
 
     #[test]
-    fn thumbnail_does_not_cap_a_large_legacy_image() {
+    fn thumbnail_does_not_cap_a_large_downloaded_image() {
         let f = fixture();
         let big = png_header_only(&f.root, "big.png", 5000, 5000);
         let urls = f
             .thumbs
-            .admit(ListKind::Legacy, &[&f.root], &[big.to_str().unwrap()]);
+            .admit(ListKind::Downloaded, &[&f.root], &[big.to_str().unwrap()]);
         let path = f.thumbs.resolve(&format!("/{}", id_of(&urls[0]))).unwrap();
         let err = f.thumbs.thumbnail(&path).unwrap_err();
         assert!(matches!(err, ThumbError::Decode(_)), "{err:?}");

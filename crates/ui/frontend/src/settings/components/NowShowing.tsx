@@ -2,9 +2,9 @@ import { useCallback, useEffect, useState } from 'react'
 
 import type { StatusData } from '../../shared/api'
 import {
+  currentThumbnail,
   errorMessage,
   favoriteWallpaper,
-  listThumbnails,
   nextWallpaper,
   pauseWallpaper,
   prevWallpaper,
@@ -29,10 +29,12 @@ function useCurrentThumb(path: string | undefined): string {
     let live = true
     setUrl('')
     if (!path) return
-    listThumbnails()
-      .then((thumbs) => {
+    currentThumbnail()
+      .then((thumb) => {
         if (!live) return
-        const hit = thumbs.find((t) => t.path === path) ?? thumbs.find((t) => t.isCurrent)
+        // The state file can lag the daemon's status by a change; the entry flagged current
+        // is still the best picture to show.
+        const hit = thumb && (thumb.path === path || thumb.isCurrent) ? thumb : null
         setUrl(hit?.imageUrl ?? '')
       })
       .catch(() => {})

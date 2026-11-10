@@ -3,11 +3,12 @@ import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { Config } from '../../shared/api'
+import type { Config, StatusData, Thumbnail } from '../../shared/api'
 import * as api from '../../shared/api'
 import { testConfig } from '../testConfig'
 import { configErrors } from '../validate'
 import GeneralSettings from './GeneralSettings'
+import NowShowing from './NowShowing'
 import { joinInterval, splitInterval } from './SettingLine'
 
 vi.mock('../../shared/api', async (importOriginal) => {
@@ -19,7 +20,7 @@ vi.mock('../../shared/api', async (importOriginal) => {
     selectDirectory: vi.fn(),
     openFolder: vi.fn(),
     showPicker: vi.fn(),
-    listThumbnails: vi.fn(),
+    currentThumbnail: vi.fn(),
   }
 })
 
@@ -38,7 +39,7 @@ beforeEach(() => {
     service: { installed: false, running: false, path: null },
     ui_autostart: false,
   })
-  vi.mocked(api.listThumbnails).mockResolvedValue([])
+  vi.mocked(api.currentThumbnail).mockResolvedValue(null)
   vi.mocked(api.showPicker).mockResolvedValue()
 })
 afterEach(() => {
@@ -225,6 +226,48 @@ describe('GeneralSettings', () => {
     const linux = await setup({ os: 'linux' })
     await linux.user.click(box('Open through XWayland'))
     expect(linux.last().picker.force_x11).toBe(true)
+  })
+})
+
+describe('NowShowing', () => {
+  const status = (path: string): StatusData => ({
+    current: { path, source: 'wallhaven', source_url: '', image_url: '', title: 'Forest', author: '', width: 0, height: 0, set_at: '' },
+    paused: false,
+    interval: '30m',
+    theme: 'dark',
+    history_count: 1,
+    history_index: 0,
+  })
+  const thumb = (path: string): Thumbnail => ({ path, source: 'wallhaven', title: 'Forest', isCurrent: true, imageUrl: `thumb://localhost/${path.length}` })
+
+  async function show(s: StatusData | null, daemon: 'running' | 'stopped' = 'running') {
+    const { container } = render(<NowShowing status={s} daemon={daemon} onStatusChange={() => {}} fileManager="Finder" />)
+    await act(async () => {})
+    return () => container.querySelector('img')?.getAttribute('src') ?? null
+  }
+
+  it('shows the thumb:// image currentThumbnail returns for the current wallpaper', async () => {
+    vi.mocked(api.currentThumbnail).mockResolvedValue(thumb('/w/a.jpg'))
+    const src = await show(status('/w/a.jpg'))
+    expect(api.currentThumbnail).toHaveBeenCalledTimes(1)
+    expect(src()).toBe(thumb('/w/a.jpg').imageUrl)
+  })
+
+  it('falls back to the entry flagged current when the daemon reports another path', async () => {
+    vi.mocked(api.currentThumbnail).mockResolvedValue(thumb('/w/b.jpg'))
+    const src = await show(status('/w/a.jpg'))
+    expect(src()).toBe(thumb('/w/b.jpg').imageUrl)
+  })
+
+  it('shows the placeholder when there is no current thumbnail', async () => {
+    const src = await show(status('/w/a.jpg'))
+    expect(src()).toBeNull()
+  })
+
+  it('asks for no thumbnail while the daemon is stopped', async () => {
+    const src = await show(status('/w/a.jpg'), 'stopped')
+    expect(api.currentThumbnail).not.toHaveBeenCalled()
+    expect(src()).toBeNull()
   })
 })
 

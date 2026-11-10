@@ -97,6 +97,56 @@ Every command takes `--config <PATH>` and `--socket <PATH>`. `kakemono <command>
 
 `pick` and `settings` look for the `kakemono-ui` binary in `$KAKEMONO_UI`, next to `kakemono`, in `/Applications/kakemono.app` and `~/Applications/kakemono.app` (macOS), and on `PATH`.
 
+## The picker
+
+`kakemono pick`, or the tray, opens the picker: a strip of thumbnails along one screen edge (`[picker] position`). It has five tabs:
+
+| Tab | What it shows |
+|---|---|
+| Sources | Previews from the enabled online sources, fetched as you scroll. Nothing is downloaded until you use an image. |
+| Downloaded | The download folders of the enabled online sources, then the manual folder. |
+| Local | The images of the enabled folder, album, and images sources. |
+| Favorites | The favorites folder. |
+| Cache | Files in the download folder that belong to no enabled online source: loose files and the folders of removed sources. |
+
+The current wallpaper comes first in the tab that holds it.
+
+### Keys
+
+The tabs run across the strip, so the tab keys use the other arrow axis. In a horizontal strip, Left and Right move between thumbnails and Up and Down change the tab. In a vertical strip, it's the other way round.
+
+| Key | Action |
+|---|---|
+| Left, Right (vertical strip: Up, Down) | Previous or next thumbnail. Home and End go to the first and the last. |
+| Up, Down (vertical strip: Left, Right) | Previous or next tab. |
+| 1–5 | Sources, Downloaded, Local, Favorites, or Cache. |
+| `[`, `]` | Sources tab: previous or next source filter (All, then one per source). |
+| Enter, Space | Set as wallpaper. |
+| F | Add to favorites. |
+| Delete, Backspace | Move to trash (not in Sources). |
+| Menu key, Shift+F10 | Open the context menu. In Sources it also has Download. |
+| Cmd+Z (Ctrl+Z) | Undo the last trash. |
+| Esc | Close the picker. |
+
+### Browsing sources
+
+In the Sources tab, Set downloads the image to the source's download folder and sets it. Favorite downloads it to the favorites folder. Download only saves it.
+
+| Source type | What it browses |
+|---|---|
+| Wallhaven | The row's search, with its purity, categories, and sorting. Without an API key, each request reads one search page, about 24 images. |
+| Unsplash | The row's search. With no keywords, the editorial feed, up to 20 pages. Needs `access_key`. |
+| Reddit | The subreddit's hot listing, 25 posts a page. Posts marked NSFW (`over_18`) and posts with a score below 100 are left out. |
+| Bing | The current daily images, up to 16. |
+| APOD | The archive, 14 days a page, newest first, back to 16 June 1995. Videos are skipped. |
+| Folder, album, images | Not in Sources. Their images are in the Local tab. |
+
+Each source reports its own state under the strip. A source that the provider is rate-limiting shows `type (id): message` with the provider's text. kakemono asks it again after the wait the provider gave, or after 60 seconds. A source that needs setup, such as a missing API key, shows what to add. With internet access off in Settings, the tab says that browsing is off.
+
+`[picker] blur_nsfw` (default `true`, or the Blur NSFW previews switch in Settings) blurs previews that the source marks NSFW, such as Wallhaven sketchy and NSFW results, until you hover over or focus them.
+
+Privacy: the daemon fetches previews, not the picker window. It requests them only from the sources' image hosts, does not use a system proxy, and caches them for 24 hours in `<cache>/previews` (see [Files](#files)).
+
 ## Configuration
 
 kakemono reads the first config file that it finds:
@@ -160,6 +210,7 @@ For each change, kakemono tries the enabled sources from the list for the curren
 | `placement` | `"edge"` | `edge` uses `position`. `custom` uses `custom`. Dragging the picker sets both. |
 | `custom` | unset | `{ x = 10, y = 20, monitor = "DP-1" }` |
 | `force_x11` | `false` | Linux, Wayland: run the picker under XWayland so kakemono can place it. Experimental. |
+| `blur_nsfw` | `true` | Blur NSFW previews in the Sources tab until you hover over or focus them. |
 
 ### `[desktop]`
 
@@ -196,6 +247,7 @@ on_change = ["sketchybar", "--trigger", "wallpaper_changed"]
 | Lock and PID files | `~/.config/kakemono/` | `$XDG_RUNTIME_DIR/kakemono/` | `%LOCALAPPDATA%\kakemono\run\` |
 | Daemon logs | `~/.local/state/kakemono/` | `$XDG_STATE_HOME/kakemono/` | `%LOCALAPPDATA%\kakemono\logs\` |
 | Thumbnails (app) | `~/.cache/kakemono/` | `$XDG_CACHE_HOME/kakemono/` | `%LOCALAPPDATA%\kakemono\cache\` |
+| Browse previews (daemon, 24 h) | `~/.cache/kakemono/previews/` | `$XDG_CACHE_HOME/kakemono/previews/` | `%LOCALAPPDATA%\kakemono\cache\previews\` |
 
 `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, and `XDG_CACHE_HOME` default to `~/.config`, `~/.local/state`, and `~/.cache`, on macOS too. Without `XDG_RUNTIME_DIR`, Linux puts the socket at `~/.config/kakemono/kakemono.sock` and the lock and PID files in the config folder. `$KAKEMONO_SOCKET` overrides the default socket.
 
