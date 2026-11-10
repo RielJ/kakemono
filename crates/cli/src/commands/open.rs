@@ -90,8 +90,6 @@ mod tests {
 
     use kakemono_platform::exec::RecordingRunner;
     use kakemono_platform::open::{NoFileManager, Os};
-    use kakemono_protocol::endpoint::Endpoint;
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     use super::*;
     use crate::cli::GlobalArgs;
@@ -110,7 +108,11 @@ mod tests {
     }
 
     /// A fake daemon on `socket` that answers one request with `reply` and returns the request.
+    #[cfg(unix)]
     fn serve_once(socket: &Path, reply: String) -> tokio::task::JoinHandle<String> {
+        use kakemono_protocol::endpoint::Endpoint;
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
         let listener = Endpoint::new(socket).unwrap().bind().unwrap();
         tokio::spawn(async move {
             use interprocess::local_socket::traits::tokio::Listener as _;

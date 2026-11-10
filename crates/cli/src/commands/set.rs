@@ -56,11 +56,10 @@ fn clean(path: &Path) -> PathBuf {
     out
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
     #[test]
     fn makes_paths_absolute_like_go() {
         let home = Path::new("/home/u");

@@ -12,7 +12,7 @@ use interprocess::local_socket::tokio::Stream as LocalSocketStream;
 use interprocess::local_socket::traits::tokio::Stream as _;
 use kakemono_cli::daemon::lock::{self, LockError, LockGuard};
 use kakemono_cli::daemon::server::{
-    self, ApplyOutcome, BindError, DoctorData, NOTHING_TO_APPLY, Server, VersionData,
+    self, ApplyOutcome, DoctorData, NOTHING_TO_APPLY, Server, VersionData,
 };
 use kakemono_config::Config;
 use kakemono_config::schema::{SourceEntry, SourceType};
@@ -445,14 +445,14 @@ async fn bind_removes_only_a_stale_socket_under_the_lock() {
 
     // A live socket is never removed.
     let err = server::bind(&endpoint, &guard).await.unwrap_err();
-    assert!(matches!(err, BindError::InUse(_)), "{err:?}");
+    assert!(matches!(err, server::BindError::InUse(_)), "{err:?}");
     assert!(err.to_string().contains("already listening"), "{err}");
     drop(listener);
 
     // A regular file at the socket path is never removed.
     std::fs::write(endpoint.path(), b"not a socket").unwrap();
     let err = server::bind(&endpoint, &guard).await.unwrap_err();
-    assert!(matches!(err, BindError::NotASocket(_)), "{err:?}");
+    assert!(matches!(err, server::BindError::NotASocket(_)), "{err:?}");
     assert_eq!(std::fs::read(endpoint.path()).unwrap(), b"not a socket");
 
     #[cfg(unix)]

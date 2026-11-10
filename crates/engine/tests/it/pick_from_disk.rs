@@ -145,7 +145,7 @@ impl WallpaperSetter for GatedSetter {
         if image.is_file() {
             Ok(())
         } else {
-            Err(SetError::Os(format!("{} is gone", image.display())))
+            Err(SetError::os(format!("{} is gone", image.display())))
         }
     }
 

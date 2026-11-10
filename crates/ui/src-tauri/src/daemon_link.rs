@@ -160,9 +160,13 @@ fn ok_or_daemon(response: Response) -> Result<Response, LinkError> {
 
 /// A send failure or an EOF before the answer means the peer went away, so a resend on a
 /// new connection is safe. Timeouts and malformed replies are not retried: the daemon may
-/// have acted on the request.
+/// have acted on the request. `Poisoned` (an earlier request was cancelled midway) is
+/// returned before anything is sent, so it is safe to resend too.
 fn is_stale_connection(err: &ClientError) -> bool {
-    matches!(err, ClientError::Send(_) | ClientError::Closed)
+    matches!(
+        err,
+        ClientError::Send(_) | ClientError::Closed | ClientError::Poisoned
+    )
 }
 
 /// The endpoint override from the config the daemon would read: `Some` only for a
@@ -190,6 +194,7 @@ mod tests {
     use super::*;
     use interprocess::local_socket::tokio::prelude::*;
     use kakemono_protocol::types::Request;
+    use std::time::Duration;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     fn temp_endpoint() -> (tempfile::TempDir, Endpoint) {
@@ -257,6 +262,55 @@ mod tests {
             .await
             .expect("resent on a new connection");
         assert_eq!(second.await.expect("second server"), 1);
+    }
+
+    /// A request cancelled midway (its Tauri command dropped) leaves the cached client
+    /// poisoned. The next request must reconnect, not fail with `Poisoned`.
+    #[tokio::test]
+    async fn reconnects_after_a_cancelled_request() {
+        let (_dir, endpoint) = temp_endpoint();
+        let listener = endpoint.bind().expect("bind");
+        let server = tokio::spawn(async move {
+            // Connection 1: answers the first request, reads the second, never answers it.
+            let first = listener.accept().await.expect("accept 1");
+            let mut first = BufReader::new(first);
+            let mut line = String::new();
+            first.read_line(&mut line).await.expect("read 1");
+            first
+                .get_mut()
+                .write_all(b"{\"ok\":true}\n")
+                .await
+                .expect("write 1");
+            line.clear();
+            first.read_line(&mut line).await.expect("read 2");
+            // Connection 2: the reconnect. Connection 1 stays open meanwhile.
+            let second = listener.accept().await.expect("accept 2");
+            let mut second = BufReader::new(second);
+            line.clear();
+            second.read_line(&mut line).await.expect("read 3");
+            second
+                .get_mut()
+                .write_all(b"{\"ok\":true}\n")
+                .await
+                .expect("write 3");
+            drop(first);
+        });
+        let link = DaemonLink::new(endpoint);
+
+        link.call(Request::Next).await.expect("first");
+        let cancelled =
+            tokio::time::timeout(Duration::from_millis(100), link.call(Request::Prev)).await;
+        assert!(
+            cancelled.is_err(),
+            "the second request must be cut off by the timeout"
+        );
+        link.call(Request::Next)
+            .await
+            .expect("a poisoned cached client must be replaced, not reported");
+        tokio::time::timeout(Duration::from_secs(5), server)
+            .await
+            .expect("server finishes")
+            .expect("server");
     }
 
     #[tokio::test]

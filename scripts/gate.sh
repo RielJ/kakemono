@@ -28,12 +28,20 @@ mode="${1:-}"
 shift || true
 
 pkg_flags=()
+cross_flags=() # pkg_flags minus the ui crate: GTK's -sys crates need a target pkg-config
+skipped=()
 for c in "$@"; do
   case "$c" in
-    kakemono-* | kakemono) pkg_flags+=(-p "$c") ;;
-    cli) pkg_flags+=(-p kakemono) ;;
-    *) pkg_flags+=(-p "kakemono-$c") ;;
+    kakemono-* | kakemono) p="$c" ;;
+    cli) p=kakemono ;;
+    *) p="kakemono-$c" ;;
   esac
+  pkg_flags+=(-p "$p")
+  if [[ "$p" == kakemono-ui ]]; then
+    skipped+=("kakemono-ui: GTK needs a target pkg-config/sysroot; covered by CI's native jobs")
+  else
+    cross_flags+=(-p "$p")
+  fi
 done
 
 run=()
@@ -54,10 +62,9 @@ step() {
 # True when the named crates build C code (aws-lc-sys, ring, or anything with a `cc` build dep)
 # for this target.
 needs_c() {
-  cargo tree "${pkg_flags[@]}" --target "$1" -e normal,build,dev --prefix none 2>/dev/null |
+  cargo tree "${cross_flags[@]}" --target "$1" -e normal,build,dev --prefix none 2>/dev/null |
     grep -qE '^(aws-lc-sys|ring|cc) '
 }
-skipped=()
 
 if ! command -v cargo-nextest >/dev/null; then
   echo "cargo-nextest not found: brew install cargo-nextest (or cargo install cargo-nextest --locked)" >&2
@@ -78,7 +85,7 @@ case "$mode" in
     step cargo clippy --workspace --all-targets --all-features -- -D warnings
     step cargo nextest run --workspace --all-features
     step cargo test --workspace --all-features --doc
-    if ((${#pkg_flags[@]} > 0)); then
+    if ((${#cross_flags[@]} > 0)); then
       for target in x86_64-unknown-linux-gnu x86_64-pc-windows-msvc; do
         clippy=(cargo clippy)
         if needs_c "$target"; then
@@ -106,7 +113,7 @@ case "$mode" in
               ;;
           esac
         fi
-        step "${clippy[@]}" "${pkg_flags[@]}" --all-targets --all-features --target "$target" -- -D warnings
+        step "${clippy[@]}" "${cross_flags[@]}" --all-targets --all-features --target "$target" -- -D warnings
       done
     fi
     for s in "${skipped[@]+"${skipped[@]}"}"; do

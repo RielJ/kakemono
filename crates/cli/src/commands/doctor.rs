@@ -264,6 +264,13 @@ fn write_linux(
     Ok(())
 }
 
+#[cfg_attr(
+    not(unix),
+    expect(
+        dead_code,
+        reason = "Windows renders no Linux backends; only Nothing is built"
+    )
+)]
 enum Rendered {
     Argvs(Vec<Vec<String>>),
     Api(&'static str),
