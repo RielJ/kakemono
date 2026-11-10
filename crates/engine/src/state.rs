@@ -18,9 +18,8 @@
 //! the new location without touching the old file.
 
 use std::collections::BTreeMap;
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, TimeZone, Timelike};
 use kakemono_config::paths::Paths;
@@ -89,11 +88,16 @@ pub struct State {
 
 impl State {
     /// An empty state: no current wallpaper, empty history, index `-1`, not paused.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Reads `path`. A missing file yields [`State::new`] (Go `LoadState`).
+    ///
+    /// # Errors
+    ///
+    /// [`StateError`] when the file exists but cannot be read or parsed.
     pub fn load(path: &Path) -> Result<Self, StateError> {
         match std::fs::read(path) {
             Ok(bytes) => Self::from_json_slice(&bytes).map_err(|source| StateError::Parse {
@@ -114,6 +118,10 @@ impl State {
     /// An unreadable or corrupt legacy file is logged and ignored ([`StateOrigin::Fresh`]):
     /// the user cannot fix it through kakemono. An unreadable or corrupt `state_file`, or a
     /// failure to write the migrated copy, is an error.
+    ///
+    /// # Errors
+    ///
+    /// [`StateError`] for an unreadable or corrupt `state_file`, or a failed migration write.
     pub fn load_or_migrate(
         state_file: &Path,
         legacy_state_file: &Path,
@@ -160,12 +168,20 @@ impl State {
 
     /// [`load_or_migrate`](Self::load_or_migrate) with `paths.state_file` and
     /// `paths.legacy_state_file`.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`load_or_migrate`](Self::load_or_migrate).
     pub fn load_from_paths(paths: &Paths) -> Result<LoadedState, StateError> {
         Self::load_or_migrate(&paths.state_file, &paths.legacy_state_file)
     }
 
     /// Writes the state to `path` atomically (temp file in the same directory, then rename),
     /// creating parent directories. The bytes are those of Go's `json.MarshalIndent`.
+    ///
+    /// # Errors
+    ///
+    /// [`StateError`] when the folder cannot be created or the file cannot be written.
     pub fn save(&self, path: &Path) -> Result<(), StateError> {
         let bytes = self.to_json_bytes().map_err(StateError::Serialize)?;
         write_atomic(path, &bytes)
@@ -173,11 +189,19 @@ impl State {
 
     /// Parses `state.json` bytes as Go's `json.Unmarshal` would (missing keys default, unknown
     /// keys ignored), then repairs an out-of-range `history_index` (see [`State`]).
+    ///
+    /// # Errors
+    ///
+    /// The bytes are not valid JSON or don't match the state's shape.
     pub fn from_json_slice(bytes: &[u8]) -> serde_json::Result<Self> {
         serde_json::from_slice(bytes)
     }
 
     /// Serialises like Go's `json.MarshalIndent(s, "", "  ")`.
+    ///
+    /// # Errors
+    ///
+    /// Serialisation failed (a time outside Go's range).
     pub fn to_json_bytes(&self) -> serde_json::Result<Vec<u8>> {
         kakemono_protocol::codec::to_vec_go_pretty(self)
     }
@@ -225,11 +249,13 @@ impl State {
     }
 
     /// Whether an older history entry exists.
+    #[must_use]
     pub fn can_go_prev(&self) -> bool {
         self.history_index.is_some_and(|i| i > 0)
     }
 
     /// Whether a newer entry exists that the user stepped back from.
+    #[must_use]
     pub fn has_future_history(&self) -> bool {
         match self.history_index {
             Some(i) => i + 1 < self.history.len(),
@@ -238,32 +264,38 @@ impl State {
     }
 
     /// The current wallpaper, if any.
+    #[must_use]
     pub fn current(&self) -> Option<&WallpaperInfo> {
         self.current.as_ref()
     }
 
     /// History, oldest first.
+    #[must_use]
     pub fn history(&self) -> &[WallpaperInfo] {
         &self.history
     }
 
     /// Position in [`history`](Self::history); `None` when history is empty.
+    #[must_use]
     pub fn history_position(&self) -> Option<usize> {
         self.history_index
     }
 
     /// The position as Go and `StatusData.history_index` report it: `-1` when empty.
+    #[must_use]
     pub fn history_index(&self) -> i32 {
         self.history_index
             .map_or(-1, |i| i32::try_from(i).unwrap_or(i32::MAX))
     }
 
     /// `history().len()` as `StatusData.history_count`.
+    #[must_use]
     pub fn history_count(&self) -> i32 {
         i32::try_from(self.history.len()).unwrap_or(i32::MAX)
     }
 
     /// Whether auto-rotation is paused.
+    #[must_use]
     pub fn paused(&self) -> bool {
         self.paused
     }
@@ -274,6 +306,7 @@ impl State {
     }
 
     /// Time of the last [`push`](Self::push); `None` if never (Go's zero time).
+    #[must_use]
     pub fn last_changed(&self) -> Option<DateTime<FixedOffset>> {
         self.last_changed
     }
@@ -290,6 +323,7 @@ impl State {
     }
 
     /// Every album cursor, by source id.
+    #[must_use]
     pub fn album_cursors(&self) -> &BTreeMap<String, PathBuf> {
         &self.album_cursors
     }
@@ -426,6 +460,10 @@ fn go_zero_naive() -> Option<NaiveDateTime> {
 
 /// Formats like Go's `time.Time.MarshalJSON` (RFC 3339 with nanoseconds, trailing zeros
 /// trimmed, `Z` for a zero offset). Errors for years outside `0..=9999`, as Go does.
+///
+/// # Errors
+///
+/// A year outside `0..=9999`.
 pub fn format_go_time<Tz: TimeZone>(t: &DateTime<Tz>) -> Result<String, String> {
     let t = t.fixed_offset();
     let year = chrono::Datelike::year(&t);
@@ -454,8 +492,8 @@ pub fn format_go_time<Tz: TimeZone>(t: &DateTime<Tz>) -> Result<String, String> 
 // ---------------------------------------------------------------------------------------------
 // Atomic write.
 
-static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
-
+/// Creates the parent folder, then writes with [`kakemono_fs::atomic_write`] (unique temp file,
+/// fsync, rename).
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), StateError> {
     let dir = path
         .parent()
@@ -465,38 +503,10 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), StateError> {
         path: dir.to_owned(),
         source,
     })?;
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "state.json".to_owned());
-    let tmp = dir.join(format!(
-        ".{name}.tmp.{}.{}",
-        std::process::id(),
-        TMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-    ));
-
-    let result = (|| {
-        let mut opts = std::fs::OpenOptions::new();
-        opts.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            opts.mode(0o644);
-        }
-        let mut f = opts.open(&tmp)?;
-        f.write_all(bytes)?;
-        f.sync_all()?;
-        drop(f);
-        std::fs::rename(&tmp, path)
-    })();
-    if let Err(source) = result {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(StateError::Write {
-            path: path.to_owned(),
-            source,
-        });
-    }
-    Ok(())
+    kakemono_fs::atomic_write(path, bytes).map_err(|source| StateError::Write {
+        path: path.to_owned(),
+        source,
+    })
 }
 
 #[cfg(test)]

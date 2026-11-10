@@ -11,35 +11,98 @@
 //! for the per-source download layout (`docs/plans/variety-sources-impl.md` Task 11): every
 //! delete is checked against the download dir and the protected dirs and files.
 //!
-//! The file work runs on tokio's blocking pool (`spawn_blocking`) with `std::fs`.
+//! The file work runs on tokio's blocking pool (`spawn_blocking`) with `std::fs`. Copies go
+//! through [`kakemono_fs::copy_unique`] (Go's `<stem>_<unix nanos>.<ext>` collision name).
 
 use std::collections::HashSet;
-use std::fs::{self, File, OpenOptions};
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use kakemono_config::Config;
 use kakemono_config::schema::SourceType;
+use kakemono_fs::{CopyError, collision_name};
 use kakemono_sources::is_image_file;
+use tokio::task::JoinError;
 
 use crate::engine::EngineError;
+use crate::gotext::go_reason;
 use crate::state::State;
 
-/// How many collision names `create_unique` tries before it gives up.
-const MAX_NAME_ATTEMPTS: u32 = 1000;
+/// Why `favorite` or `trash` failed. Shown after `manager: ` ([`EngineError::Files`]); the
+/// texts are Go's.
+#[derive(Debug, thiserror::Error)]
+pub enum FilesError {
+    /// `[daemon] favorites_dir` or `trash_dir` is empty.
+    #[error("{what} dir is not configured")]
+    NotConfigured { what: &'static str },
+    /// Creating the favorites or trash dir failed.
+    #[error("create {what} dir: mkdir {}: {}", dir.display(), go_reason(source))]
+    CreateDir {
+        what: &'static str,
+        dir: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    /// Copying into the favorites dir failed.
+    #[error("copy to favorites: {0}")]
+    Favorite(#[source] CopyFailure),
+    /// The current wallpaper has no file name to trash under.
+    #[error("move to trash: {0}")]
+    TrashTarget(#[source] CopyFailure),
+    /// Both the rename into the trash and the copy fallback failed.
+    #[error(
+        "move to trash: rename {} {}: {} (copy fallback: {copy})",
+        src.display(),
+        dst.display(),
+        go_reason(rename)
+    )]
+    Trash {
+        src: PathBuf,
+        dst: PathBuf,
+        rename: io::Error,
+        #[source]
+        copy: CopyFailure,
+    },
+    /// The file task panicked or was cancelled.
+    #[error("file task failed: {0}")]
+    Task(#[source] JoinError),
+}
 
-/// Copies `src` into `favorites_dir` and returns the new file's path. Errors use
-/// `EngineError::Files` (rendered as `manager: <message>`).
+/// One copy's failure, in Go's `*PathError` form (`open <path>: <reason>`).
+#[derive(Debug, thiserror::Error)]
+pub enum CopyFailure {
+    /// The source path has no file name (`/`, `..`).
+    #[error("{}: not a file path", .0.display())]
+    NoFileName(PathBuf),
+    /// [`kakemono_fs::copy_unique`] failed.
+    #[error("{} {}: {}", .0.op(), .0.path().display(), copy_reason(.0))]
+    Copy(#[source] CopyError),
+}
+
+/// The reason part of a [`CopyError`]: Go's errno text, or the message of an error built from
+/// text (such as running out of collision names).
+fn copy_reason(err: &CopyError) -> String {
+    let io = err.io_error();
+    if io.get_ref().is_some() {
+        io.to_string()
+    } else {
+        go_reason(io)
+    }
+}
+
+/// Copies `src` into `favorites_dir` and returns the new file's path. Errors are
+/// [`EngineError::Files`] (rendered as `manager: <message>`).
 pub(crate) async fn favorite(src: &Path, favorites_dir: &Path) -> Result<PathBuf, EngineError> {
     let (src, dir) = (src.to_path_buf(), favorites_dir.to_path_buf());
-    blocking(move || favorite_blocking(&src, &dir)).await
+    Ok(blocking(move || favorite_blocking(&src, &dir)).await?)
 }
 
 /// Moves `src` into `trash_dir` and returns its new path. The engine then runs `next`.
 pub(crate) async fn trash(src: &Path, trash_dir: &Path) -> Result<PathBuf, EngineError> {
     let (src, dir) = (src.to_path_buf(), trash_dir.to_path_buf());
-    blocking(move || trash_blocking(&src, &dir, |from, to| fs::rename(from, to))).await
+    Ok(blocking(move || trash_blocking(&src, &dir, |from, to| fs::rename(from, to))).await?)
 }
 
 /// File name of the per-source seen ledger the downloader keeps in `downloads/<id>/`.
@@ -57,6 +120,7 @@ pub struct Protect {
 
 impl Protect {
     /// Protects nothing.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -236,6 +300,10 @@ impl Guard {
 /// - it is a directory.
 ///
 /// Every delete of downloaded files goes through this.
+///
+/// # Errors
+///
+/// `PermissionDenied` for a refused path (see above), or the error of the delete.
 pub fn safe_delete(path: &Path, download_dir: &Path, protect: &Protect) -> io::Result<()> {
     Guard::new(download_dir, protect)?.delete(path)
 }
@@ -268,6 +336,7 @@ pub async fn trim_to_mb(download_dir: &Path, limit_bytes: u64, protect: &Protect
 /// `download_dir` (same walk: protected dirs, hidden files, ledgers and symlinks are left out).
 /// `None` when `download_dir` is unset or can't be resolved (for example, it doesn't exist yet).
 /// Blocking.
+#[must_use]
 pub fn counted_bytes(download_dir: &Path, protect: &Protect) -> Option<u64> {
     let guard = Guard::new(download_dir, protect).ok()?;
     let mut files = Vec::new();
@@ -391,21 +460,20 @@ fn collect_cached(dir: &Path, guard: &Guard, out: &mut Vec<CachedFile>) {
     }
 }
 
-async fn blocking<T, F>(f: F) -> Result<T, EngineError>
+async fn blocking<T, F>(f: F) -> Result<T, FilesError>
 where
-    F: FnOnce() -> Result<T, EngineError> + Send + 'static,
+    F: FnOnce() -> Result<T, FilesError> + Send + 'static,
     T: Send + 'static,
 {
     tokio::task::spawn_blocking(f)
         .await
-        .map_err(|err| EngineError::Files(format!("file task failed: {err}")))?
+        .map_err(FilesError::Task)?
 }
 
-fn favorite_blocking(src: &Path, dir: &Path) -> Result<PathBuf, EngineError> {
+fn favorite_blocking(src: &Path, dir: &Path) -> Result<PathBuf, FilesError> {
     ensure_dir(dir, "favorites")?;
-    let dst =
-        target_path(src, dir).map_err(|e| EngineError::Files(format!("copy to favorites: {e}")))?;
-    copy_unique(src, &dst).map_err(|e| EngineError::Files(format!("copy to favorites: {e}")))
+    let dst = target_path(src, dir).map_err(FilesError::Favorite)?;
+    copy_unique(src, &dst).map_err(FilesError::Favorite)
 }
 
 /// Go `Trash`: rename into the trash, else (another device, or any rename error) copy and
@@ -414,10 +482,9 @@ fn trash_blocking(
     src: &Path,
     dir: &Path,
     rename: impl FnOnce(&Path, &Path) -> io::Result<()>,
-) -> Result<PathBuf, EngineError> {
+) -> Result<PathBuf, FilesError> {
     ensure_dir(dir, "trash")?;
-    let dst =
-        target_path(src, dir).map_err(|e| EngineError::Files(format!("move to trash: {e}")))?;
+    let dst = target_path(src, dir).map_err(FilesError::TrashTarget)?;
     let dst = if dst.exists() {
         collision_free(&dst)
     } else {
@@ -425,12 +492,7 @@ fn trash_blocking(
     };
     let rename_err = match rename(src, &dst) {
         Ok(()) => return Ok(dst),
-        Err(err) => format!(
-            "rename {} {}: {}",
-            src.display(),
-            dst.display(),
-            go_reason(&err)
-        ),
+        Err(err) => err,
     };
     match copy_unique(src, &dst) {
         Ok(moved) => {
@@ -444,71 +506,37 @@ fn trash_blocking(
             }
             Ok(moved)
         }
-        Err(copy_err) => Err(EngineError::Files(format!(
-            "move to trash: {rename_err} (copy fallback: {copy_err})"
-        ))),
+        Err(copy) => Err(FilesError::Trash {
+            src: src.to_path_buf(),
+            dst,
+            rename: rename_err,
+            copy,
+        }),
     }
 }
 
 /// `create_dir_all`, with Go's `create <what> dir: mkdir <dir>: <reason>` message.
-fn ensure_dir(dir: &Path, what: &str) -> Result<(), EngineError> {
+fn ensure_dir(dir: &Path, what: &'static str) -> Result<(), FilesError> {
     if dir.as_os_str().is_empty() {
-        return Err(EngineError::Files(format!("{what} dir is not configured")));
+        return Err(FilesError::NotConfigured { what });
     }
-    fs::create_dir_all(dir).map_err(|err| {
-        EngineError::Files(format!(
-            "create {what} dir: mkdir {}: {}",
-            dir.display(),
-            go_reason(&err)
-        ))
+    fs::create_dir_all(dir).map_err(|source| FilesError::CreateDir {
+        what,
+        dir: dir.to_path_buf(),
+        source,
     })
 }
 
 /// `dir/<file name of src>` (Go `filepath.Join(dir, filepath.Base(src))`).
-fn target_path(src: &Path, dir: &Path) -> Result<PathBuf, String> {
+fn target_path(src: &Path, dir: &Path) -> Result<PathBuf, CopyFailure> {
     src.file_name()
         .map(|name| dir.join(name))
-        .ok_or_else(|| format!("{}: not a file path", src.display()))
+        .ok_or_else(|| CopyFailure::NoFileName(src.to_path_buf()))
 }
 
-/// Go `copyFile`: copies `src` to `dst`, or to a collision-free name next to it when `dst`
-/// exists. Returns the path written. Never overwrites a file. Errors are Go-style
-/// (`open <path>: <reason>`), without a prefix.
-fn copy_unique(src: &Path, dst: &Path) -> Result<PathBuf, String> {
-    let mut input = File::open(src).map_err(|e| go_path_error("open", src, &e))?;
-    let (mut output, written) = create_unique(dst)?;
-    let copied = io::copy(&mut input, &mut output).and_then(|_| output.sync_all());
-    if let Err(err) = copied {
-        drop(output);
-        let _ = fs::remove_file(&written);
-        return Err(go_path_error("write", &written, &err));
-    }
-    Ok(written)
-}
-
-/// Creates `dst` exclusively. If it exists, tries `<stem>_<unix nanos>.<ext>` (Go's collision
-/// name), counting up from the first timestamp until a name is free.
-fn create_unique(dst: &Path) -> Result<(File, PathBuf), String> {
-    let mut candidate = dst.to_path_buf();
-    let mut nanos = unix_nanos();
-    for _ in 0..=MAX_NAME_ATTEMPTS {
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
-        {
-            Ok(file) => return Ok((file, candidate)),
-            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
-                candidate = suffixed(dst, nanos);
-                nanos = nanos.saturating_add(1);
-            }
-            Err(err) => return Err(go_path_error("open", &candidate, &err)),
-        }
-    }
-    Err(format!(
-        "open {}: no free file name after {MAX_NAME_ATTEMPTS} attempts",
-        dst.display()
-    ))
+/// Go `copyFile`: [`kakemono_fs::copy_unique`], with Go's error text.
+fn copy_unique(src: &Path, dst: &Path) -> Result<PathBuf, CopyFailure> {
+    kakemono_fs::copy_unique(src, dst).map_err(CopyFailure::Copy)
 }
 
 /// A name for `dst` that doesn't exist yet (checked, not reserved; the engine's op lock keeps
@@ -516,25 +544,12 @@ fn create_unique(dst: &Path) -> Result<(File, PathBuf), String> {
 fn collision_free(dst: &Path) -> PathBuf {
     let mut nanos = unix_nanos();
     loop {
-        let candidate = suffixed(dst, nanos);
+        let candidate = collision_name(dst, nanos);
         if !candidate.exists() {
             return candidate;
         }
         nanos = nanos.saturating_add(1);
     }
-}
-
-/// Go's `<base>_<n><ext>`, where `ext` is `filepath.Ext` (from the last `.` of the file name,
-/// so `.hidden` becomes `_<n>.hidden`).
-fn suffixed(dst: &Path, n: u128) -> PathBuf {
-    let name = dst
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let (base, ext) = name
-        .rfind('.')
-        .map_or((name.as_str(), ""), |i| name.split_at(i));
-    dst.with_file_name(format!("{base}_{n}{ext}"))
 }
 
 fn unix_nanos() -> u128 {
@@ -544,26 +559,10 @@ fn unix_nanos() -> u128 {
         .unwrap_or_default()
 }
 
-/// Go `*PathError` text: `<op> <path>: <reason>`.
-fn go_path_error(op: &str, path: &Path, err: &io::Error) -> String {
-    format!("{op} {}: {}", path.display(), go_reason(err))
-}
-
-/// Go's lower-case `syscall.Errno` text for the common cases, else Rust's message.
-fn go_reason(err: &io::Error) -> String {
-    match err.kind() {
-        io::ErrorKind::NotFound => "no such file or directory".to_owned(),
-        io::ErrorKind::PermissionDenied => "permission denied".to_owned(),
-        io::ErrorKind::NotADirectory => "not a directory".to_owned(),
-        io::ErrorKind::IsADirectory => "is a directory".to_owned(),
-        io::ErrorKind::AlreadyExists => "file exists".to_owned(),
-        io::ErrorKind::CrossesDevices => "cross-device link".to_owned(),
-        _ => err.to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use std::fs::File;
+
     use super::*;
 
     fn write(path: &Path, bytes: &[u8]) {
@@ -577,28 +576,34 @@ mod tests {
             .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
     }
 
+    /// The on-disk collision names must stay Go's.
     #[test]
-    fn suffixed_keeps_the_extension() {
+    fn collision_names_keep_the_extension() {
         let p = Path::new("/d/photo.jpg");
-        assert_eq!(suffixed(p, 42), Path::new("/d/photo_42.jpg"));
+        assert_eq!(collision_name(p, 42), Path::new("/d/photo_42.jpg"));
         assert_eq!(
-            suffixed(Path::new("/d/a.tar.gz"), 7),
+            collision_name(Path::new("/d/a.tar.gz"), 7),
             Path::new("/d/a.tar_7.gz")
         );
-        assert_eq!(suffixed(Path::new("/d/noext"), 7), Path::new("/d/noext_7"));
         assert_eq!(
-            suffixed(Path::new("/d/.hidden"), 7),
+            collision_name(Path::new("/d/noext"), 7),
+            Path::new("/d/noext_7")
+        );
+        assert_eq!(
+            collision_name(Path::new("/d/.hidden"), 7),
             Path::new("/d/_7.hidden")
         );
     }
 
     #[test]
-    fn create_unique_never_overwrites() {
+    fn copy_unique_never_overwrites() {
         let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src.png");
+        write(&src, b"new");
         let dst = dir.path().join("a.png");
         write(&dst, b"old");
-        let (_f1, p1) = create_unique(&dst).unwrap();
-        let (_f2, p2) = create_unique(&dst).unwrap();
+        let p1 = copy_unique(&src, &dst).unwrap();
+        let p2 = copy_unique(&src, &dst).unwrap();
         assert_ne!(p1, dst);
         assert_ne!(p1, p2);
         assert!(is_collision_name(&p1, "a", "png"), "{}", p1.display());
@@ -639,13 +644,57 @@ mod tests {
         assert!(!src.exists());
     }
 
+    /// `FilesError` replaced `EngineError::Files(String)`; the daemon's wire errors depend on
+    /// this text.
+    #[test]
+    fn files_errors_keep_their_go_text() {
+        let text = |e: FilesError| EngineError::from(e).to_string();
+        assert_eq!(
+            text(FilesError::NotConfigured { what: "favorites" }),
+            "manager: favorites dir is not configured"
+        );
+        assert_eq!(
+            text(FilesError::CreateDir {
+                what: "trash",
+                dir: "/t".into(),
+                source: io::Error::from(io::ErrorKind::PermissionDenied),
+            }),
+            "manager: create trash dir: mkdir /t: permission denied"
+        );
+        assert_eq!(
+            text(FilesError::Favorite(CopyFailure::NoFileName("/".into()))),
+            "manager: copy to favorites: /: not a file path"
+        );
+        assert_eq!(
+            text(FilesError::TrashTarget(CopyFailure::NoFileName(
+                "..".into()
+            ))),
+            "manager: move to trash: ..: not a file path"
+        );
+    }
+
+    #[test]
+    fn favorite_reports_copy_errors_like_go() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("gone.jpg");
+        let favs = dir.path().join("favs");
+        let err = EngineError::from(favorite_blocking(&src, &favs).unwrap_err()).to_string();
+        assert_eq!(
+            err,
+            format!(
+                "manager: copy to favorites: open {}: no such file or directory",
+                src.display()
+            )
+        );
+    }
+
     #[test]
     fn trash_reports_rename_and_copy_errors_like_go() {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("gone.jpg");
         let trash = dir.path().join("trash");
         let exdev = |_: &Path, _: &Path| Err(io::Error::from(io::ErrorKind::CrossesDevices));
-        let err = trash_blocking(&src, &trash, exdev).unwrap_err().to_string();
+        let err = EngineError::from(trash_blocking(&src, &trash, exdev).unwrap_err()).to_string();
         let dst = trash.join("gone.jpg");
         assert_eq!(
             err,

@@ -47,6 +47,7 @@
 //! lags, the loop compares `signals.theme()` with the known theme so a missed theme flip still
 //! rotates. Op errors are logged at `warn`; the loop keeps running.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use chrono::{DateTime, FixedOffset};
@@ -58,15 +59,38 @@ use tokio_util::sync::CancellationToken;
 use crate::downloader::Downloader;
 use crate::engine::Engine;
 use crate::events::EngineEvent;
+use crate::interval::IntervalSetting;
+
+/// Holds the engine's `running` flag; clears it on drop (also when `run` is cancelled).
+struct RunGuard<'a>(&'a AtomicBool);
+
+impl<'a> RunGuard<'a> {
+    fn acquire(flag: &'a AtomicBool) -> Option<Self> {
+        flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| Self(flag))
+    }
+}
+
+impl Drop for RunGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
 
 /// Interval used when `[daemon] interval` is unparsable or zero (Go's fallback).
 pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(30 * 60);
 
 impl Engine {
     /// Runs the rotation timer, the signal reactions and the background downloader until
-    /// `shutdown` is cancelled, then saves the facts cache. An op in flight when `shutdown` fires
-    /// is dropped. Run one loop per engine: the reset and wake notifies wake a single waiter.
+    /// `shutdown` is cancelled, then saves the facts cache and the state. An op in flight when
+    /// `shutdown` fires is dropped. One loop per engine: the reset and wake notifies wake a single
+    /// waiter, so a call while another loop runs logs a warning and returns at once.
     pub async fn run(&self, shutdown: CancellationToken) {
+        let Some(_running) = RunGuard::acquire(&self.inner.running) else {
+            tracing::warn!("the engine loop is already running; not starting a second one");
+            return;
+        };
         let stop_downloader = shutdown.child_token();
         let downloader = {
             let engine = self.clone();
@@ -79,6 +103,7 @@ impl Engine {
             tracing::warn!(error = %e, "the downloader task failed");
         }
         self.save_facts().await;
+        self.save_state().await;
     }
 
     /// The rotation timer and the signal reactions (see the module docs).
@@ -252,8 +277,8 @@ struct Rotation {
     anchor: DateTime<FixedOffset>,
     /// The theme the loop last acted on.
     theme: Theme,
-    /// The bad `[daemon] interval` value already warned about.
-    warned: Option<String>,
+    /// `[daemon] interval`, warned once per bad value.
+    interval: IntervalSetting,
 }
 
 impl Rotation {
@@ -262,7 +287,7 @@ impl Rotation {
         Self {
             anchor: engine.state().last_changed().unwrap_or(now),
             theme: engine.theme(),
-            warned: None,
+            interval: IntervalSetting::default(),
         }
     }
 
@@ -287,23 +312,14 @@ impl Rotation {
 
     /// The configured interval, or `None` when rotation is disabled.
     fn interval(&mut self, cfg: &Config) -> Option<Duration> {
-        if !cfg.daemon.rotation_enabled {
-            return None;
-        }
-        let raw = &cfg.daemon.interval;
-        let problem = match cfg.daemon.interval_duration() {
-            Ok(d) if !d.is_zero() => {
-                self.warned = None;
-                return Some(d);
-            }
-            Ok(_) => "the interval is zero".to_owned(),
-            Err(e) => e.to_string(),
-        };
-        if self.warned.as_deref() != Some(raw.as_str()) {
-            tracing::warn!(interval = %raw, %problem, "invalid [daemon] interval, defaulting to 30m");
-            self.warned = Some(raw.clone());
-        }
-        Some(DEFAULT_INTERVAL)
+        cfg.daemon.rotation_enabled.then(|| {
+            self.interval.resolve(
+                "interval",
+                &cfg.daemon.interval,
+                cfg.daemon.interval_duration(),
+                DEFAULT_INTERVAL,
+            )
+        })
     }
 }
 
@@ -319,7 +335,7 @@ mod tests {
         Rotation {
             anchor: at(anchor),
             theme: Theme::Light,
-            warned: None,
+            interval: IntervalSetting::default(),
         }
     }
 
@@ -344,7 +360,7 @@ mod tests {
         for bad in ["nope", "0s"] {
             cfg.daemon.interval = bad.to_owned();
             assert_eq!(r.interval(&cfg), Some(DEFAULT_INTERVAL));
-            assert_eq!(r.warned.as_deref(), Some(bad));
+            assert_eq!(r.interval.warned(), Some(bad));
         }
         cfg.daemon.rotation_enabled = false;
         assert_eq!(r.interval(&cfg), None);

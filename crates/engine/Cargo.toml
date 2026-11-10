@@ -13,10 +13,9 @@ kakemono-protocol.workspace = true
 kakemono-config.workspace = true
 kakemono-sources.workspace = true
 kakemono-platform.workspace = true
-async-trait.workspace = true
+kakemono-fs.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
-futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
@@ -34,7 +33,7 @@ kakemono-sources = { workspace = true, features = ["fake"] }
 tokio = { workspace = true, features = ["test-util"] }
 wiremock.workspace = true
 tempfile.workspace = true
-insta.workspace = true
+async-trait.workspace = true
 
 [lints]
 workspace = true

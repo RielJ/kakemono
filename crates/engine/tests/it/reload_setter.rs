@@ -4,7 +4,6 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use kakemono_config::Config;
@@ -237,7 +236,7 @@ async fn reload_waits_for_an_apply_in_flight() {
         let engine = engine.clone();
         async move { engine.reload(cfg).await }
     });
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    crate::common::settle().await;
     assert!(!reloading.is_finished(), "reload waits for the op lock");
     assert_eq!(engine.platform().setter.info().name, "old");
 

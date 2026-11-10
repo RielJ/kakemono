@@ -59,13 +59,19 @@ pub struct ImageFacts {
 
 /// Reads and decodes `path` and computes its facts. Blocking: call it from `spawn_blocking`.
 ///
-/// Errors: the read error, or `InvalidData` when the image can't be decoded.
+/// # Errors
+///
+/// The read error, or `InvalidData` when the image can't be decoded.
 pub fn compute(path: &Path) -> io::Result<ImageFacts> {
     let bytes = fs::read(path)?;
     compute_bytes(&bytes)
 }
 
 /// [`compute`] on bytes already in memory.
+///
+/// # Errors
+///
+/// `InvalidData` when the image can't be decoded.
 pub fn compute_bytes(bytes: &[u8]) -> io::Result<ImageFacts> {
     // A decoder bug must not take the daemon down; treat a panic as a bad image.
     panic::catch_unwind(AssertUnwindSafe(|| compute_inner(bytes)))
@@ -263,6 +269,7 @@ pub struct FactsCache {
 
 impl FactsCache {
     /// Loads `<state_dir>/facts.json` (see [`FactsCache::load`]).
+    #[must_use]
     pub fn in_state_dir(state_dir: &Path) -> Self {
         Self::load(state_dir.join(CACHE_FILE))
     }
@@ -328,6 +335,10 @@ impl FactsCache {
 
     /// The cached facts for `path` if its `(mtime_ns, size)` still match, else computes and
     /// caches them. Blocking. A failed compute drops any stale entry and returns the error.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`compute`].
     pub fn get_or_compute(&self, path: &Path) -> io::Result<ImageFacts> {
         let (mtime_ns, size) = stamp(path)?;
         if let Some(e) = self.lock().map.get(path)
@@ -407,7 +418,11 @@ impl FactsCache {
     }
 
     /// Drops entries whose file is gone and writes the cache if anything changed. Blocking.
-    /// Writes through a temp file and a rename. Paths that aren't valid UTF-8 aren't written.
+    /// Writes with [`kakemono_fs::atomic_write`]. Paths that aren't valid UTF-8 aren't written.
+    ///
+    /// # Errors
+    ///
+    /// Serialising or writing the cache failed; the cache stays dirty and is written next time.
     pub fn save(&self) -> io::Result<()> {
         let paths: Vec<PathBuf> = self.lock().map.keys().cloned().collect();
         let missing: Vec<PathBuf> = paths.into_iter().filter(|p| !p.exists()).collect();
@@ -464,19 +479,15 @@ fn stamp(path: &Path) -> io::Result<(u64, u64)> {
     Ok((mtime_ns, meta.len()))
 }
 
+/// Creates the parent folder, then [`kakemono_fs::atomic_write`] (unique temp file, fsync,
+/// rename), so two saves can't share a temp file.
 fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(dir) = path.parent()
         && !dir.as_os_str().is_empty()
     {
         fs::create_dir_all(dir)?;
     }
-    let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
-    let tmp = PathBuf::from(tmp);
-    fs::write(&tmp, bytes)?;
-    fs::rename(&tmp, path).inspect_err(|_| {
-        let _ = fs::remove_file(&tmp);
-    })
+    kakemono_fs::atomic_write(path, bytes)
 }
 
 #[cfg(test)]

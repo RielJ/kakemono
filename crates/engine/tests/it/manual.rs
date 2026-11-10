@@ -6,112 +6,29 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::{DateTime, FixedOffset};
 use image::{Rgb, RgbImage};
 use kakemono_config::Config;
-use kakemono_config::schema::{SourceEntry, SourceType};
+use kakemono_config::schema::SourceType;
 use kakemono_engine::manual::{CHECK_TIMEOUT, MAX_FETCH_BYTES};
-use kakemono_engine::state::State;
-use kakemono_engine::{Deps, Engine, EngineError, EngineEvent};
-use kakemono_platform::api::{Fit, Platform, Theme};
-use kakemono_platform::fake::{ManualSignals, RecordingSetter};
+use kakemono_engine::{EngineError, EngineEvent};
+use kakemono_platform::api::Fit;
 use kakemono_sources::fake::StaticProvider;
-use kakemono_sources::{Provider, ProviderError, SourceSet, WallpaperResult};
-use tempfile::TempDir;
+use kakemono_sources::{Provider, ProviderError, WallpaperResult};
 use wiremock::matchers::{any, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const NOW: &str = "2026-03-04T05:06:07.890+08:00";
+use crate::common::{Builder, Fakes, Fixture, image_server, provider, row, write};
+
 const INTERNET_OFF: &str = "Internet access is off";
 
-/// Fake providers by row id; a check (whose temporary row has no fixed id) gets the first
-/// fake whose provider name is its type.
-type Fakes = Vec<(&'static str, Arc<dyn Provider>)>;
-
-struct Fixture {
-    _dir: TempDir,
-    root: PathBuf,
-    setter: RecordingSetter,
-    engine: Engine,
-}
-
-impl Fixture {
-    fn downloads(&self) -> PathBuf {
-        self.root.join("downloads")
-    }
-
-    fn manual(&self) -> PathBuf {
-        self.root.join("manual")
-    }
-}
-
-fn row(id: &str, kind: SourceType, location: &str) -> SourceEntry {
-    SourceEntry {
-        id: id.to_owned(),
-        enabled: true,
-        kind,
-        location: location.to_owned(),
-    }
-}
-
-fn config(root: &Path) -> Config {
-    let mut cfg = Config::default();
-    cfg.daemon.download_dir = root.join("downloads");
-    cfg.daemon.manual_dir = Some(root.join("manual"));
-    cfg.daemon.trash_dir = root.join("trash");
-    cfg.favorites.dir = root.join("favorites");
-    cfg.daemon.interval = "30m".to_owned();
-    cfg.daemon.internet = true;
-    cfg.daemon.download_limit_mb_enabled = false;
-    cfg.desktop.fit = Fit::Center;
-    cfg.sources = Vec::new();
-    cfg
-}
-
-/// One fake per enabled row: by row id, else by provider name = row type.
-fn fake_set(cfg: &Config, fakes: &Fakes) -> SourceSet {
-    SourceSet::fake(
-        cfg.sources
-            .iter()
-            .filter(|e| e.enabled)
-            .filter_map(|e| {
-                fakes
-                    .iter()
-                    .find(|(id, _)| *id == e.id)
-                    .or_else(|| fakes.iter().find(|(_, p)| p.name() == e.kind.as_str()))
-                    .map(|(_, p)| (e.id.as_str(), Arc::clone(p), e.location.as_str()))
-            })
-            .collect(),
-    )
-}
-
+/// An engine with Internet access and `<root>/manual` as the manual dir (config edited by
+/// `edit`, which gets the temp root) whose online sources come from `fakes`.
 fn fixture(fakes: Fakes, edit: impl FnOnce(&mut Config, &Path)) -> Fixture {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().canonicalize().unwrap();
-    let mut cfg = config(&root);
-    edit(&mut cfg, &root);
-    let setter = RecordingSetter::new();
-    let platform = Platform {
-        setter: Arc::new(setter.clone()),
-        signals: Arc::new(ManualSignals::new(Theme::Light)),
-    };
-    let now: DateTime<FixedOffset> = DateTime::parse_from_rfc3339(NOW).unwrap();
-    let deps = Deps::new(platform, kakemono_sources::http::client().unwrap())
-        .with_sources_factory(move |cfg, _| fake_set(cfg, &fakes))
-        .with_clock(move || now);
-    let engine = Engine::new(cfg, State::new(), root.join("state.json"), deps).unwrap();
-    Fixture {
-        _dir: dir,
-        root,
-        setter,
-        engine,
-    }
-}
-
-fn write(path: &Path, bytes: &[u8]) -> PathBuf {
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, bytes).unwrap();
-    path.to_path_buf()
+    Builder::new()
+        .internet(true)
+        .manual_dir()
+        .fakes(fakes)
+        .build(edit)
 }
 
 fn png_bytes() -> Vec<u8> {
@@ -153,7 +70,11 @@ async fn check_source_counts_provider_results_and_saves_nothing() {
     let wh = Arc::new(StaticProvider::new("wallhaven", results("wallhaven", 3)));
     let f = fixture(vec![("wh", wh.clone())], |_, _| {});
 
-    let count = f.engine.check_source(SourceType::Wallhaven, "forest").await;
+    let count = f
+        .engine
+        .check_source(SourceType::Wallhaven, "forest")
+        .await
+        .map_err(|e| e.to_string());
 
     assert_eq!(count, Ok(3));
     assert_eq!(wh.queries(), ["forest"]);
@@ -166,7 +87,10 @@ async fn check_source_with_no_results_is_no_images_found() {
     let wh = Arc::new(StaticProvider::new("wallhaven", Vec::new()));
     let f = fixture(vec![("wh", wh)], |_, _| {});
     assert_eq!(
-        f.engine.check_source(SourceType::Wallhaven, "zzz").await,
+        f.engine
+            .check_source(SourceType::Wallhaven, "zzz")
+            .await
+            .map_err(|e| e.to_string()),
         Err("no images found".to_owned())
     );
 }
@@ -176,7 +100,10 @@ async fn check_source_returns_the_provider_error_text() {
     let wh = Arc::new(StaticProvider::failing("wallhaven", "wallhaven: HTTP 401"));
     let f = fixture(vec![("wh", wh)], |_, _| {});
     assert_eq!(
-        f.engine.check_source(SourceType::Wallhaven, "forest").await,
+        f.engine
+            .check_source(SourceType::Wallhaven, "forest")
+            .await
+            .map_err(|e| e.to_string()),
         Err("wallhaven: HTTP 401".to_owned())
     );
 }
@@ -189,6 +116,7 @@ async fn check_source_reports_an_unparsable_location() {
         .engine
         .check_source(SourceType::Unsplash, "https://example.com/not-unsplash")
         .await
+        .map_err(|e| e.to_string())
         .unwrap_err();
     assert!(err.contains("unsplash"), "{err}");
     assert_eq!(un.calls(), 0);
@@ -199,7 +127,10 @@ async fn check_source_online_with_internet_off_sends_nothing() {
     let wh = Arc::new(StaticProvider::new("wallhaven", results("wallhaven", 3)));
     let f = fixture(vec![("wh", wh.clone())], |c, _| c.daemon.internet = false);
     assert_eq!(
-        f.engine.check_source(SourceType::Wallhaven, "forest").await,
+        f.engine
+            .check_source(SourceType::Wallhaven, "forest")
+            .await
+            .map_err(|e| e.to_string()),
         Err(INTERNET_OFF.to_owned())
     );
     assert_eq!(wh.calls(), 0);
@@ -227,6 +158,7 @@ async fn check_source_times_out() {
         .engine
         .check_source(SourceType::Bing, "")
         .await
+        .map_err(|e| e.to_string())
         .unwrap_err();
     assert_eq!(err, "check timed out after 15s");
     assert_eq!(started.elapsed(), CHECK_TIMEOUT);
@@ -241,21 +173,34 @@ async fn check_source_counts_a_folder_recursively_without_internet() {
     write(&pics.join("notes.txt"), b"x");
     let loc = pics.to_str().unwrap();
 
-    assert_eq!(f.engine.check_source(SourceType::Folder, loc).await, Ok(2));
+    assert_eq!(
+        f.engine
+            .check_source(SourceType::Folder, loc)
+            .await
+            .map_err(|e| e.to_string()),
+        Ok(2)
+    );
     // Albums use the folder itself, not its subfolders.
     assert_eq!(
-        f.engine.check_source(SourceType::AlbumName, loc).await,
+        f.engine
+            .check_source(SourceType::AlbumName, loc)
+            .await
+            .map_err(|e| e.to_string()),
         Ok(1)
     );
     assert_eq!(
-        f.engine.check_source(SourceType::AlbumDate, loc).await,
+        f.engine
+            .check_source(SourceType::AlbumDate, loc)
+            .await
+            .map_err(|e| e.to_string()),
         Ok(1)
     );
     let file = pics.join("a.jpg");
     assert_eq!(
         f.engine
             .check_source(SourceType::Images, file.to_str().unwrap())
-            .await,
+            .await
+            .map_err(|e| e.to_string()),
         Ok(1)
     );
     assert!(f.setter.calls().is_empty());
@@ -274,7 +219,10 @@ async fn check_source_local_with_no_images_is_no_images_found() {
         (SourceType::Images, txt),
     ] {
         assert_eq!(
-            f.engine.check_source(kind, loc.to_str().unwrap()).await,
+            f.engine
+                .check_source(kind, loc.to_str().unwrap())
+                .await
+                .map_err(|e| e.to_string()),
             Err("no images found".to_owned()),
             "{kind} {loc:?}"
         );
@@ -285,7 +233,10 @@ async fn check_source_local_with_no_images_is_no_images_found() {
 async fn check_source_unsupported_type_is_an_error() {
     let f = fixture(Vec::new(), |_, _| {});
     assert_eq!(
-        f.engine.check_source(SourceType::Unsupported, "x").await,
+        f.engine
+            .check_source(SourceType::Unsupported, "x")
+            .await
+            .map_err(|e| e.to_string()),
         Err("unsupported source type".to_owned())
     );
 }
@@ -490,30 +441,6 @@ async fn fetch_url_rejects_relative_paths_and_other_schemes() {
 
 // ─── download_now ─────────────────────────────────────────────────────────────────────────
 
-/// A 12 KiB JPEG-typed body at `/img/<name>` (downloads want ≥ 10 KiB and an image type).
-async fn image_server(names: &[&str]) -> MockServer {
-    let server = MockServer::start().await;
-    for name in names {
-        Mock::given(method("GET"))
-            .and(path(format!("/img/{name}")))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .insert_header("content-type", "image/jpeg")
-                    .set_body_bytes(vec![0xAB; 12 * 1024]),
-            )
-            .mount(&server)
-            .await;
-    }
-    server
-}
-
-fn provider(name: &'static str, url: &str) -> Arc<StaticProvider> {
-    Arc::new(StaticProvider::new(
-        name,
-        vec![StaticProvider::result(name, url)],
-    ))
-}
-
 #[tokio::test]
 async fn download_now_with_an_id_downloads_for_that_source() {
     let server = image_server(&["w.jpg"]).await;
@@ -522,7 +449,12 @@ async fn download_now_with_an_id_downloads_for_that_source() {
         c.sources = vec![row("wh-1", SourceType::Wallhaven, "forest")];
     });
 
-    let path = f.engine.download_now(Some("wh-1")).await.unwrap();
+    let path = f
+        .engine
+        .download_now(Some("wh-1"))
+        .await
+        .map_err(|e| e.to_string())
+        .unwrap();
 
     assert_eq!(path, Some(f.downloads().join("wh-1/w.jpg")));
     assert_eq!(wh.calls(), 1);
@@ -545,7 +477,12 @@ async fn download_now_without_an_id_fills_only_empty_sources() {
     );
     write(&f.downloads().join("wh-1/old.jpg"), b"x");
 
-    let path = f.engine.download_now(None).await.unwrap();
+    let path = f
+        .engine
+        .download_now(None)
+        .await
+        .map_err(|e| e.to_string())
+        .unwrap();
 
     assert_eq!(path, Some(f.downloads().join("bing/b.jpg")));
     assert_eq!(wh.calls(), 0, "wh-1 already has an image");
@@ -559,7 +496,10 @@ async fn download_now_without_an_id_and_nothing_empty_is_null() {
         c.sources = vec![row("wh-1", SourceType::Wallhaven, "forest")];
     });
     write(&f.downloads().join("wh-1/old.jpg"), b"x");
-    assert_eq!(f.engine.download_now(None).await, Ok(None));
+    assert_eq!(
+        f.engine.download_now(None).await.map_err(|e| e.to_string()),
+        Ok(None)
+    );
     assert_eq!(wh.calls(), 0);
 }
 
@@ -570,17 +510,20 @@ async fn download_now_reports_failures_and_internet_off() {
         c.sources = vec![row("wh-1", SourceType::Wallhaven, "forest")];
     });
     assert_eq!(
-        f.engine.download_now(None).await,
+        f.engine.download_now(None).await.map_err(|e| e.to_string()),
         Err("provider wallhaven fetch: wallhaven: boom".to_owned())
     );
     assert_eq!(
-        f.engine.download_now(Some("nope")).await,
+        f.engine
+            .download_now(Some("nope"))
+            .await
+            .map_err(|e| e.to_string()),
         Err("no enabled online source \"nope\"".to_owned())
     );
 
     let f = fixture(Vec::new(), |c, _| c.daemon.internet = false);
     assert_eq!(
-        f.engine.download_now(None).await,
+        f.engine.download_now(None).await.map_err(|e| e.to_string()),
         Err(INTERNET_OFF.to_owned())
     );
 }

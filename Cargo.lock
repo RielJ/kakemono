@@ -2485,10 +2485,9 @@ version = "2.0.0-alpha.0"
 dependencies = [
  "async-trait",
  "chrono",
- "futures",
  "image",
- "insta",
  "kakemono-config",
+ "kakemono-fs",
  "kakemono-platform",
  "kakemono-protocol",
  "kakemono-sources",

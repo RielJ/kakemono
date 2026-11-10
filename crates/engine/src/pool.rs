@@ -14,11 +14,12 @@
 //!
 //! [`pick`] chooses one image:
 //!
-//! 1. Choose a random non-empty source.
-//! 2. Take up to [`MAX_CANDIDATES`] random files from it, without the current wallpaper and the
-//!    last [`RECENT_HISTORY`] history entries.
-//! 3. Return the first file that passes the filters. If none passes, try another source, up to
-//!    [`MAX_CANDIDATES`] candidates in total.
+//! 1. Choose a random non-empty source not tried yet.
+//! 2. Take random files from it, without the current wallpaper and the last [`RECENT_HISTORY`]
+//!    history entries: an even share of the [`MAX_CANDIDATES`] budget left among it and the
+//!    sources not tried yet (a source with fewer files leaves the rest to the others).
+//! 3. Return the first file that passes the filters. If none passes, try another source, until
+//!    [`MAX_CANDIDATES`] candidates in total were checked or every source was tried.
 //! 4. If nothing passes, return the candidate with the best [`Filters::score`] and log the
 //!    filters it failed ([`PickOutcome::Fallback`]).
 //!
@@ -40,8 +41,9 @@ use kakemono_sources::is_image_file;
 use kakemono_sources::local::{AlbumOrder, album_next, list_images};
 use rand::seq::IndexedRandom;
 use rand::{Rng, RngExt};
+use tokio::task::JoinSet;
 
-use crate::facts::FactsCache;
+use crate::facts::{FactsCache, ImageFacts};
 use crate::filters::{FilterCtx, Filters};
 use crate::state::State;
 
@@ -51,6 +53,8 @@ pub const MANUAL_ID: &str = "manual";
 pub const MAX_CANDIDATES: usize = 20;
 /// How many of the newest history entries (besides the current wallpaper) [`pick`] avoids.
 pub const RECENT_HISTORY: usize = 5;
+/// How many images' facts [`pick`] computes at once.
+const FACTS_CONCURRENCY: usize = 4;
 
 /// Where a pool source comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +67,7 @@ pub enum PoolKind {
 
 impl PoolKind {
     /// The type's config string (`"wallhaven"`, `"folder"`, ...), or `"manual"`.
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             PoolKind::Source(kind) => kind.as_str(),
@@ -145,6 +150,7 @@ impl Picked {
 impl Pool {
     /// Lists the images of every enabled source of `cfg` (see the module docs). Blocking: it
     /// walks folders, so call it from `spawn_blocking` in async code.
+    #[must_use]
     pub fn collect(cfg: &Config) -> Pool {
         let mut sources: Vec<PoolSource> = cfg
             .sources
@@ -171,11 +177,13 @@ impl Pool {
     }
 
     /// Whether no source has images.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.sources.is_empty()
     }
 
     /// The source with id `id`.
+    #[must_use]
     pub fn get(&self, id: &str) -> Option<&PoolSource> {
         self.sources.iter().find(|s| s.id == id)
     }
@@ -183,7 +191,8 @@ impl Pool {
 
 /// Chooses an image from `pool` (see the module docs). `facts` supplies the image facts for the
 /// filters; it is not consulted when no filter is enabled. `state` gives the current wallpaper,
-/// the recent history and the album cursors. Returns `None` only when the pool is empty.
+/// the recent history and the album cursors. Returns `None` when the pool is empty, or when the
+/// only sources left are albums with no next image (a folder emptied since [`Pool::collect`]).
 pub async fn pick<R: Rng + ?Sized>(
     pool: &Pool,
     filters: &Filters,
@@ -205,7 +214,7 @@ pub async fn pick<R: Rng + ?Sized>(
         let (source, files) = candidates.swap_remove(rng.random_range(0..candidates.len()));
         let files = match files {
             Eligible::Album { dir, order } => {
-                match album_next(dir, state.album_cursor(&source.id), order) {
+                match next_in_album(dir, state.album_cursor(&source.id), order).await {
                     Some(path) => return Some(picked(source, path, PickOutcome::Album)),
                     None => continue,
                 }
@@ -216,20 +225,24 @@ pub async fn pick<R: Rng + ?Sized>(
             let path = files.choose(rng)?;
             return Some(picked(source, path.to_path_buf(), PickOutcome::Passed));
         }
-        let take = budget.min(files.len());
+        // An even share of what is left among this source and the ones not tried yet, so one
+        // large source can't use up the budget; a small source's unused share rolls over.
+        let take = budget.div_ceil(candidates.len() + 1).min(files.len());
+        budget -= take;
         let sample: Vec<PathBuf> = files.sample(rng, take).map(|p| p.to_path_buf()).collect();
-        for path in sample {
-            budget -= 1;
-            let Some(image) = facts.facts(&path).await else {
-                unreadable.get_or_insert((source, path));
-                continue;
-            };
-            match filters.check(&path, &image, ctx) {
-                Ok(()) => return Some(picked(source, path, PickOutcome::Passed)),
-                Err(failed) => {
-                    let score = filters.score(&path, &image, ctx);
-                    if best.as_ref().is_none_or(|(s, ..)| score > *s) {
-                        best = Some((score, source, path, failed));
+        for chunk in sample.chunks(FACTS_CONCURRENCY) {
+            for (path, image) in chunk.iter().zip(facts_of(facts, chunk).await) {
+                let Some(image) = image else {
+                    unreadable.get_or_insert((source, path.clone()));
+                    continue;
+                };
+                match filters.check(path, &image, ctx) {
+                    Ok(()) => return Some(picked(source, path.clone(), PickOutcome::Passed)),
+                    Err(failed) => {
+                        let score = filters.score(path, &image, ctx);
+                        if best.as_ref().is_none_or(|(s, ..)| score > *s) {
+                            best = Some((score, source, path.clone(), failed));
+                        }
                     }
                 }
             }
@@ -339,6 +352,39 @@ fn eligible<'a>(pool: &'a Pool, exclude: &HashSet<PathBuf>) -> Vec<(&'a PoolSour
             }
         })
         .collect()
+}
+
+/// [`album_next`] on the blocking pool: it lists the folder and, in date order, stats every
+/// file.
+async fn next_in_album(dir: &Path, cursor: Option<&Path>, order: AlbumOrder) -> Option<PathBuf> {
+    let (dir, cursor) = (dir.to_path_buf(), cursor.map(Path::to_path_buf));
+    tokio::task::spawn_blocking(move || album_next(&dir, cursor.as_deref(), order))
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "listing an album failed");
+            None
+        })
+}
+
+/// The facts of `paths`, in order, computed at once (`None` for an unreadable image).
+async fn facts_of(facts: &Arc<FactsCache>, paths: &[PathBuf]) -> Vec<Option<ImageFacts>> {
+    let mut set = JoinSet::new();
+    for (i, path) in paths.iter().enumerate() {
+        let (facts, path) = (Arc::clone(facts), path.clone());
+        set.spawn(async move { (i, facts.facts(&path).await) });
+    }
+    let mut out = vec![None; paths.len()];
+    while let Some(joined) = set.join_next().await {
+        match joined {
+            Ok((i, image)) => {
+                if let Some(slot) = out.get_mut(i) {
+                    *slot = image;
+                }
+            }
+            Err(e) => tracing::warn!(error = %e, "image facts task failed"),
+        }
+    }
+    out
 }
 
 fn picked(source: &PoolSource, path: PathBuf, outcome: PickOutcome) -> Picked {
@@ -563,6 +609,39 @@ mod tests {
             assert_eq!(picked.outcome, PickOutcome::Passed);
             assert_eq!(picked.source_id, "fld-1");
             assert_eq!(picked.kind, PoolKind::Source(SourceType::Folder));
+        }
+    }
+
+    /// M3: a first source with at least `MAX_CANDIDATES` failing files must not spend the whole
+    /// filter budget; the other source still gets a turn.
+    #[tokio::test]
+    async fn pool_pick_budget_reaches_a_second_source_behind_a_large_one() {
+        let tmp = TempDir::new().unwrap();
+        let dark = write_png(&tmp.path().join("b/dark.png"), DARK);
+        let lights: Vec<PathBuf> = (0..MAX_CANDIDATES)
+            .map(|i| write_png(&tmp.path().join(format!("a/light{i}.png")), LIGHT))
+            .collect();
+        let pool = Pool {
+            sources: vec![
+                files_source("a", PoolKind::Source(SourceType::Folder), lights),
+                files_source("b", PoolKind::Manual, vec![dark.clone()]),
+            ],
+        };
+        let cache = facts(tmp.path());
+        for seed in 0..16 {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let picked = pick(
+                &pool,
+                &dark_filter(),
+                &ctx(),
+                &cache,
+                &State::new(),
+                &mut rng,
+            )
+            .await
+            .unwrap();
+            assert_eq!(picked.path, dark, "seed {seed}");
+            assert_eq!(picked.outcome, PickOutcome::Passed, "seed {seed}");
         }
     }
 

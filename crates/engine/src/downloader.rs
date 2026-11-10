@@ -17,11 +17,11 @@
 //!
 //! # One download
 //!
-//! [`download_one`] (and [`try_download`], which keeps the error kind):
+//! [`download_one`]:
 //!
 //! 1. `fetch(query)`, then drops the results whose `image_url` is in the seen ledger
 //!    `<download_dir>/<id>/.kakemono-seen` (newline list, newest last, capped at [`SEEN_CAP`]).
-//! 2. Downloads a random remaining result with [`kakemono_sources::download`] and records its URL
+//! 2. Downloads a random remaining result with [`kakemono_sources::download`](mod@kakemono_sources::download) and records its URL
 //!    in the ledger, so it isn't downloaded again even if the filters reject it.
 //! 3. Computes its facts (stored in the [`FactsCache`]). If the `[filters]` reject it, the file is
 //!    deleted with [`files::safe_delete`].
@@ -53,30 +53,31 @@
 //! - [`DownloadEnv::filter_ctx`]: the screen size and theme for the filters;
 //! - [`DownloadEnv::downloaded`]: an optional hook called after every attempt the loop makes.
 //!
-//! Task 14 spawns `Downloader::new().run(&engine, shutdown, wake)` from `Engine::run`, keeps the
-//! `Arc<Notify>` and calls `wake.notify_one()` from `reload` (`notify_one` keeps a permit, so a
-//! reload during a download isn't lost), and calls [`download_one`] for `download_one(id)`.
+//! `Engine::run` spawns `Downloader::new().run(&engine, shutdown, wake)`; `reload` calls
+//! `wake.notify_one()` (`notify_one` keeps a permit, so a reload during a download isn't lost).
+//! `Engine::download_one` and the empty-pool fallback of `next` call [`download_one`].
 
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 
 use kakemono_config::schema::Config;
 use kakemono_config::valid_id;
 use kakemono_sources::local::list_images;
-use kakemono_sources::{OnlineSource, ProviderError, SourceSet, WallpaperResult};
+use kakemono_sources::{DownloadError, OnlineSource, ProviderError, SourceSet, WallpaperResult};
 use rand::seq::IndexedRandom;
 use reqwest::Client;
 use tokio::sync::Notify;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-use crate::engine::redact_in;
 use crate::facts::FactsCache;
 use crate::files::{self, Protect, SEEN_LEDGER};
 use crate::filters::{FilterCtx, Filters};
+use crate::gotext::redact_in;
+use crate::interval::IntervalSetting;
 
 /// Used when `[daemon] download_interval` is invalid or zero.
 pub const DEFAULT_DOWNLOAD_INTERVAL: Duration = Duration::from_secs(10 * 60);
@@ -102,12 +103,35 @@ pub trait DownloadEnv: Send + Sync {
     fn protect(&self) -> Protect;
     /// The screen size and theme the filters judge against.
     fn filter_ctx(&self) -> FilterCtx;
+    /// The compiled `[filters]` a download must pass (compiled once per config, not per
+    /// download).
+    fn filters(&self) -> Arc<Filters>;
+    /// The per-source locks every [`download_one`] holds, shared by every caller of this host.
+    fn source_locks(&self) -> &SourceLocks;
     /// Called after every download attempt [`Downloader::run`] makes, with the source id and
     /// the result of [`download_one`]. Does nothing by default.
-    fn downloaded(&self, _source_id: &str, _outcome: &Result<PathBuf, String>) {}
+    fn downloaded(&self, _source_id: &str, _outcome: &Result<PathBuf, DownloadFailure>) {}
 }
 
-/// Why [`try_download`] produced no image. `Display` is the error text [`download_one`] returns.
+/// One async lock per source id. [`download_one`] holds its source's lock from the fetch to the
+/// trim, so two downloads for one source (the background loop and `download_now`, or the
+/// cold-start fill and `next`'s on-demand download) never pick the same "fresh" URL or lose an
+/// append to the seen ledger.
+#[derive(Debug, Default)]
+pub struct SourceLocks(std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>);
+
+impl SourceLocks {
+    /// Waits for the lock of source `id`.
+    pub async fn lock(&self, id: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        let lock = {
+            let mut map = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+            Arc::clone(map.entry(id.to_owned()).or_default())
+        };
+        lock.lock_owned().await
+    }
+}
+
+/// Why [`download_one`] produced no image. `Display` is the text the daemon shows.
 #[derive(Debug, thiserror::Error)]
 pub enum DownloadFailure {
     /// The source id can't name a folder.
@@ -125,9 +149,14 @@ pub enum DownloadFailure {
     /// Every result is in the seen ledger.
     #[error("provider {name} has nothing new for query {query:?}")]
     NothingNew { name: &'static str, query: String },
-    /// The image download failed. The text is `download image: …`, secrets redacted.
-    #[error("{0}")]
-    Download(String),
+    /// The image download failed. The text is `download image: …`, secrets in `url` redacted.
+    #[error("download image: {}", redact_in(&error.to_string(), url))]
+    Download {
+        /// The image URL, as the provider gave it.
+        url: String,
+        #[source]
+        error: DownloadError,
+    },
     /// The image was downloaded, failed the filters and was deleted.
     #[error("downloaded {} failed the filters ({}); deleted", path.display(), failed.join(", "))]
     Filtered {
@@ -149,17 +178,19 @@ pub struct Backoff {
 #[derive(Debug, Default)]
 pub struct Downloader {
     backoff: HashMap<String, Backoff>,
-    /// The invalid `download_interval` already warned about.
-    warned: Option<String>,
+    /// `[daemon] download_interval`, warned once per bad value.
+    interval: IntervalSetting,
 }
 
 impl Downloader {
     /// A downloader with no backoff.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// The backoff of source `id`, if it ever failed and hasn't succeeded since.
+    #[must_use]
     pub fn backoff(&self, id: &str) -> Option<Backoff> {
         self.backoff.get(id).copied()
     }
@@ -256,7 +287,7 @@ impl Downloader {
         source: &OnlineSource,
     ) {
         let interval = self.interval(cfg);
-        let outcome = match try_download(env, source).await {
+        let outcome = match download_one(env, source).await {
             Ok(path) => {
                 tracing::info!(source_id = %source.id, path = %path.display(), "downloaded");
                 self.backoff.remove(&source.id);
@@ -285,7 +316,7 @@ impl Downloader {
                         self.backoff.remove(&source.id);
                     }
                 }
-                Err(failure.to_string())
+                Err(failure)
             }
         };
         env.downloaded(&source.id, &outcome);
@@ -306,24 +337,12 @@ impl Downloader {
     /// `[daemon] download_interval`, or [`DEFAULT_DOWNLOAD_INTERVAL`] (warned once per value)
     /// when it is invalid or zero.
     fn interval(&mut self, cfg: &Config) -> Duration {
-        let raw = &cfg.daemon.download_interval;
-        let problem = match cfg.daemon.download_interval_duration() {
-            Ok(d) if !d.is_zero() => {
-                self.warned = None;
-                return d;
-            }
-            Ok(_) => "the interval is zero".to_owned(),
-            Err(e) => e.to_string(),
-        };
-        if self.warned.as_deref() != Some(raw.as_str()) {
-            tracing::warn!(
-                interval = %raw,
-                %problem,
-                "invalid [daemon] download_interval, defaulting to 10m"
-            );
-            self.warned = Some(raw.clone());
-        }
-        DEFAULT_DOWNLOAD_INTERVAL
+        self.interval.resolve(
+            "download_interval",
+            &cfg.daemon.download_interval,
+            cfg.daemon.download_interval_duration(),
+            DEFAULT_DOWNLOAD_INTERVAL,
+        )
     }
 }
 
@@ -343,23 +362,19 @@ async fn image_count(cfg: &Config, id: &str) -> Option<usize> {
     Some(count.unwrap_or(0))
 }
 
-/// Downloads one image for `source` (see the module docs), ignoring backoff. The error text
-/// keeps the engine's `provider {name} fetch: {e}` format.
+/// Downloads one image for `source` (see the module docs), ignoring backoff.
+///
+/// # Errors
+///
+/// A [`DownloadFailure`]; its text keeps the engine's `provider {name} fetch: {e}` format.
 pub async fn download_one<E: DownloadEnv + ?Sized>(
-    env: &E,
-    source: &OnlineSource,
-) -> Result<PathBuf, String> {
-    try_download(env, source).await.map_err(|e| e.to_string())
-}
-
-/// [`download_one`] with the failure kind kept, for callers that react to it.
-pub async fn try_download<E: DownloadEnv + ?Sized>(
     env: &E,
     source: &OnlineSource,
 ) -> Result<PathBuf, DownloadFailure> {
     if !valid_id(&source.id) {
         return Err(DownloadFailure::InvalidId(source.id.clone()));
     }
+    let _lock = env.source_locks().lock(&source.id).await;
     let cfg = env.config();
     let download_dir = &cfg.daemon.download_dir;
     let dir = download_dir.join(&source.id);
@@ -397,11 +412,9 @@ pub async fn try_download<E: DownloadEnv + ?Sized>(
     let url = result.image_url.as_str();
     let path = kakemono_sources::download(&env.http(), url, &dir)
         .await
-        .map_err(|e| {
-            DownloadFailure::Download(format!(
-                "download image: {}",
-                redact_in(&e.to_string(), url)
-            ))
+        .map_err(|error| DownloadFailure::Download {
+            url: url.to_owned(),
+            error,
         })?;
     if let Err(err) = record_seen(&ledger, url).await {
         tracing::warn!(ledger = %ledger.display(), "can't record a downloaded url: {err}");
@@ -410,7 +423,7 @@ pub async fn try_download<E: DownloadEnv + ?Sized>(
     let facts = env.facts();
     let image = facts.facts(&path).await;
     facts.schedule_save();
-    let filters = Filters::compile(&cfg.filters).0;
+    let filters = env.filters();
     if let Some(image) = image.filter(|_| !filters.is_empty())
         && let Err(failed) = filters.check(&path, &image, &env.filter_ctx())
     {
@@ -445,6 +458,10 @@ fn backoff_delay(failure: &DownloadFailure, failures: u32, interval: Duration) -
 
 /// Appends `url` to the seen ledger at `ledger`, keeping the newest [`SEEN_CAP`] lines. Creates
 /// the file (and its folder) if needed.
+///
+/// # Errors
+///
+/// The ledger or its folder cannot be read or written.
 pub async fn record_seen(ledger: &Path, url: &str) -> io::Result<()> {
     let mut seen = read_seen(ledger).await;
     seen.push(url.to_owned());
@@ -454,13 +471,16 @@ pub async fn record_seen(ledger: &Path, url: &str) -> io::Result<()> {
         text.push_str(line);
         text.push('\n');
     }
-    if let Some(dir) = ledger.parent() {
-        tokio::fs::create_dir_all(dir).await?;
-    }
-    // Write a hidden temp file and rename it, so a crash never leaves a torn ledger.
-    let tmp = ledger.with_extension("tmp");
-    tokio::fs::write(&tmp, text).await?;
-    tokio::fs::rename(&tmp, ledger).await
+    // A unique temp file and a rename, so a crash never leaves a torn ledger.
+    let ledger = ledger.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        if let Some(dir) = ledger.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        kakemono_fs::atomic_write(&ledger, text.as_bytes())
+    })
+    .await
+    .map_err(io::Error::other)?
 }
 
 /// The URLs in the seen ledger at `ledger`, oldest first. A missing file is an empty list.
@@ -506,6 +526,7 @@ mod tests {
     type Event = (String, Result<PathBuf, String>);
 
     struct TestEnv {
+        locks: SourceLocks,
         cfg: Mutex<Arc<Config>>,
         sources: Arc<SourceSet>,
         facts: Arc<FactsCache>,
@@ -544,8 +565,15 @@ mod tests {
                 theme: Theme::Light,
             }
         }
-        fn downloaded(&self, source_id: &str, outcome: &Result<PathBuf, String>) {
-            let _ = self.events.send((source_id.to_owned(), outcome.clone()));
+        fn source_locks(&self) -> &SourceLocks {
+            &self.locks
+        }
+        fn filters(&self) -> Arc<Filters> {
+            Arc::new(Filters::compile(&self.config().filters).0)
+        }
+        fn downloaded(&self, source_id: &str, outcome: &Result<PathBuf, DownloadFailure>) {
+            let outcome = outcome.as_ref().cloned().map_err(ToString::to_string);
+            let _ = self.events.send((source_id.to_owned(), outcome));
         }
     }
 
@@ -593,6 +621,7 @@ mod tests {
             );
             let (tx, events) = mpsc::unbounded_channel();
             let env = Arc::new(TestEnv {
+                locks: SourceLocks::default(),
                 cfg: Mutex::new(Arc::new(cfg)),
                 sources: Arc::new(sources),
                 facts,
@@ -765,7 +794,10 @@ mod tests {
         assert_eq!(read_seen(&ledger).await.len(), 2);
 
         let err = download_one(&*fx.env, &source).await.unwrap_err();
-        assert_eq!(err, "provider bing has nothing new for query \"\"");
+        assert_eq!(
+            err.to_string(),
+            "provider bing has nothing new for query \"\""
+        );
         server.verify().await;
     }
 
@@ -783,7 +815,7 @@ mod tests {
             .set_config(|c| c.filters.brightness = BrightnessFilter::Dark);
         let source = fx.env.sources.get("a").unwrap().clone();
 
-        let err = try_download(&*fx.env, &source).await.unwrap_err();
+        let err = download_one(&*fx.env, &source).await.unwrap_err();
 
         assert!(
             matches!(&err, DownloadFailure::Filtered { failed, .. } if failed == &["brightness"]),
@@ -891,13 +923,50 @@ mod tests {
         );
     }
 
+    /// The texts the daemon shows for a failed download (`download_now`, the empty-pool
+    /// fallback). `Download` replaced a pre-rendered string; its text must not change.
+    #[test]
+    fn download_failure_texts_are_pinned() {
+        let url = "https://x/a.jpg?api_key=s3cret";
+        let download = DownloadFailure::Download {
+            url: url.into(),
+            error: DownloadError::Status {
+                url: url.into(),
+                status: 500,
+            },
+        };
+        assert_eq!(
+            download.to_string(),
+            "download image: download: GET https://x/a.jpg?api_key=REDACTED returned status 500"
+        );
+        let fetch = DownloadFailure::Fetch {
+            name: "bing",
+            error: ProviderError::RateLimited("slow down".into()),
+        };
+        assert_eq!(fetch.to_string(), "provider bing fetch: slow down");
+        let nothing = DownloadFailure::NothingNew {
+            name: "bing",
+            query: "q".into(),
+        };
+        assert_eq!(
+            nothing.to_string(),
+            "provider bing has nothing new for query \"q\""
+        );
+    }
+
     #[test]
     fn backoff_durations_follow_the_spec() {
         let rate = || DownloadFailure::Fetch {
             name: "x",
             error: ProviderError::RateLimited("r".into()),
         };
-        let other = || DownloadFailure::Download("download image: boom".into());
+        let other = || DownloadFailure::Download {
+            url: "https://x/a.jpg".into(),
+            error: DownloadError::Status {
+                url: "https://x/a.jpg".into(),
+                status: 500,
+            },
+        };
         let nothing = DownloadFailure::NothingNew {
             name: "x",
             query: String::new(),
@@ -1020,7 +1089,40 @@ mod tests {
         )]));
         let source = fx.env.sources.get("a").unwrap().clone();
         let err = download_one(&*fx.env, &source).await.unwrap_err();
-        assert_eq!(err, "provider bing fetch: bing: unexpected status 500");
+        assert_eq!(
+            err.to_string(),
+            "provider bing fetch: bing: unexpected status 500"
+        );
+    }
+
+    /// H7: two downloads for one source at once (cold start plus `download_now`) must not both
+    /// take the same "fresh" URL or lose a ledger append.
+    #[tokio::test(start_paused = true)]
+    async fn concurrent_downloads_for_one_source_never_share_a_url() {
+        let server = MockServer::start().await;
+        serve(&server, "/a/only.png", false, 1).await;
+        let a = provider("bing", &server, &["/a/only.png"]);
+        let fx = Fixture::new(SourceSet::fake(vec![(
+            "a",
+            Arc::clone(&a) as Arc<dyn Provider>,
+            "",
+        )]));
+        let source = fx.env.sources.get("a").unwrap().clone();
+
+        let (first, second) = tokio::join!(
+            download_one(&*fx.env, &source),
+            download_one(&*fx.env, &source)
+        );
+
+        let (ok, err) = match (first, second) {
+            (Ok(path), Err(e)) | (Err(e), Ok(path)) => (path, e),
+            other => panic!("expected one download and one `nothing new`: {other:?}"),
+        };
+        assert!(matches!(err, DownloadFailure::NothingNew { .. }), "{err:?}");
+        assert_eq!(fx.images("a"), vec![ok]);
+        let seen = read_seen(&fx.dir("a").join(files::SEEN_LEDGER)).await;
+        assert_eq!(seen, vec![format!("{}/a/only.png", server.uri())]);
+        server.verify().await;
     }
 
     #[tokio::test]

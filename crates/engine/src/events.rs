@@ -1,8 +1,9 @@
 //! Engine events, broadcast to `subscribe` clients and the UI (plan §D).
 //!
-//! `Engine` owns the sender. `next`, `prev`, `set_file` and `trash` send `Changed`;
-//! `pause`/`resume` send `Paused` when the flag flips; the rotation loop (Task 21) sends
-//! `ThemeChanged`. The IPC server (Task 45) forwards each one to `subscribe` clients as a
+//! `Engine` owns the sender. Every op that sets the wallpaper sends `Changed`: `next`, `prev`,
+//! `set_file`, `trash`, `fetch_url`, and `next` with an empty pool after its on-demand
+//! download. `pause`/`resume` send `Paused` when the flag flips; the
+//! rotation loop sends `ThemeChanged`. The IPC server (Task 45) forwards each one to `subscribe` clients as a
 //! [`kakemono_protocol::types::Event`] through the `From` impl below.
 
 use kakemono_platform::api::Theme;

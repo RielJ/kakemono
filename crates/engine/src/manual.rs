@@ -8,28 +8,34 @@
 //!   path) into `[daemon] manual_dir` and sets it. The body must be a JPEG, PNG or WebP by its
 //!   magic bytes (the `Content-Type` and the extension are not trusted) and at most
 //!   [`MAX_FETCH_BYTES`]. The history entry has `source` and `source_id` `"manual"`.
+//!
+//! Errors are typed ([`SourceOpError`], [`ManualError`]); their `Display` text is what the
+//! daemon sends, unchanged from the Go-era strings.
 //! - [`Engine::download_now`] downloads one image for a source now, ignoring the downloader's
 //!   backoff, without setting it.
 
-use std::io::Write as _;
+use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use kakemono_config::schema::{SourceEntry, SourceType};
 use kakemono_protocol::types::WallpaperInfo;
+use kakemono_sources::download::MAX_IMAGE_BYTES;
 use kakemono_sources::local::list_images;
 use kakemono_sources::{build_online, is_image_file};
 use reqwest::Url;
+use tokio::task::JoinError;
 
-use crate::engine::{Engine, EngineError, disk_info, go_stat_error, redact_in};
+use crate::engine::{Engine, EngineError, SourceOpError, disk_info};
+use crate::gotext::{go_stat_error, redact_in};
 use crate::pool::MANUAL_ID;
 
 /// How long [`Engine::check_source`] waits for the provider.
 pub const CHECK_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// The largest image [`Engine::fetch_url`] accepts: 64 MB.
-pub const MAX_FETCH_BYTES: u64 = 64 * 1024 * 1024;
+/// The largest image [`Engine::fetch_url`] accepts: 64 MB, the limit every source shares.
+pub const MAX_FETCH_BYTES: u64 = MAX_IMAGE_BYTES;
 
 /// The error of an op that needs the network while `[daemon] internet` is off.
 pub const INTERNET_OFF: &str = "Internet access is off";
@@ -40,6 +46,68 @@ pub const NO_IMAGES_FOUND: &str = "no images found";
 /// The row id [`Engine::check_source`] gives its temporary row.
 const CHECK_ID: &str = "check";
 
+/// Why [`Engine::fetch_url`] failed before setting the image. Crosses IPC as its `Display`
+/// string, shown as is (no `manager: ` prefix).
+#[derive(Debug, thiserror::Error)]
+pub enum ManualError {
+    /// The input is neither an http(s) URL, a `file://` URL nor an absolute path.
+    #[error("not an http(s) URL or absolute file path: {0:?}")]
+    BadInput(String),
+    /// A URL with `[daemon] internet` off.
+    #[error("Internet access is off")]
+    InternetOff,
+    /// The GET failed. `url` has its secrets redacted.
+    #[error("download {url}: {reason}")]
+    Download { url: String, reason: FetchFailure },
+    /// The body isn't a JPEG, PNG or WebP by its magic bytes.
+    #[error("not a JPEG, PNG or WebP image")]
+    NotAnImage,
+    /// The body or file is over [`MAX_FETCH_BYTES`].
+    #[error("image is larger than {} MB", MAX_FETCH_BYTES / 1024 / 1024)]
+    TooLarge,
+    /// The local file can't be stat'ed. Go's `os.Stat` text.
+    #[error("{}", go_stat_error(path, source))]
+    Stat {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    /// The local path is a folder or another non-file.
+    #[error("{} is not a file", .0.display())]
+    NotAFile(PathBuf),
+    /// Reading the local file failed.
+    #[error("read {}: {source}", path.display())]
+    Read {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    /// Creating `manual_dir` or writing the new file failed.
+    #[error("save {}: {source}", path.display())]
+    Save {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+    /// Every `-<n>` name in `manual_dir` is taken.
+    #[error("save {}: no free file name", .0.display())]
+    NoFreeName(PathBuf),
+    /// The save task panicked or was cancelled.
+    #[error("save failed: {0}")]
+    Task(#[source] JoinError),
+}
+
+/// Why the GET of [`ManualError::Download`] failed.
+#[derive(Debug, thiserror::Error)]
+pub enum FetchFailure {
+    /// The request or the body read failed (the error carries no URL).
+    #[error(transparent)]
+    Http(#[from] reqwest::Error),
+    /// A non-2xx answer.
+    #[error("HTTP {0}")]
+    Status(u16),
+}
+
 impl Engine {
     /// Counts the images a `[[sources]]` row of type `kind` at `location` would give, without
     /// saving anything. Online types: one provider query with the current provider settings
@@ -47,31 +115,38 @@ impl Engine {
     /// results. Local types: `folder` counts recursively, `album-name`/`album-date` count the
     /// folder's own images, `images` is 1 for an image file. A leading `~` is expanded.
     ///
-    /// Errors (shown as is): [`NO_IMAGES_FOUND`] for zero, [`INTERNET_OFF`] for an online type
-    /// with `[daemon] internet` off, `check timed out after 15s`, a location that doesn't parse
-    /// (e.g. `unsplash: ...`), the provider's error text, `unsupported source type`.
-    pub async fn check_source(&self, kind: SourceType, location: &str) -> Result<u32, String> {
+    /// # Errors
+    ///
+    /// A [`SourceOpError`], shown as is: [`NO_IMAGES_FOUND`] for zero, [`INTERNET_OFF`] for an
+    /// online type with `[daemon] internet` off, `check timed out after 15s`, a location that
+    /// doesn't parse (e.g. `unsplash: ...`), the provider's error text, `unsupported source
+    /// type`.
+    pub async fn check_source(
+        &self,
+        kind: SourceType,
+        location: &str,
+    ) -> Result<u32, SourceOpError> {
         let location = location.trim();
         let count = if kind.is_local() {
             let path = expand_home(location);
             tokio::task::spawn_blocking(move || count_local(kind, &path))
                 .await
-                .map_err(|e| format!("check failed: {e}"))?
+                .map_err(SourceOpError::Check)?
         } else if kind.is_online() {
             self.check_online(kind, location).await?
         } else {
-            return Err("unsupported source type".to_owned());
+            return Err(SourceOpError::Unsupported);
         };
         if count == 0 {
-            return Err(NO_IMAGES_FOUND.to_owned());
+            return Err(SourceOpError::NoImagesFound);
         }
         Ok(u32::try_from(count).unwrap_or(u32::MAX))
     }
 
-    async fn check_online(&self, kind: SourceType, location: &str) -> Result<usize, String> {
+    async fn check_online(&self, kind: SourceType, location: &str) -> Result<usize, SourceOpError> {
         let cfg = self.config();
         if !cfg.daemon.internet {
-            return Err(INTERNET_OFF.to_owned());
+            return Err(SourceOpError::InternetOff);
         }
         let entry = SourceEntry {
             id: CHECK_ID.to_owned(),
@@ -81,7 +156,7 @@ impl Engine {
         };
         let http = self.inner.deps.http.clone();
         // Parse the location first: the sources factory skips a bad row with only a log line.
-        build_online(&entry, &cfg, http.clone()).map_err(|e| e.to_string())?;
+        build_online(&entry, &cfg, http.clone())?;
         let mut check_cfg = (*cfg).clone();
         check_cfg.sources = vec![entry];
         let set = (self.inner.deps.sources)(&check_cfg, http);
@@ -89,14 +164,11 @@ impl Engine {
             .online
             .into_iter()
             .next()
-            .ok_or_else(|| format!("{kind}: can't build the source"))?;
+            .ok_or(SourceOpError::CantBuild(kind))?;
         let fetch = source.provider.fetch(&source.query);
         match tokio::time::timeout(CHECK_TIMEOUT, fetch).await {
-            Err(_) => Err(format!(
-                "check timed out after {}s",
-                CHECK_TIMEOUT.as_secs()
-            )),
-            Ok(Err(e)) => Err(e.to_string()),
+            Err(_) => Err(SourceOpError::CheckTimeout),
+            Ok(Err(e)) => Err(SourceOpError::Provider(e)),
             Ok(Ok(results)) => Ok(results.len()),
         }
     }
@@ -110,18 +182,21 @@ impl Engine {
     /// The history entry: `source` and `source_id` `"manual"`, `image_url` the URL (empty for a
     /// local file), the file name as title.
     ///
-    /// Errors are [`EngineError::Manual`] (text shown as is): `not an http(s) URL or absolute
-    /// file path: ...`, [`INTERNET_OFF`] for a URL with `[daemon] internet` off, `download ...:
-    /// ...` (secrets in the URL redacted), `not a JPEG, PNG or WebP image`, `image is larger
-    /// than 64 MB`, `stat <path>: ...`, `save <path>: ...`; or [`EngineError::Set`]. A file
-    /// that was saved but couldn't be set stays in `manual_dir`.
+    /// A file that was saved but couldn't be set stays in `manual_dir`.
+    ///
+    /// # Errors
+    ///
+    /// [`EngineError::Manual`] (text shown as is): `not an http(s) URL or absolute file path:
+    /// ...`, [`INTERNET_OFF`] for a URL with `[daemon] internet` off, `download ...: ...`
+    /// (secrets in the URL redacted), `not a JPEG, PNG or WebP image`, `image is larger than 64
+    /// MB`, `stat <path>: ...`, `save <path>: ...`; or [`EngineError::Set`].
     pub async fn fetch_url(&self, input: &str) -> Result<WallpaperInfo, EngineError> {
         let input = input.trim();
         let manual_dir = self.config().daemon.manual_dir_resolved();
-        let (path, image_url) = match parse_input(input).map_err(EngineError::Manual)? {
+        let (path, image_url) = match parse_input(input)? {
             Input::Remote(url) => {
                 if !self.config().daemon.internet {
-                    return Err(EngineError::Manual(INTERNET_OFF.to_owned()));
+                    return Err(ManualError::InternetOff.into());
                 }
                 let (bytes, format) = self.download_image(&url).await?;
                 let name = url_file_name(&url);
@@ -131,7 +206,7 @@ impl Engine {
             Input::Local(path) => (import_local(&manual_dir, &path).await?, String::new()),
         };
 
-        let _op = self.inner.op.lock().await;
+        let _op = self.lock_op().await;
         self.set_image(&path).await?;
         let now = (self.inner.deps.now)();
         let info = WallpaperInfo {
@@ -140,7 +215,7 @@ impl Engine {
         };
         tracing::info!(path = %path.display(), "fetched into the manual folder");
         self.snap().state.push(info.clone(), now);
-        self.persist();
+        self.persist().await;
         self.changed(&info);
         Ok(info)
     }
@@ -150,9 +225,13 @@ impl Engine {
     /// enabled online source whose download folder has no image, in config order.
     ///
     /// Returns the downloaded file (the first one without `id`), or `None` without `id` when no
-    /// source needed an image. Errors: [`INTERNET_OFF`], `no enabled online source "<id>"`, or
-    /// the download failures joined with `"; "` when none succeeded.
-    pub async fn download_now(&self, id: Option<&str>) -> Result<Option<PathBuf>, String> {
+    /// source needed an image.
+    ///
+    /// # Errors
+    ///
+    /// A [`SourceOpError`]: [`INTERNET_OFF`], `no enabled online source "<id>"`, or the
+    /// download failures joined with `"; "` when none succeeded.
+    pub async fn download_now(&self, id: Option<&str>) -> Result<Option<PathBuf>, SourceOpError> {
         if let Some(id) = id {
             return self.download_one(id).await.map(Some);
         }
@@ -161,7 +240,7 @@ impl Engine {
             (Arc::clone(&snap.cfg), Arc::clone(&snap.sources))
         };
         if !cfg.daemon.internet {
-            return Err(INTERNET_OFF.to_owned());
+            return Err(SourceOpError::InternetOff);
         }
         let download_dir = cfg.daemon.download_dir.clone();
         let empty: Vec<String> = tokio::task::spawn_blocking(move || {
@@ -173,7 +252,7 @@ impl Engine {
                 .collect()
         })
         .await
-        .map_err(|e| format!("download failed: {e}"))?;
+        .map_err(SourceOpError::List)?;
 
         let mut first = None;
         let mut failures = Vec::new();
@@ -183,24 +262,29 @@ impl Engine {
                     tracing::info!(source_id = %id, path = %path.display(), "downloaded now");
                     first.get_or_insert(path);
                 }
-                Err(message) => {
-                    tracing::warn!(source_id = %id, error = %message, "download now failed");
-                    failures.push(message);
+                Err(SourceOpError::Download(failure)) => {
+                    tracing::warn!(source_id = %id, error = %failure, "download now failed");
+                    failures.push(failure);
+                }
+                // The source left the config, or the internet was turned off, mid-loop.
+                Err(other) => {
+                    tracing::warn!(source_id = %id, error = %other, "download now skipped");
                 }
             }
         }
         match first {
             Some(path) => Ok(Some(path)),
             None if failures.is_empty() => Ok(None),
-            None => Err(failures.join("; ")),
+            None => Err(SourceOpError::Downloads(failures)),
         }
     }
 
     /// GETs `url` with the shared client, at most [`MAX_FETCH_BYTES`], and checks the type.
-    async fn download_image(&self, url: &Url) -> Result<(Vec<u8>, ImageFormat), EngineError> {
+    async fn download_image(&self, url: &Url) -> Result<(Vec<u8>, ImageFormat), ManualError> {
         let raw = url.as_str();
-        let fail = |e: &dyn std::fmt::Display| {
-            EngineError::Manual(redact_in(&format!("download {raw}: {e}"), raw))
+        let fail = |reason: FetchFailure| ManualError::Download {
+            url: redact_in(raw, raw),
+            reason,
         };
         let mut response = self
             .inner
@@ -209,25 +293,29 @@ impl Engine {
             .get(url.clone())
             .send()
             .await
-            .map_err(|e| fail(&e.without_url()))?;
+            .map_err(|e| fail(e.without_url().into()))?;
         let status = response.status();
         if !status.is_success() {
-            return Err(fail(&format!("HTTP {}", status.as_u16())));
+            return Err(fail(FetchFailure::Status(status.as_u16())));
         }
         if response
             .content_length()
             .is_some_and(|n| n > MAX_FETCH_BYTES)
         {
-            return Err(too_large());
+            return Err(ManualError::TooLarge);
         }
         let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|e| fail(&e.without_url()))? {
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| fail(e.without_url().into()))?
+        {
             if (bytes.len() + chunk.len()) as u64 > MAX_FETCH_BYTES {
-                return Err(too_large());
+                return Err(ManualError::TooLarge);
             }
             bytes.extend_from_slice(&chunk);
         }
-        let format = ImageFormat::sniff(&bytes).ok_or_else(not_an_image)?;
+        let format = ImageFormat::sniff(&bytes).ok_or(ManualError::NotAnImage)?;
         Ok((bytes, format))
     }
 }
@@ -238,8 +326,8 @@ enum Input {
     Local(PathBuf),
 }
 
-fn parse_input(input: &str) -> Result<Input, String> {
-    let bad = || format!("not an http(s) URL or absolute file path: {input:?}");
+fn parse_input(input: &str) -> Result<Input, ManualError> {
+    let bad = || ManualError::BadInput(input.to_owned());
     if Path::new(input).is_absolute() {
         return Ok(Input::Local(PathBuf::from(input)));
     }
@@ -288,17 +376,6 @@ impl ImageFormat {
             Self::WebP => "webp",
         }
     }
-}
-
-fn not_an_image() -> EngineError {
-    EngineError::Manual("not a JPEG, PNG or WebP image".to_owned())
-}
-
-fn too_large() -> EngineError {
-    EngineError::Manual(format!(
-        "image is larger than {} MB",
-        MAX_FETCH_BYTES / 1024 / 1024
-    ))
 }
 
 /// The URL's last path segment, percent-decoded (`image` when there is none).
@@ -357,14 +434,16 @@ async fn save_unique(
     name: &str,
     format: ImageFormat,
     bytes: Vec<u8>,
-) -> Result<PathBuf, EngineError> {
+) -> Result<PathBuf, ManualError> {
     let (stem, ext) = file_name_for(name, format);
     let dir = dir.to_path_buf();
     tokio::task::spawn_blocking(move || {
-        let save_err =
-            |p: &Path, e: std::io::Error| EngineError::Manual(format!("save {}: {e}", p.display()));
+        let save_err = |p: &Path, source: io::Error| ManualError::Save {
+            path: p.to_path_buf(),
+            source,
+        };
         std::fs::create_dir_all(&dir).map_err(|e| save_err(&dir, e))?;
-        for n in 1u32.. {
+        for n in 1u32..=u32::MAX {
             let file = if n == 1 {
                 format!("{stem}.{ext}")
             } else {
@@ -377,7 +456,7 @@ async fn save_unique(
                 .open(&path)
             {
                 Ok(f) => f,
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
                 Err(e) => return Err(save_err(&path, e)),
             };
             if let Err(e) = out.write_all(&bytes).and_then(|()| out.sync_all()) {
@@ -386,31 +465,29 @@ async fn save_unique(
             }
             return Ok(path);
         }
-        unreachable!("u32 names ran out")
+        Err(ManualError::NoFreeName(dir))
     })
     .await
-    .map_err(|e| EngineError::Manual(format!("save failed: {e}")))?
+    .map_err(ManualError::Task)?
 }
 
 /// Copies the local image `src` into `manual_dir` (or uses it when it is already directly in
 /// `manual_dir`), after the size and type checks.
-async fn import_local(manual_dir: &Path, src: &Path) -> Result<PathBuf, EngineError> {
+async fn import_local(manual_dir: &Path, src: &Path) -> Result<PathBuf, ManualError> {
     let meta = tokio::fs::metadata(src)
         .await
-        .map_err(|e| EngineError::Manual(go_stat_error(src, &e)))?;
+        .map_err(|source| ManualError::Stat {
+            path: src.to_path_buf(),
+            source,
+        })?;
     if !meta.is_file() {
-        return Err(EngineError::Manual(format!(
-            "{} is not a file",
-            src.display()
-        )));
+        return Err(ManualError::NotAFile(src.to_path_buf()));
     }
     if meta.len() > MAX_FETCH_BYTES {
-        return Err(too_large());
+        return Err(ManualError::TooLarge);
     }
-    let bytes = tokio::fs::read(src)
-        .await
-        .map_err(|e| EngineError::Manual(format!("read {}: {e}", src.display())))?;
-    let format = ImageFormat::sniff(&bytes).ok_or_else(not_an_image)?;
+    let bytes = read_capped(src).await?;
+    let format = ImageFormat::sniff(&bytes).ok_or(ManualError::NotAnImage)?;
     let in_manual = match (
         src.parent().and_then(|p| p.canonicalize().ok()),
         manual_dir.canonicalize().ok(),
@@ -436,6 +513,29 @@ fn count_local(kind: SourceType, location: &Path) -> usize {
         SourceType::Images => usize::from(location.is_file() && is_image_file(location)),
         _ => 0,
     }
+}
+
+/// Reads `src`, at most [`MAX_FETCH_BYTES`]: a file that grew past the cap after the size check
+/// is [`ManualError::TooLarge`], not read whole.
+async fn read_capped(src: &Path) -> Result<Vec<u8>, ManualError> {
+    let path = src.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let read_err = |source| ManualError::Read {
+            path: path.clone(),
+            source,
+        };
+        let file = std::fs::File::open(&path).map_err(read_err)?;
+        let mut bytes = Vec::new();
+        file.take(MAX_FETCH_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(read_err)?;
+        if bytes.len() as u64 > MAX_FETCH_BYTES {
+            return Err(ManualError::TooLarge);
+        }
+        Ok(bytes)
+    })
+    .await
+    .map_err(ManualError::Task)?
 }
 
 /// `location` with a leading `~` expanded to the home directory.

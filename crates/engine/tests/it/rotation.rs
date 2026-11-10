@@ -199,6 +199,29 @@ async fn ticks_every_interval() {
     run.stop().await;
 }
 
+/// A second `run` while one is running returns at once: two loops would race on the
+/// single-waiter notifies and run two downloaders.
+#[tokio::test(start_paused = true)]
+async fn a_second_run_returns_at_once() {
+    let f = Fixture::new(|_| {});
+    let mut rx = f.engine.subscribe();
+    let run = f.run().await;
+    timeout(
+        Duration::from_secs(1),
+        f.engine.run(CancellationToken::new()),
+    )
+    .await
+    .expect("a second run must return at once");
+    changed_within(&mut rx, 31 * MIN)
+        .await
+        .expect("the first loop still ticks");
+    assert_eq!(f.engine.status().history_count, 1, "one loop, one tick");
+    run.stop().await;
+    // After the first loop stopped, `run` works again.
+    let again = f.run().await;
+    again.stop().await;
+}
+
 #[tokio::test(start_paused = true)]
 async fn manual_next_resets_the_timer() {
     let f = Fixture::new(|_| {});
@@ -223,12 +246,14 @@ async fn pause_suppresses_ticks_persists_and_resume_keeps_the_cadence() {
     let run = f.run().await;
 
     f.engine.pause();
+    f.engine.save_state().await;
     assert!(State::load(&f.root.join("state.json")).unwrap().paused());
     assert_eq!(changed_within(&mut rx, 135 * MIN).await, None);
     assert!(f.setter.calls().is_empty());
 
     // Resumed at 2h15m: the next tick is on the 30m cadence (2h30m), as with Go's ticker.
     f.engine.resume();
+    f.engine.save_state().await;
     assert!(!State::load(&f.root.join("state.json")).unwrap().paused());
     assert_eq!(
         changed_within(&mut rx, 15 * MIN - Duration::from_secs(1)).await,

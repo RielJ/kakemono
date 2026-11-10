@@ -4,6 +4,7 @@
 //! linked separately against the crate and all its dependencies. Run one module with
 //! `cargo test --test it <module>::`.
 
+mod common;
 mod engine_core;
 mod files;
 mod hooks;

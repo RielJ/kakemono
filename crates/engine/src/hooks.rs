@@ -92,6 +92,11 @@ impl Default for HookSlots {
 ///
 /// A relative `info.path` (`set` stores the path as given) is made absolute against the current
 /// directory, for both `{path}` and `KAKEMONO_PATH`.
+///
+/// # Errors
+///
+/// [`HookError`] for an invalid hook spec, an unknown placeholder or a path that cannot be
+/// made absolute.
 pub fn invocation(
     spec: &[String],
     info: &WallpaperInfo,

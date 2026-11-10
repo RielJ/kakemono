@@ -8,70 +8,19 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use chrono::{DateTime, FixedOffset};
 use kakemono_config::Config;
-use kakemono_config::schema::{SourceEntry, SourceType};
+use kakemono_config::schema::SourceType;
 use kakemono_engine::downloader::DownloadEnv;
-use kakemono_engine::engine::resolve_local_path;
 use kakemono_engine::state::State;
 use kakemono_engine::{Deps, Engine, EngineError, EngineEvent};
 use kakemono_platform::api::{Fit, Platform, Theme};
 use kakemono_platform::fake::{ManualSignals, RecordingSetter};
 use kakemono_sources::fake::StaticProvider;
 use kakemono_sources::{Provider, ProviderError, SourceSet, WallpaperResult};
-use tempfile::TempDir;
 use tokio::sync::Notify;
-use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::MockServer;
 
-const NOW: &str = "2026-03-04T05:06:07.890+08:00";
-
-struct Fixture {
-    _dir: TempDir,
-    root: PathBuf,
-    setter: RecordingSetter,
-    signals: ManualSignals,
-    engine: Engine,
-}
-
-impl Fixture {
-    fn state_path(&self) -> PathBuf {
-        self.root.join("state.json")
-    }
-
-    fn download_dir(&self) -> PathBuf {
-        self.root.join("downloads")
-    }
-
-    /// An image file outside the download dir.
-    fn image(&self, name: &str) -> PathBuf {
-        let p = self.root.join(name);
-        std::fs::write(&p, b"fake image data").unwrap();
-        p
-    }
-}
-
-fn config(root: &Path) -> Config {
-    let mut cfg = Config::default();
-    cfg.daemon.download_dir = root.join("downloads");
-    cfg.daemon.trash_dir = root.join("trash");
-    cfg.favorites.dir = root.join("favorites");
-    cfg.daemon.interval = "45m".to_owned();
-    cfg.desktop.fit = Fit::Center;
-    cfg.daemon.internet = true;
-    cfg.daemon.download_limit_mb_enabled = false;
-    cfg.sources = Vec::new();
-    cfg
-}
-
-fn row(id: &str, kind: SourceType, location: &str) -> SourceEntry {
-    SourceEntry {
-        id: id.to_owned(),
-        enabled: true,
-        kind,
-        location: location.to_owned(),
-    }
-}
+use crate::common::{Builder, Fixture, image_server, now, row, settle};
 
 /// A one-source set: the online row `bing` backed by `provider`.
 fn bing_set(provider: Arc<dyn Provider>) -> SourceSet {
@@ -83,52 +32,18 @@ fn bing_row(c: &mut Config) {
     c.sources = vec![row("bing", SourceType::Bing, "")];
 }
 
+/// An engine with Internet access and `interval = "45m"` over the fixed `sources`.
 fn fixture_with(sources: SourceSet, theme: Theme, edit: impl FnOnce(&mut Config)) -> Fixture {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().to_path_buf();
-    let mut cfg = config(&root);
-    edit(&mut cfg);
-    let setter = RecordingSetter::new();
-    let signals = ManualSignals::new(theme);
-    let platform = Platform {
-        setter: Arc::new(setter.clone()),
-        signals: Arc::new(signals.clone()),
-    };
-    let now: DateTime<FixedOffset> = DateTime::parse_from_rfc3339(NOW).unwrap();
-    let deps = Deps::new(platform, kakemono_sources::http::client().unwrap())
-        .with_sources(sources)
-        .with_clock(move || now);
-    let engine = Engine::new(cfg, State::new(), root.join("state.json"), deps).unwrap();
-    Fixture {
-        _dir: dir,
-        root,
-        setter,
-        signals,
-        engine,
-    }
+    Builder::new()
+        .internet(true)
+        .interval("45m")
+        .theme(theme)
+        .sources(sources)
+        .build(|c, _| edit(c))
 }
 
 fn fixture(sources: SourceSet) -> Fixture {
     fixture_with(sources, Theme::Light, |_| {})
-}
-
-fn local_result(name: &str, image: &Path) -> WallpaperResult {
-    StaticProvider::result(name, image.to_str().unwrap())
-}
-
-/// A 12 KiB JPEG-typed body at `/img/<name>` (the downloader wants ≥ 10 KiB and an image type).
-async fn image_server(name: &str) -> MockServer {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path(format!("/img/{name}")))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .insert_header("content-type", "image/jpeg")
-                .set_body_bytes(vec![0xAB; 12 * 1024]),
-        )
-        .mount(&server)
-        .await;
-    server
 }
 
 // ─── construction ─────────────────────────────────────────────────────────────────────────
@@ -143,17 +58,16 @@ async fn new_creates_download_trash_and_favorites_dirs() {
 
 #[tokio::test]
 async fn new_reports_a_dir_it_cannot_create() {
-    let dir = tempfile::tempdir().unwrap();
-    let blocker = dir.path().join("file");
-    std::fs::write(&blocker, b"x").unwrap();
-    let mut cfg = config(dir.path());
+    let base = Builder::new().build(|_, _| {});
+    let blocker = base.image("file");
+    let mut cfg = (*base.engine.config()).clone();
     cfg.daemon.download_dir = blocker.join("sub");
     let platform = Platform {
         setter: Arc::new(RecordingSetter::new()),
         signals: Arc::new(ManualSignals::new(Theme::Light)),
     };
     let deps = Deps::new(platform, reqwest::Client::new()).with_sources(SourceSet::default());
-    let err = Engine::new(cfg, State::new(), dir.path().join("s.json"), deps).unwrap_err();
+    let err = Engine::new(cfg, State::new(), base.root.join("s.json"), deps).unwrap_err();
     assert!(matches!(err, EngineError::CreateDir { .. }), "{err:?}");
     assert!(err.to_string().starts_with("manager: create dir "), "{err}");
 }
@@ -162,7 +76,7 @@ async fn new_reports_a_dir_it_cannot_create() {
 
 #[tokio::test]
 async fn next_on_an_empty_pool_downloads_sets_and_pushes_history() {
-    let server = image_server("photo.jpg").await;
+    let server = image_server(&["photo.jpg"]).await;
     let url = format!("{}/img/photo.jpg", server.uri());
     let bing = Arc::new(StaticProvider::new(
         "bing",
@@ -173,7 +87,7 @@ async fn next_on_an_empty_pool_downloads_sets_and_pushes_history() {
 
     let info = f.engine.next().await.unwrap();
 
-    let expected_path = f.download_dir().join("bing").join("photo.jpg");
+    let expected_path = f.downloads().join("bing").join("photo.jpg");
     assert_eq!(info.path, expected_path.to_str().unwrap());
     assert_eq!(std::fs::read(&expected_path).unwrap().len(), 12 * 1024);
     assert_eq!(info.source, "bing");
@@ -194,58 +108,7 @@ async fn next_on_an_empty_pool_downloads_sets_and_pushes_history() {
     // Persisted, with last_changed from the injected clock.
     let saved = State::load(&f.state_path()).unwrap();
     assert_eq!(saved.current(), Some(&info));
-    assert_eq!(
-        saved.last_changed(),
-        Some(DateTime::parse_from_rfc3339(NOW).unwrap())
-    );
-}
-
-#[tokio::test]
-async fn resolve_local_path_uses_an_absolute_path_without_download() {
-    let dir = tempfile::tempdir().unwrap();
-    let img = dir.path().join("local.png");
-    std::fs::write(&img, b"png").unwrap();
-    let downloads = dir.path().join("downloads");
-    let path = resolve_local_path(
-        &reqwest::Client::new(),
-        &local_result("local", &img),
-        &downloads,
-    )
-    .await
-    .unwrap();
-    assert_eq!(path, img);
-    assert!(!downloads.exists());
-}
-
-#[tokio::test]
-async fn resolve_local_path_accepts_file_urls() {
-    let dir = tempfile::tempdir().unwrap();
-    let img = dir.path().join("with space.png");
-    std::fs::write(&img, b"png").unwrap();
-    // Go trimmed `file://` literally; the percent-encoded form works too.
-    for url in [
-        format!("file://{}", img.display()),
-        reqwest::Url::from_file_path(&img).unwrap().to_string(),
-    ] {
-        let result = StaticProvider::result("local", &url);
-        let path = resolve_local_path(&reqwest::Client::new(), &result, dir.path())
-            .await
-            .unwrap();
-        assert_eq!(path, img, "url {url}");
-    }
-}
-
-#[tokio::test]
-async fn resolve_local_path_reports_a_missing_file_with_go_message() {
-    let result = StaticProvider::result("local", "/nonexistent/kakemono-x.png");
-    let err = resolve_local_path(&reqwest::Client::new(), &result, Path::new("/tmp"))
-        .await
-        .unwrap_err();
-    assert_eq!(
-        err,
-        "local file not found \"/nonexistent/kakemono-x.png\": \
-         stat /nonexistent/kakemono-x.png: no such file or directory"
-    );
+    assert_eq!(saved.last_changed(), Some(now()));
 }
 
 #[tokio::test]
@@ -307,7 +170,7 @@ async fn prev_on_empty_history_errors() {
 async fn prev_then_next_walks_history_without_fetching() {
     let bing = Arc::new(StaticProvider::new("bing", vec![]));
     let f = fixture_with(bing_set(bing.clone()), Theme::Light, bing_row);
-    let fetched = f.download_dir().join("bing").join("fetched.png");
+    let fetched = f.downloads().join("bing").join("fetched.png");
     std::fs::create_dir_all(fetched.parent().unwrap()).unwrap();
     std::fs::write(&fetched, b"f").unwrap();
     let a = f.engine.set_file(&f.image("a.png")).await.unwrap();
@@ -443,10 +306,12 @@ async fn pause_resume_persist_and_emit_on_change() {
     let mut events = f.engine.subscribe();
     f.engine.pause();
     assert!(f.engine.is_paused() && f.engine.status().paused);
+    f.engine.save_state().await;
     assert!(State::load(&f.state_path()).unwrap().paused());
     f.engine.pause(); // no change, no event
     f.engine.resume();
     assert!(!f.engine.status().paused);
+    f.engine.save_state().await;
     assert!(!State::load(&f.state_path()).unwrap().paused());
     assert_eq!(events.try_recv().unwrap(), EngineEvent::Paused(true));
     assert_eq!(events.try_recv().unwrap(), EngineEvent::Paused(false));
@@ -458,13 +323,14 @@ async fn engine_starts_from_loaded_state() {
     let f = fixture(SourceSet::default());
     let a = f.engine.set_file(&f.image("a.png")).await.unwrap();
     f.engine.pause();
+    f.engine.save_state().await;
     let loaded = State::load(&f.state_path()).unwrap();
     let platform = Platform {
         setter: Arc::new(RecordingSetter::new()),
         signals: Arc::new(ManualSignals::new(Theme::Light)),
     };
     let deps = Deps::new(platform, reqwest::Client::new()).with_sources(SourceSet::default());
-    let again = Engine::new(config(&f.root), loaded, f.state_path(), deps).unwrap();
+    let again = Engine::new((*f.engine.config()).clone(), loaded, f.state_path(), deps).unwrap();
     let st = again.status();
     assert_eq!(st.current, Some(a));
     assert!(st.paused);
@@ -479,18 +345,10 @@ async fn reload_replaces_config_and_rebuilds_sources() {
     std::fs::write(pics.join("x.png"), b"x").unwrap();
     let builds = Arc::new(AtomicUsize::new(0));
     let f = {
-        let root = dir.path().join("root");
-        std::fs::create_dir(&root).unwrap();
-        let setter = RecordingSetter::new();
-        let signals = ManualSignals::new(Theme::Light);
-        let platform = Platform {
-            setter: Arc::new(setter.clone()),
-            signals: Arc::new(signals.clone()),
-        };
         let builds = builds.clone();
         // The sources follow the config: one fake per online row.
-        let deps = Deps::new(platform, reqwest::Client::new()).with_sources_factory(
-            move |cfg: &Config, _: reqwest::Client| {
+        Builder::new()
+            .sources_factory(move |cfg, _| {
                 builds.fetch_add(1, Ordering::SeqCst);
                 SourceSet::fake(
                     cfg.sources
@@ -503,18 +361,8 @@ async fn reload_replaces_config_and_rebuilds_sources() {
                         })
                         .collect(),
                 )
-            },
-        );
-        let mut cfg = config(&root);
-        cfg.daemon.internet = false;
-        let engine = Engine::new(cfg, State::new(), root.join("s.json"), deps).unwrap();
-        Fixture {
-            _dir: tempfile::tempdir().unwrap(),
-            root,
-            setter,
-            signals,
-            engine,
-        }
+            })
+            .build(|_, _| {})
     };
     assert!(matches!(
         f.engine.next().await.unwrap_err(),
@@ -522,8 +370,7 @@ async fn reload_replaces_config_and_rebuilds_sources() {
     ));
     assert!(f.engine.sources().is_empty());
 
-    let mut cfg = config(&f.root);
-    cfg.daemon.internet = false;
+    let mut cfg = (*f.engine.config()).clone();
     cfg.daemon.interval = "2h".to_owned();
     cfg.sources = vec![
         row("pics", SourceType::Folder, pics.to_str().unwrap()),
@@ -577,11 +424,11 @@ impl Provider for GatedProvider {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 async fn status_does_not_block_while_next_awaits_a_slow_provider() {
     let entered = Arc::new(Notify::new());
     let release = Arc::new(Notify::new());
-    let server = image_server("slow.jpg").await;
+    let server = image_server(&["slow.jpg"]).await;
     let slow = Arc::new(GatedProvider {
         entered: entered.clone(),
         release: release.clone(),
@@ -617,7 +464,7 @@ async fn status_does_not_block_while_next_awaits_a_slow_provider() {
     // A second mutating op waits for the first.
     let engine = f.engine.clone();
     let prev = tokio::spawn(async move { engine.prev().await });
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    settle().await;
     assert!(!prev.is_finished(), "prev must wait for the op lock");
 
     release.notify_one();

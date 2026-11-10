@@ -61,6 +61,7 @@ impl Filters {
     /// Compiles `cfg`. Returns the filters and one warning per enabled filter that was skipped
     /// because its setting is invalid (a bad `name_regex` or a `color` that isn't `#rrggbb`).
     /// `min_rating` is clamped to 1–5.
+    #[must_use]
     pub fn compile(cfg: &FiltersConfig) -> (Filters, Vec<String>) {
         let mut warnings = Vec::new();
         let color = if cfg.color_enabled {
@@ -103,6 +104,7 @@ impl Filters {
     }
 
     /// Whether no filter is enabled, so every image passes.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         !self.landscape
             && self.min_size_percent.is_none()
@@ -114,6 +116,10 @@ impl Filters {
 
     /// Checks every enabled filter. `Err` lists the names of the failed ones, in a fixed order:
     /// [`LANDSCAPE`], [`MIN_SIZE`], [`BRIGHTNESS`], [`COLOR`], [`RATING`], [`NAME_REGEX`].
+    ///
+    /// # Errors
+    ///
+    /// The names of the filters that failed.
     pub fn check(
         &self,
         path: &Path,
@@ -133,6 +139,7 @@ impl Filters {
     }
 
     /// Number of enabled filters the image passes.
+    #[must_use]
     pub fn score(&self, path: &Path, facts: &ImageFacts, ctx: &FilterCtx) -> usize {
         self.results(path, facts, ctx)
             .filter(|(_, pass)| *pass)

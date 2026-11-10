@@ -7,118 +7,31 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::{DateTime, FixedOffset};
 use image::{Rgb, RgbImage};
 use kakemono_config::Config;
-use kakemono_config::schema::{SourceEntry, SourceType};
+use kakemono_config::schema::SourceType;
 use kakemono_engine::downloader::DownloadEnv;
-use kakemono_engine::files::safe_delete;
-use kakemono_engine::state::State;
-use kakemono_engine::{Deps, Engine, EngineError, EngineEvent};
-use kakemono_platform::api::{Fit, Platform, Theme};
-use kakemono_platform::fake::{ManualSignals, RecordingSetter};
+use kakemono_engine::files::{safe_delete, trim_to_mb};
+use kakemono_engine::{Engine, EngineError, EngineEvent};
+use kakemono_platform::api::{BackendInfo, Fit, SetError, Theme, WallpaperSetter};
 use kakemono_protocol::types::WallpaperInfo;
 use kakemono_sources::fake::StaticProvider;
-use kakemono_sources::{Provider, SourceSet};
-use tempfile::TempDir;
-use tokio::sync::broadcast;
+use tokio::sync::{Notify, broadcast};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
-use wiremock::matchers::{any, method, path};
+use wiremock::matchers::any;
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const NOW: &str = "2026-03-04T05:06:07.890+08:00";
+use crate::common::{Builder, Fakes, Fixture, image_server, provider, row, settle, write};
+
 const MIN: Duration = Duration::from_secs(60);
 const NO_IMAGES: &str = "No images yet. Add a source or turn on Internet access.";
 
-/// Online rows and the fake providers behind them, by row id.
-type Fakes = Vec<(&'static str, Arc<dyn Provider>)>;
-
-struct Fixture {
-    _dir: TempDir,
-    root: PathBuf,
-    setter: RecordingSetter,
-    signals: ManualSignals,
-    engine: Engine,
-}
-
-impl Fixture {
-    fn downloads(&self) -> PathBuf {
-        self.root.join("downloads")
-    }
-}
-
-fn row(id: &str, kind: SourceType, location: &str) -> SourceEntry {
-    SourceEntry {
-        id: id.to_owned(),
-        enabled: true,
-        kind,
-        location: location.to_owned(),
-    }
-}
-
-/// A config rooted in `root` with no source and no Internet access.
-fn config(root: &Path) -> Config {
-    let mut cfg = Config::default();
-    cfg.daemon.download_dir = root.join("downloads");
-    cfg.daemon.trash_dir = root.join("trash");
-    cfg.favorites.dir = root.join("favorites");
-    cfg.daemon.interval = "30m".to_owned();
-    cfg.daemon.internet = false;
-    cfg.daemon.download_limit_mb_enabled = false;
-    cfg.desktop.fit = Fit::Center;
-    cfg.sources = Vec::new();
-    cfg
-}
-
-/// The `SourceSet` for `cfg`: one fake per enabled row whose id is in `fakes`.
-fn fake_set(cfg: &Config, fakes: &Fakes) -> SourceSet {
-    SourceSet::fake(
-        cfg.sources
-            .iter()
-            .filter(|e| e.enabled)
-            .filter_map(|e| {
-                fakes
-                    .iter()
-                    .find(|(id, _)| *id == e.id)
-                    .map(|(id, p)| (*id, Arc::clone(p), ""))
-            })
-            .collect(),
-    )
-}
-
-/// An engine over `cfg` (edited by `edit`, which gets the temp root) whose online sources
-/// come from `fakes`.
+/// An engine over a config with no source and no Internet access (edited by `edit`, which
+/// gets the temp root) whose online sources come from `fakes`.
 fn fixture(fakes: Fakes, edit: impl FnOnce(&mut Config, &Path)) -> Fixture {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().canonicalize().unwrap();
-    let mut cfg = config(&root);
-    edit(&mut cfg, &root);
-    let setter = RecordingSetter::new();
-    let signals = ManualSignals::new(Theme::Light);
-    let platform = Platform {
-        setter: Arc::new(setter.clone()),
-        signals: Arc::new(signals.clone()),
-    };
-    let now: DateTime<FixedOffset> = DateTime::parse_from_rfc3339(NOW).unwrap();
-    let deps = Deps::new(platform, kakemono_sources::http::client().unwrap())
-        .with_sources_factory(move |cfg, _| fake_set(cfg, &fakes))
-        .with_clock(move || now);
-    let engine = Engine::new(cfg, State::new(), root.join("state.json"), deps).unwrap();
-    Fixture {
-        _dir: dir,
-        root,
-        setter,
-        signals,
-        engine,
-    }
-}
-
-fn write(path: &Path, bytes: &[u8]) -> PathBuf {
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, bytes).unwrap();
-    path.to_path_buf()
+    Builder::new().fakes(fakes).build(edit)
 }
 
 /// A real PNG of `w`×`h` pixels (the filters read its facts).
@@ -130,26 +43,8 @@ fn png(path: &Path, w: u32, h: u32) -> PathBuf {
     path.to_path_buf()
 }
 
-/// A 12 KiB JPEG-typed body at `/img/<name>` (downloads want ≥ 10 KiB and an image type).
-async fn image_server(name: &str) -> MockServer {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path(format!("/img/{name}")))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .insert_header("content-type", "image/jpeg")
-                .set_body_bytes(vec![0xAB; 12 * 1024]),
-        )
-        .mount(&server)
-        .await;
-    server
-}
-
 fn bing_at(url: &str) -> Arc<StaticProvider> {
-    Arc::new(StaticProvider::new(
-        "bing",
-        vec![StaticProvider::result("bing", url)],
-    ))
+    provider("bing", url)
 }
 
 // ─── next picks from disk ─────────────────────────────────────────────────────────────────
@@ -235,11 +130,73 @@ async fn next_does_not_trim_the_download_folder() {
     );
 }
 
+/// A setter that waits in `set` until released, then fails when the image is gone, as a real
+/// backend would.
+struct GatedSetter {
+    entered: Arc<Notify>,
+    release: Arc<Notify>,
+}
+
+#[async_trait::async_trait]
+impl WallpaperSetter for GatedSetter {
+    async fn set(&self, image: &Path, _fit: Fit) -> Result<(), SetError> {
+        self.entered.notify_one();
+        self.release.notified().await;
+        if image.is_file() {
+            Ok(())
+        } else {
+            Err(SetError::Os(format!("{} is gone", image.display())))
+        }
+    }
+
+    fn info(&self) -> BackendInfo {
+        BackendInfo {
+            name: "gated".to_owned(),
+            detail: String::new(),
+        }
+    }
+}
+
+/// M2: the downloader's trim runs outside the op lock; it must spare the image `next` picked
+/// and is still setting.
+#[tokio::test]
+async fn a_trim_while_next_sets_the_picked_image_spares_it() {
+    let (entered, release) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+    let gated = GatedSetter {
+        entered: Arc::clone(&entered),
+        release: Arc::clone(&release),
+    };
+    let f = Builder::new().setter(Arc::new(gated)).build(|c, _| {
+        c.sources = vec![row("bing", SourceType::Bing, "")];
+    });
+    let only = write(&f.downloads().join("bing/a.jpg"), b"fake image data");
+
+    let engine = f.engine.clone();
+    let next = tokio::spawn(async move { engine.next().await });
+    timeout(Duration::from_secs(5), entered.notified())
+        .await
+        .expect("set never called");
+    let protect = DownloadEnv::protect(&f.engine);
+    let deleted = trim_to_mb(&f.downloads(), 0, &protect).await;
+    release.notify_one();
+    let info = timeout(Duration::from_secs(5), next)
+        .await
+        .expect("next never finished")
+        .unwrap();
+
+    assert_eq!(
+        deleted,
+        Vec::<PathBuf>::new(),
+        "the pending pick was trimmed"
+    );
+    assert_eq!(Path::new(&info.unwrap().path), only);
+}
+
 // ─── empty pool ───────────────────────────────────────────────────────────────────────────
 
 #[tokio::test]
 async fn next_with_an_empty_pool_and_internet_downloads_on_demand() {
-    let server = image_server("photo.jpg").await;
+    let server = image_server(&["photo.jpg"]).await;
     let url = format!("{}/img/photo.jpg", server.uri());
     let bing = bing_at(&url);
     let fakes: Fakes = vec![("bing", bing.clone())];
@@ -267,7 +224,7 @@ async fn next_with_an_empty_pool_and_internet_downloads_on_demand() {
 
 #[tokio::test]
 async fn on_demand_download_falls_back_to_the_next_source() {
-    let server = image_server("w.jpg").await;
+    let server = image_server(&["w.jpg"]).await;
     let bad = Arc::new(StaticProvider::failing("bing", "bing: boom"));
     let good = Arc::new(StaticProvider::new(
         "wallhaven",
@@ -353,17 +310,27 @@ async fn next_without_an_online_source_and_an_empty_pool_returns_no_images() {
 
 #[tokio::test]
 async fn download_one_by_id_fills_that_source_folder() {
-    let server = image_server("d.jpg").await;
+    let server = image_server(&["d.jpg"]).await;
     let fakes: Fakes = vec![("bing", bing_at(&format!("{}/img/d.jpg", server.uri())))];
     let f = fixture(fakes, |c, _| {
         c.daemon.internet = true;
         c.sources = vec![row("bing", SourceType::Bing, "")];
     });
-    let path = f.engine.download_one("bing").await.unwrap();
+    let path = f
+        .engine
+        .download_one("bing")
+        .await
+        .map_err(|e| e.to_string())
+        .unwrap();
     assert_eq!(path, f.downloads().join("bing/d.jpg"));
     assert!(f.setter.calls().is_empty(), "download_one sets nothing");
 
-    let err = f.engine.download_one("nope").await.unwrap_err();
+    let err = f
+        .engine
+        .download_one("nope")
+        .await
+        .map_err(|e| e.to_string())
+        .unwrap_err();
     assert_eq!(err, "no enabled online source \"nope\"");
 }
 
@@ -374,7 +341,12 @@ async fn download_one_refuses_while_internet_is_off() {
     let f = fixture(fakes, |c, _| {
         c.sources = vec![row("bing", SourceType::Bing, "")];
     });
-    let err = f.engine.download_one("bing").await.unwrap_err();
+    let err = f
+        .engine
+        .download_one("bing")
+        .await
+        .map_err(|e| e.to_string())
+        .unwrap_err();
     assert_eq!(err, "Internet access is off");
     assert_eq!(bing.calls(), 0);
 }
@@ -595,7 +567,7 @@ async fn wait_for_image(dir: &Path) -> bool {
 
 #[tokio::test]
 async fn reload_with_a_new_source_wakes_the_downloader() {
-    let server = image_server("bg.jpg").await;
+    let server = image_server(&["bg.jpg"]).await;
     let bing = bing_at(&format!("{}/img/bg.jpg", server.uri()));
     let fakes: Fakes = vec![("bing", bing.clone())];
     let f = fixture(fakes, |c, _| {
@@ -604,8 +576,9 @@ async fn reload_with_a_new_source_wakes_the_downloader() {
         c.daemon.download_interval = "10m".to_owned();
     });
     let running = run(&f.engine).await;
-    // Let the downloader finish its start pass (nothing to fill) and wait for its timer.
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Let the downloader finish its start pass (nothing to fill) and wait for its timer. The
+    // reload's wake is a stored permit, so the test is sound even if the pass is still going.
+    settle().await;
     assert_eq!(bing.calls(), 0);
 
     let mut cfg = (*f.engine.config()).clone();

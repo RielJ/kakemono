@@ -92,9 +92,10 @@ async fn wait_for_runs(runner: &RecordingRunner, n: usize) -> Vec<Invocation> {
     panic!("expected {n} hook runs, got {:?}", runner.invocations());
 }
 
-/// Lets spawned hook tasks run, then returns what was recorded.
+/// Lets spawned hook tasks run (they record their run on their first poll), then returns
+/// what was recorded.
 async fn settle(runner: &RecordingRunner) -> Vec<Invocation> {
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    crate::common::settle().await;
     runner.invocations()
 }
 
