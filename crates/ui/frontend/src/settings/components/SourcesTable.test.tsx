@@ -316,7 +316,7 @@ describe('SourcesTable', () => {
   describe('Add… and Edit…', () => {
     const choose = async (user: ReturnType<typeof userEvent.setup>, name: RegExp) => {
       await user.click(button('Add…'))
-      await user.click(screen.getByRole('menuitem', { name }))
+      await user.click(within(screen.getByRole('dialog', { name: 'Add a source' })).getByRole('button', { name }))
     }
 
     it('adds Bing directly as a new enabled row', async () => {
@@ -399,8 +399,8 @@ describe('SourcesTable', () => {
     it('hides online types from Add… when Internet access is off', async () => {
       const { user } = await setup({ internet: false })
       await user.click(button('Add…'))
-      expect(screen.queryByRole('menuitem', { name: /^Wallhaven/ })).toBeNull()
-      expect(screen.getByRole('menuitem', { name: /^Folders/ })).toBeTruthy()
+      expect(screen.queryByRole('button', { name: /^Wallhaven/ })).toBeNull()
+      expect(screen.getByRole('button', { name: /^Folders/ })).toBeTruthy()
     })
   })
 })

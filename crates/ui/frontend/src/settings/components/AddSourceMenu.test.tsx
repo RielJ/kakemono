@@ -13,76 +13,65 @@ function setup(internet = true) {
 }
 
 const trigger = () => screen.getByRole('button', { name: 'Add…' })
-const menu = () => screen.getByRole('menu', { name: 'Add a source' })
+const dialog = () => screen.getByRole('dialog', { name: 'Add a source' })
+const choice = (name: RegExp) => within(dialog()).getByRole('button', { name })
+const names = (group: string) =>
+  [...within(dialog()).getByRole('region', { name: group }).querySelectorAll('[data-choice] strong')].map((s) => s.textContent)
 
 describe('AddSourceMenu', () => {
-  it('lists the local types, a separator, then the online types A–Z, each with a bold name and a description', async () => {
+  it('opens a dialog: local types on the left, online types A–Z on the right, each with a description', async () => {
     const { user } = setup()
-    expect(trigger().getAttribute('aria-haspopup')).toBe('menu')
-    expect(trigger().getAttribute('aria-expanded')).toBe('false')
+    expect(trigger().getAttribute('aria-haspopup')).toBe('dialog')
+    expect(screen.queryByRole('dialog')).toBeNull()
     await user.click(trigger())
-    expect(trigger().getAttribute('aria-expanded')).toBe('true')
-    const children = [...menu().children].map((el) =>
-      el.getAttribute('role') === 'separator' ? '—' : el.querySelector('strong')?.textContent,
-    )
-    expect(children).toEqual([
-      'Images',
-      'Folders',
-      'Sequential album by file name',
-      'Sequential album by file date',
-      '—',
-      'APOD',
-      'Bing',
-      'Reddit',
-      'Unsplash',
-      'Wallhaven',
-    ])
-    const wallhaven = within(menu()).getByRole('menuitem', { name: /^Wallhaven/ })
-    expect(wallhaven.textContent).toContain('Wallpapers from wallhaven.cc for a search or a URL.')
+    expect(names('On this Mac')).toEqual(['Images', 'Folders', 'Sequential album by file name', 'Sequential album by file date'])
+    expect(names('Online')).toEqual(['APOD', 'Bing', 'Reddit', 'Unsplash', 'Wallhaven'])
+    expect(choice(/^Wallhaven/).textContent).toContain('Wallpapers from wallhaven.cc for a search or a URL.')
+    expect(document.activeElement).toBe(choice(/^Images/))
   })
 
   it('hides the online types when Internet access is off', async () => {
     const { user } = setup(false)
     await user.click(trigger())
-    const names = within(menu())
-      .getAllByRole('menuitem')
-      .map((m) => m.querySelector('strong')?.textContent)
-    expect(names).toEqual(['Images', 'Folders', 'Sequential album by file name', 'Sequential album by file date'])
-    expect(within(menu()).queryByRole('separator')).toBeNull()
+    expect(names('On this Mac')).toHaveLength(4)
+    expect(within(dialog()).queryByRole('region', { name: 'Online' })).toBeNull()
   })
 
-  it('chooses an item by click and closes', async () => {
+  it('chooses a type by click and closes', async () => {
     const { onChoose, user } = setup()
     await user.click(trigger())
-    await user.click(within(menu()).getByRole('menuitem', { name: /^Bing/ }))
+    await user.click(choice(/^Bing/))
     expect(onChoose).toHaveBeenCalledWith('bing')
-    expect(screen.queryByRole('menu')).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('works from the keyboard: arrows move, Enter chooses, Escape closes and refocuses the button', async () => {
+  it('works from the keyboard: Up/Down wrap, Left/Right switch column, Enter chooses', async () => {
     const { onChoose, user } = setup()
-    trigger().focus()
+    await user.click(trigger())
+    await user.keyboard('{ArrowUp}')
+    expect(document.activeElement).toBe(choice(/^Wallhaven/))
     await user.keyboard('{ArrowDown}')
-    expect(document.activeElement).toBe(within(menu()).getByRole('menuitem', { name: /^Images/ }))
-    await user.keyboard('{End}')
-    expect(document.activeElement).toBe(within(menu()).getByRole('menuitem', { name: /^Wallhaven/ }))
-    await user.keyboard('{ArrowDown}')
-    expect(document.activeElement).toBe(within(menu()).getByRole('menuitem', { name: /^Images/ }))
-    await user.keyboard('{ArrowUp}{ArrowUp}')
-    expect(document.activeElement).toBe(within(menu()).getByRole('menuitem', { name: /^Unsplash/ }))
-    await user.keyboard('{Escape}')
-    expect(screen.queryByRole('menu')).toBeNull()
-    expect(document.activeElement).toBe(trigger())
-    await user.keyboard('{Enter}')
+    expect(document.activeElement).toBe(choice(/^Images/))
+    await user.keyboard('{ArrowDown}{ArrowRight}')
+    expect(document.activeElement).toBe(choice(/^Bing/))
+    await user.keyboard('{ArrowLeft}{End}')
+    expect(document.activeElement).toBe(choice(/^Wallhaven/))
     await user.keyboard('{Home}{ArrowDown}{Enter}')
     expect(onChoose).toHaveBeenCalledWith('folder')
   })
 
-  it('closes on a click outside', async () => {
+  it('closes on Escape, Cancel or a click outside without choosing, and refocuses the button', async () => {
     const { onChoose, user } = setup()
     await user.click(trigger())
-    await user.click(document.body)
-    expect(screen.queryByRole('menu')).toBeNull()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.activeElement).toBe(trigger())
+    await user.click(trigger())
+    await user.click(within(dialog()).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    await user.click(trigger())
+    await user.click(document.querySelector('.modal-backdrop') as HTMLElement)
+    expect(screen.queryByRole('dialog')).toBeNull()
     expect(onChoose).not.toHaveBeenCalled()
   })
 })

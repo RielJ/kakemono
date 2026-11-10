@@ -1,12 +1,17 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
+import { useRef, useState, type KeyboardEvent } from 'react'
 
 import type { SourceType } from '../../shared/bindings/SourceType'
 import { LOCAL_TYPES, ONLINE_TYPES, SOURCE_TYPES } from '../sourceTypes'
+import Modal from './Modal'
 
 /**
- * The Add… button and its menu: local types, a separator, then online types A–Z, each with a
- * bold name and a one-line description. Online types are hidden while Internet access is off.
- * A WAI-ARIA menu button: arrows, Home/End, Enter or Space to choose, Escape or Tab to close.
+ * The Add… button and its "Add a source" dialog: local types on the left, online types A–Z
+ * on the right, each a button with a bold name and a one-line description. Online types are
+ * hidden while Internet access is off. A modal, centred in the window, so the whole list is
+ * visible wherever the Sources table is scrolled to.
+ *
+ * Keys: Up/Down move through the choices (wrapping), Left/Right switch column, Home/End jump
+ * to the ends, Enter or Space chooses. Escape, Cancel or a click outside closes it.
  */
 export default function AddSourceMenu({
   internet,
@@ -18,117 +23,89 @@ export default function AddSourceMenu({
   disabled?: boolean
 }) {
   const [open, setOpen] = useState(false)
-  // Which item takes focus when the menu opens: the first, or the last (ArrowUp on the button).
-  const [startAt, setStartAt] = useState<'first' | 'last'>('first')
-  const menuId = useId()
-  const triggerId = useId()
-  const wrap = useRef<HTMLDivElement>(null)
-  const trigger = useRef<HTMLButtonElement>(null)
-  const menu = useRef<HTMLDivElement>(null)
-
-  const items = () => [...(menu.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])]
-
-  useEffect(() => {
-    if (!open) return
-    const list = items()
-    ;(startAt === 'last' ? list[list.length - 1] : list[0])?.focus({ preventScroll: true })
-    menu.current?.scrollIntoView?.({ block: 'nearest' })
-    const onDown = (e: MouseEvent) => {
-      if (e.target instanceof Node && !wrap.current?.contains(e.target)) setOpen(false)
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [open, startAt])
-
-  const show = (at: 'first' | 'last') => {
-    setStartAt(at)
-    setOpen(true)
-  }
-
-  const close = (refocus: boolean) => {
-    setOpen(false)
-    if (refocus) trigger.current?.focus()
-  }
+  const grid = useRef<HTMLDivElement>(null)
 
   const choose = (kind: SourceType) => {
-    close(true)
+    setOpen(false)
     onChoose(kind)
   }
 
-  const onTriggerKeyDown = (e: KeyboardEvent) => {
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+  const onGridKeyDown = (e: KeyboardEvent) => {
+    const root = grid.current
+    if (!root) return
+    const columns = [...root.querySelectorAll<HTMLElement>('[data-column]')].map((c) => [
+      ...c.querySelectorAll<HTMLElement>('[data-choice]'),
+    ])
+    const flat = columns.flat()
+    const at = flat.indexOf(document.activeElement as HTMLElement)
+    if (at < 0) return
+    const go = (el: HTMLElement | undefined) => {
       e.preventDefault()
-      show(e.key === 'ArrowUp' ? 'last' : 'first')
+      el?.focus()
     }
-  }
-
-  const onMenuKeyDown = (e: KeyboardEvent) => {
-    const list = items()
-    const at = list.indexOf(document.activeElement as HTMLElement)
-    const go = (i: number) => {
-      e.preventDefault()
-      list[(i + list.length) % list.length]?.focus()
-    }
+    const col = columns.findIndex((c) => c.includes(flat[at]))
+    const row = columns[col].indexOf(flat[at])
     switch (e.key) {
       case 'ArrowDown':
-        return go(at + 1)
+        return go(flat[(at + 1) % flat.length])
       case 'ArrowUp':
-        return go(at - 1)
+        return go(flat[(at - 1 + flat.length) % flat.length])
+      case 'ArrowRight':
+      case 'ArrowLeft': {
+        const other = columns[col + (e.key === 'ArrowRight' ? 1 : -1)]
+        if (!other) return
+        return go(other[Math.min(row, other.length - 1)])
+      }
       case 'Home':
-        return go(0)
+        return go(flat[0])
       case 'End':
-        return go(list.length - 1)
-      case 'Escape':
-        e.preventDefault()
-        e.stopPropagation()
-        return close(true)
-      case 'Tab':
-        return close(false)
+        return go(flat[flat.length - 1])
     }
   }
 
-  const item = (kind: SourceType) => {
+  const choice = (kind: SourceType, first: boolean) => {
     const info = SOURCE_TYPES[kind]
     return (
       <button
         key={kind}
         type="button"
-        role="menuitem"
-        tabIndex={-1}
-        className="menu-item"
+        className="add-choice"
+        data-choice
+        data-autofocus={first || undefined}
         onClick={() => choose(kind)}
       >
         <strong className="font-semibold">{info.menuLabel}</strong>
-        <span className="menu-desc" title={info.description}>
-          {info.description}
-        </span>
+        <span className="add-choice-desc">{info.description}</span>
       </button>
     )
   }
 
   return (
-    <div ref={wrap} className="relative">
-      <button
-        ref={trigger}
-        id={triggerId}
-        type="button"
-        className="btn"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-controls={open ? menuId : undefined}
-        disabled={disabled}
-        onClick={() => (open ? close(false) : show('first'))}
-        onKeyDown={onTriggerKeyDown}
-      >
+    <>
+      <button type="button" className="btn" aria-haspopup="dialog" disabled={disabled} onClick={() => setOpen(true)}>
         Add…
       </button>
       {open && (
-        <div ref={menu} id={menuId} role="menu" aria-label="Add a source" className="menu-popover" onKeyDown={onMenuKeyDown}>
-          {LOCAL_TYPES.map(item)}
-          {internet && <div role="separator" className="menu-separator" />}
-          {internet && ONLINE_TYPES.map(item)}
-        </div>
+        <Modal title="Add a source" onClose={() => setOpen(false)} className={internet ? 'modal-wide' : undefined}>
+          <div ref={grid} className="add-grid" data-columns={internet ? 2 : 1} onKeyDown={onGridKeyDown}>
+            <section data-column aria-label="On this Mac">
+              <h3 className="add-group">On this Mac</h3>
+              {LOCAL_TYPES.map((k, i) => choice(k, i === 0))}
+            </section>
+            {internet && (
+              <section data-column aria-label="Online">
+                <h3 className="add-group">Online</h3>
+                {ONLINE_TYPES.map((k) => choice(k, false))}
+              </section>
+            )}
+          </div>
+          <div className="mt-3 flex justify-end">
+            <button type="button" className="btn" onClick={() => setOpen(false)}>
+              Cancel
+            </button>
+          </div>
+        </Modal>
       )}
-    </div>
+    </>
   )
 }

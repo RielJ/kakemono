@@ -14,11 +14,14 @@ export default function Modal({
   onClose,
   children,
   describedBy,
+  className,
 }: {
   title: string
   onClose: () => void
   children: ReactNode
   describedBy?: string
+  /** Extra classes on the panel, e.g. a wider width. */
+  className?: string
 }) {
   const titleId = useId()
   const panel = useRef<HTMLDivElement>(null)
@@ -58,7 +61,7 @@ export default function Modal({
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={describedBy}
-        className="modal-panel"
+        className={className ? `modal-panel ${className}` : 'modal-panel'}
         onKeyDown={onKeyDown}
       >
         <h2 id={titleId} className="text-[13px] font-semibold">
