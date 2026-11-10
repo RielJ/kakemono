@@ -1,0 +1,131 @@
+{
+  "kind": "Listing",
+  "data": {
+    "after": "t3_x",
+    "children": [
+      {
+        "kind": "t3",
+        "data": {
+          "id": "good",
+          "name": "t3_good",
+          "title": "Mountain lake",
+          "author": "user1",
+          "permalink": "/r/wallpapers/comments/good/mountain_lake/",
+          "url": "https://i.redd.it/good.jpg",
+          "score": 500,
+          "over_18": false,
+          "preview": {
+            "images": [
+              {
+                "source": {"url": "https://preview.redd.it/good.jpg?width=3840&amp;format=pjpg&amp;s=src", "width": 3840, "height": 2160},
+                "resolutions": [
+                  {"url": "https://preview.redd.it/good.jpg?width=108&amp;s=a", "width": 108, "height": 60},
+                  {"url": "https://preview.redd.it/good.jpg?width=640&amp;s=d", "width": 640, "height": 360},
+                  {"url": "https://preview.redd.it/good.jpg?width=216&amp;s=b", "width": 216, "height": 121},
+                  {"url": "https://preview.redd.it/good.jpg?width=320&amp;s=c", "width": 320, "height": 180},
+                  {"url": "https://preview.redd.it/good.jpg?width=960&amp;s=e", "width": 960, "height": 540}
+                ]
+              }
+            ]
+          }
+        }
+      },
+      {
+        "kind": "t3",
+        "data": {
+          "id": "nsfw",
+          "name": "t3_nsfw",
+          "title": "Over 18",
+          "author": "user2",
+          "permalink": "/r/wallpapers/comments/nsfw/over_18/",
+          "url": "https://i.redd.it/nsfw.jpg",
+          "score": 900,
+          "over_18": true,
+          "preview": {"images": [{"source": {"url": "https://preview.redd.it/nsfw.jpg?s=src", "width": 1920, "height": 1080}, "resolutions": [{"url": "https://preview.redd.it/nsfw.jpg?width=320&amp;s=c", "width": 320, "height": 180}]}]}
+        }
+      },
+      {
+        "kind": "t3",
+        "data": {
+          "id": "low",
+          "name": "t3_low",
+          "title": "Low score",
+          "author": "user3",
+          "permalink": "/r/wallpapers/comments/low/low_score/",
+          "url": "https://i.redd.it/low.jpg",
+          "score": 99,
+          "over_18": false,
+          "preview": {"images": [{"source": {"url": "https://preview.redd.it/low.jpg?s=src", "width": 1920, "height": 1080}, "resolutions": [{"url": "https://preview.redd.it/low.jpg?width=320&amp;s=c", "width": 320, "height": 180}]}]}
+        }
+      },
+      {
+        "kind": "t3",
+        "data": {
+          "id": "offsite",
+          "name": "t3_offsite",
+          "title": "Image on an unlisted host",
+          "author": "user4",
+          "permalink": "/r/wallpapers/comments/offsite/unlisted/",
+          "url": "https://example.com/offsite.jpg",
+          "score": 800,
+          "over_18": false,
+          "preview": {"images": [{"source": {"url": "https://preview.redd.it/offsite.jpg?s=src", "width": 1920, "height": 1080}, "resolutions": [{"url": "https://preview.redd.it/offsite.jpg?width=320&amp;s=c", "width": 320, "height": 180}]}]}
+        }
+      },
+      {
+        "kind": "t3",
+        "data": {
+          "id": "badprev",
+          "name": "t3_badprev",
+          "title": "Preview on an unlisted host",
+          "author": "user5",
+          "permalink": "/r/wallpapers/comments/badprev/unlisted_preview/",
+          "url": "https://i.redd.it/badprev.jpg",
+          "score": 800,
+          "over_18": false,
+          "preview": {"images": [{"source": {"url": "https://evil.example/badprev.jpg", "width": 1920, "height": 1080}, "resolutions": [{"url": "https://evil.example/badprev.jpg?width=320", "width": 320, "height": 180}]}]}
+        }
+      },
+      {
+        "kind": "t3",
+        "data": {
+          "id": "link",
+          "name": "t3_link",
+          "title": "Not an image",
+          "author": "user6",
+          "permalink": "/r/wallpapers/comments/link/article/",
+          "url": "https://example.com/article",
+          "score": 800,
+          "over_18": false
+        }
+      },
+      {
+        "kind": "t3",
+        "data": {
+          "id": "imgur",
+          "name": "t3_imgur",
+          "title": "Imgur page, no preview",
+          "author": "user7",
+          "permalink": "/r/wallpapers/comments/imgur/imgur_page/",
+          "url": "https://imgur.com/abc123",
+          "score": 300,
+          "over_18": false
+        }
+      },
+      {
+        "kind": "t3",
+        "data": {
+          "id": "small",
+          "name": "t3_small",
+          "title": "Only small previews",
+          "author": "user8",
+          "permalink": "/r/wallpapers/comments/small/small_previews/",
+          "url": "https://i.redd.it/small.png",
+          "score": 200,
+          "over_18": false,
+          "preview": {"images": [{"source": {"url": "https://preview.redd.it/small.png?s=src", "width": 300, "height": 200}, "resolutions": [{"url": "https://preview.redd.it/small.png?width=108&amp;s=a", "width": 108, "height": 72}, {"url": "https://preview.redd.it/small.png?width=216&amp;s=b", "width": 216, "height": 144}]}]}
+        }
+      }
+    ]
+  }
+}
