@@ -95,6 +95,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::trash,
             commands::set_file,
             commands::thumbnails,
+            commands::tab_thumbnails,
             commands_sources::check_source,
             commands_sources::download_now,
             commands_sources::delete_source_files,

@@ -11,6 +11,7 @@
     "allow-status",
     "allow-daemon-connection",
     "allow-thumbnails",
+    "allow-tab-thumbnails",
     "allow-set-file",
     "allow-favorite",
     "allow-trash",

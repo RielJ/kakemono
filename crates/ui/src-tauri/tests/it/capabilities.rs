@@ -140,6 +140,7 @@ fn capabilities_picker_gets_only_what_the_picker_calls() {
             "reset_picker_position",
             "set_file",
             "status",
+            "tab_thumbnails",
             "thumbnails",
             "trash",
         ])

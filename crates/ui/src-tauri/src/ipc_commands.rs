@@ -20,6 +20,7 @@ pub const COMMANDS: &[&str] = &[
     "trash",
     "set_file",
     "thumbnails",
+    "tab_thumbnails",
     "check_source",
     "download_now",
     "delete_source_files",
