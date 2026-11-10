@@ -59,7 +59,7 @@ pub(crate) fn write_resolved(target: &Path, bytes: &[u8]) -> io::Result<()> {
     sync_dir(dir)
 }
 
-fn create_temp(dir: &Path, name: &OsStr) -> io::Result<(File, PathBuf)> {
+pub(crate) fn create_temp(dir: &Path, name: &OsStr) -> io::Result<(File, PathBuf)> {
     let pid = std::process::id();
     let mut last_err = None;
     for _ in 0..MAX_TEMP_ATTEMPTS {
@@ -78,7 +78,7 @@ fn create_temp(dir: &Path, name: &OsStr) -> io::Result<(File, PathBuf)> {
 }
 
 /// `create_new` write options; mode 0600 on Unix, since the config may hold API keys.
-fn private_options() -> OpenOptions {
+pub(crate) fn private_options() -> OpenOptions {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -108,7 +108,7 @@ fn fill_and_rename(
 /// Makes the rename durable. Some file systems can't sync a folder (`EINVAL`); the rename has
 /// already happened there, so that is not an error.
 #[cfg(unix)]
-fn sync_dir(dir: &Path) -> io::Result<()> {
+pub(crate) fn sync_dir(dir: &Path) -> io::Result<()> {
     match File::open(dir).and_then(|d| d.sync_all()) {
         Err(e)
             if matches!(
@@ -124,6 +124,6 @@ fn sync_dir(dir: &Path) -> io::Result<()> {
 
 /// Windows can't open a folder as a `File` without extra flags, and NTFS journals the rename.
 #[cfg(not(unix))]
-fn sync_dir(_dir: &Path) -> io::Result<()> {
+pub(crate) fn sync_dir(_dir: &Path) -> io::Result<()> {
     Ok(())
 }

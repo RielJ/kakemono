@@ -56,14 +56,16 @@ impl DaemonLink {
     /// never talks to a still-running Go daemon. A config that fails to load only loses its
     /// `socket_path`; the error is logged.
     pub fn from_environment() -> Result<Self, EndpointError> {
-        let socket_path = match kakemono_config::paths::Paths::detect() {
-            Ok(paths) => socket_override(&paths),
+        let paths = kakemono_config::paths::Paths::detect();
+        let socket_path = match &paths {
+            Ok(paths) => socket_override(paths),
             Err(err) => {
                 tracing::warn!(error = %err, "cannot resolve config paths; using the default socket");
                 None
             }
         };
-        endpoint::default_endpoint(socket_path.as_deref()).map(Self::new)
+        let runtime_dir = paths.ok().map(|paths| paths.runtime_dir);
+        endpoint::default_endpoint(socket_path.as_deref(), runtime_dir.as_deref()).map(Self::new)
     }
 
     pub fn endpoint(&self) -> &Endpoint {

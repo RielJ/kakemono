@@ -1,7 +1,7 @@
 //! Client tests against an in-test interprocess listener that replays canned Go responses
 //! (plan Task 4).
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use futures::StreamExt;
 use interprocess::local_socket::tokio::prelude::*;
@@ -248,7 +248,7 @@ async fn missing_socket_is_daemon_not_running() {
 #[tokio::test]
 async fn stale_socket_file_is_daemon_not_running() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let path: PathBuf = dir.path().join("stale.sock");
+    let path = dir.path().join("stale.sock");
     drop(std::os::unix::net::UnixListener::bind(&path).expect("bind"));
     assert!(path.exists(), "socket file left behind");
     let endpoint = Endpoint::new(&path).expect("endpoint");
@@ -269,4 +269,47 @@ async fn bind_creates_dir_0700_and_socket_0600() {
     assert_eq!(mode(srv.endpoint.path()), 0o600);
     assert_eq!(mode(srv.endpoint.path().parent().expect("parent")), 0o700);
     assert!(client::is_running(&srv.endpoint).await);
+}
+
+/// A request abandoned mid-round-trip (timed out or cancelled) leaves its reply in flight. The
+/// client must not hand that late reply to the next request: it is poisoned and must reconnect.
+#[tokio::test]
+async fn abandoned_request_poisons_the_client() {
+    let (srv, listener) = server();
+    let (late_tx, late_rx) = tokio::sync::oneshot::channel::<()>();
+    let (sent_tx, sent_rx) = tokio::sync::oneshot::channel::<()>();
+    let task = tokio::spawn(async move {
+        let conn = listener.accept().await.expect("accept");
+        let mut reader = BufReader::new(conn);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.expect("read");
+        // Answer only after the client gave up on this request.
+        late_rx.await.expect("signal");
+        reader
+            .get_mut()
+            .write_all(b"{\"ok\":true,\"data\":{\"late\":true}}\n")
+            .await
+            .expect("write");
+        sent_tx.send(()).expect("test waiting");
+        // Keep the connection open for a second request.
+        let mut next = String::new();
+        let _ = reader.read_line(&mut next).await;
+    });
+    let mut client = Client::connect(&srv.endpoint).await.expect("connect");
+    let abandoned = tokio::time::timeout(
+        std::time::Duration::from_millis(50),
+        client.request(Request::Status),
+    )
+    .await;
+    assert!(abandoned.is_err(), "the server never answered in time");
+    late_tx.send(()).expect("server waiting");
+    sent_rx.await.expect("late reply written");
+
+    let err = client
+        .request(Request::Next)
+        .await
+        .expect_err("a poisoned client must not read the late reply");
+    assert!(matches!(err, ClientError::Poisoned), "{err:?}");
+    drop(client);
+    task.await.expect("server");
 }

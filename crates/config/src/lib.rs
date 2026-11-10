@@ -15,8 +15,10 @@ pub use defaults::{defaults, defaults_for_home};
 pub use duration::{DurationError, parse_go};
 pub use error::ConfigError;
 pub use load::{
-    FileMigration, MigrationTarget, expand_tilde, load, load_or_default, load_or_default_with_home,
-    load_with_home, migrate_config, migrate_file, migrate_legacy_file, parse_str,
+    FileMigration, Loaded, MigrationTarget, expand_tilde, load, load_or_default,
+    load_or_default_report, load_or_default_report_with_home, load_or_default_with_home,
+    load_report_with_home, load_with_home, migrate_config, migrate_file, migrate_legacy_file,
+    parse_report, parse_str,
 };
 pub use migrate::{MigrationReport, migrate_document, needs_migration};
 pub use schema::{

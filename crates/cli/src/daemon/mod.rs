@@ -1,13 +1,15 @@
 //! The daemon process (port of Go `cmd/daemon.go` `runForeground` and `internal/daemon/daemon.go`).
 //!
 //! [`run`] does, in order (contract `.pi/contracts/daemon.md`):
-//! 1. Load the config (`--config`, else `Paths::locate_config`). A missing file is created from
+//! 1. Take the single-instance lock, so a refused second daemon writes nothing. Then load the
+//!    config (`--config`, else `Paths::locate_config`). A missing file is created from
 //!    the commented template first, as Go did. A legacy config is migrated to `[[sources]]` on
 //!    disk first ([`kakemono_config::migrate_config`]); the wallpaperd file is migrated into the
-//!    kakemono path and left as is.
+//!    kakemono path and left as is. Load warnings (replaced source ids, skipped `[[sources]]`
+//!    rows) are logged.
 //! 2. Resolve the endpoint: `--socket`, else the config's `socket_path`, else `$KAKEMONO_SOCKET`,
 //!    else the platform default.
-//! 3. Take the single-instance lock, then write `<runtime_dir>/daemon.pid` (removed on exit).
+//! 3. Write `<runtime_dir>/daemon.pid` (removed on exit).
 //! 4. [`kakemono_platform::host`] owns the main thread; inside its runtime: bind the socket, build
 //!    the engine, then run the IPC server and the rotation loop until SIGINT/SIGTERM (Ctrl-C,
 //!    Ctrl-Break, console close or shutdown on Windows).
@@ -25,7 +27,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use kakemono_config::paths::{ConfigSource, Paths};
-use kakemono_config::{Config, load_or_default};
+use kakemono_config::{Config, load_or_default_report};
 use kakemono_engine::state::State;
 use kakemono_engine::{Deps, Engine};
 use kakemono_platform::Platform;
@@ -58,7 +60,17 @@ pub struct Resolved {
     pub endpoint: Endpoint,
 }
 
-/// Steps 1 and 2: loads (creating if missing) the config and resolves the endpoint.
+/// Takes the single-instance lock, then [`resolve`]s. A refused second daemon (for example a
+/// service restart loop while a manual daemon runs) fails here and writes nothing: no template,
+/// no migration. The lock lives in `paths.runtime_dir`, which doesn't depend on the config.
+pub fn lock_and_resolve(paths: &Paths, options: &Options) -> anyhow::Result<(LockGuard, Resolved)> {
+    let lock = lock::acquire(&paths.runtime_dir)?;
+    let resolved = resolve(paths, options)?;
+    Ok((lock, resolved))
+}
+
+/// Steps 1 and 2: loads (creating if missing) the config and resolves the endpoint. Call it
+/// under the lock ([`lock_and_resolve`]): it may write the config file.
 pub fn resolve(paths: &Paths, options: &Options) -> anyhow::Result<Resolved> {
     let source = paths.locate_config(options.config.as_deref());
     create_missing_config(&source);
@@ -72,7 +84,7 @@ pub fn resolve(paths: &Paths, options: &Options) -> anyhow::Result<Resolved> {
         );
     }
     let config_path = source.path().to_owned();
-    let config = load_or_default(&config_path)
+    let config = load_config(&config_path)
         .with_context(|| format!("loading config {}", config_path.display()))?;
 
     let endpoint = match options
@@ -80,13 +92,13 @@ pub fn resolve(paths: &Paths, options: &Options) -> anyhow::Result<Resolved> {
         .as_deref()
         .filter(|s| !s.as_os_str().is_empty())
     {
-        Some(socket) => endpoint::default_endpoint(Some(socket))?,
+        Some(socket) => endpoint::default_endpoint(Some(socket), None)?,
         None => {
             let socket = config.effective_socket_path(&source, &paths.home);
             if let Some(notice) = socket.notice() {
                 tracing::info!("{notice}");
             }
-            endpoint::default_endpoint(socket.override_path())?
+            endpoint::default_endpoint(socket.override_path(), Some(&paths.runtime_dir))?
         }
     };
     Ok(Resolved {
@@ -94,6 +106,16 @@ pub fn resolve(paths: &Paths, options: &Options) -> anyhow::Result<Resolved> {
         config,
         endpoint,
     })
+}
+
+/// Loads `path` (the defaults when it is missing) and logs each load warning, such as a replaced
+/// source id or a skipped `[[sources]]` row. Used at start and on every `reload`.
+pub fn load_config(path: &Path) -> Result<Config, kakemono_config::ConfigError> {
+    let loaded = load_or_default_report(path)?;
+    for warning in &loaded.warnings {
+        tracing::warn!(path = %path.display(), "config: {warning}");
+    }
+    Ok(loaded.config)
 }
 
 /// Go `runForeground`: a missing config file (default location or `--config`) gets the
@@ -138,13 +160,14 @@ fn migrate_config_file(paths: &Paths, source: &ConfigSource) {
 /// Runs the daemon until a stop signal. Call from `main`'s thread with no tokio runtime running
 /// (the platform host needs the main thread on macOS). Logging must already be set up.
 pub fn run(paths: &Paths, options: &Options) -> anyhow::Result<()> {
-    let Resolved {
-        config_path,
-        mut config,
-        endpoint,
-    } = resolve(paths, options)?;
-
-    let lock = lock::acquire(&paths.runtime_dir)?;
+    let (
+        lock,
+        Resolved {
+            config_path,
+            mut config,
+            endpoint,
+        },
+    ) = lock_and_resolve(paths, options)?;
     // First-run detection (Task 37): under the lock, so a refused second daemon writes nothing;
     // before `host`, so the platform resolves from the saved `[desktop]`.
     if !fake_platform_requested() {
@@ -240,7 +263,7 @@ impl Daemon {
         let engine = Engine::new(config, state, state_file.clone(), Deps::new(platform, http))
             .context("initialising the engine")?;
         let backend = engine.platform().setter.info();
-        let server = Server::new(engine.clone(), move || load_or_default(&config_path));
+        let server = Server::new(engine.clone(), move || load_config(&config_path));
         // `doctor` reports the daemon's own session env (systemd units often lack it; Task 37).
         #[cfg(target_os = "linux")]
         let server = server.with_env_probe(|| {
@@ -513,6 +536,36 @@ mod tests {
             "{:?}",
             resolved.config.sources
         );
+    }
+
+    /// A refused second daemon (a service restart loop while another daemon runs) must not
+    /// create or migrate the config: the lock comes first.
+    #[test]
+    fn a_refused_daemon_writes_no_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = paths(tmp.path());
+        let _running = lock::acquire(&paths.runtime_dir).unwrap();
+        let legacy = tmp.path().join("legacy.toml");
+        std::fs::write(&legacy, LEGACY).unwrap();
+
+        for config in [None, Some(legacy.clone())] {
+            let err = lock_and_resolve(
+                &paths,
+                &Options {
+                    config,
+                    socket: Some(tmp.path().join("flag.sock")),
+                },
+            )
+            .unwrap_err();
+            assert!(
+                err.downcast_ref::<lock::LockError>()
+                    .is_some_and(|e| matches!(e, lock::LockError::AlreadyRunning { .. })),
+                "{err:#}"
+            );
+        }
+        assert!(!paths.config_file.exists(), "template written");
+        assert_eq!(std::fs::read_to_string(&legacy).unwrap(), LEGACY);
+        assert!(!tmp.path().join("legacy.toml.bak").exists(), "migrated");
     }
 
     #[test]

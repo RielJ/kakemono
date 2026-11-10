@@ -1,6 +1,7 @@
 //! Integration tests for `kakemono-fs`, in one test program.
 
 mod copy;
+mod create;
 mod write;
 
 use std::sync::mpsc::{self, RecvTimeoutError};

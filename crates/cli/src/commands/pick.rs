@@ -16,11 +16,12 @@ use anyhow::Context as _;
 use kakemono_protocol::endpoint::SOCKET_ENV;
 
 use crate::cli::Context;
+use crate::commands::process::{self, Detach};
 
 /// Overrides where `kakemono-ui` is. When set it is the only place looked at.
 pub const UI_ENV: &str = "KAKEMONO_UI";
-/// The config path variable the UI reads (`kakemono_config::paths`).
-pub const CONFIG_ENV: &str = "KAKEMONO_CONFIG";
+/// The config path variable the UI reads.
+pub use kakemono_config::paths::CONFIG_ENV;
 
 /// The window to open. The UI's `page_from_args` reads the same flags.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -175,7 +176,7 @@ impl Launch {
             .as_deref()
             .filter(|p| !p.as_os_str().is_empty())
         {
-            env.push((CONFIG_ENV, absolute(config)?));
+            env.push((CONFIG_ENV, process::absolute(config)?));
         }
         if let Some(socket) = ctx
             .global
@@ -183,7 +184,7 @@ impl Launch {
             .as_deref()
             .filter(|p| !p.as_os_str().is_empty())
         {
-            env.push((SOCKET_ENV, absolute(socket)?));
+            env.push((SOCKET_ENV, process::absolute(socket)?));
         }
         Ok(Self {
             program: ui,
@@ -191,10 +192,6 @@ impl Launch {
             env,
         })
     }
-}
-
-fn absolute(path: &Path) -> anyhow::Result<PathBuf> {
-    std::path::absolute(path).with_context(|| format!("resolving {}", path.display()))
 }
 
 /// Starts a [`Launch`]. [`Detached`] in production; tests record instead.
@@ -215,25 +212,10 @@ impl Launcher for Detached {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        detach(&mut cmd);
+        process::detach(&mut cmd, Detach::Group);
         // Dropping the handle neither kills nor waits; the child is reparented on exit.
         cmd.spawn().map(drop)
     }
-}
-
-#[cfg(unix)]
-fn detach(cmd: &mut Command) {
-    use std::os::unix::process::CommandExt as _;
-    // A new process group: Ctrl-C in this terminal does not reach the UI.
-    cmd.process_group(0);
-}
-
-#[cfg(windows)]
-fn detach(cmd: &mut Command) {
-    use std::os::windows::process::CommandExt as _;
-    const DETACHED_PROCESS: u32 = 0x0000_0008;
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-    cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
 }
 
 /// Opens `page` in the UI found through `search`, started by `launcher`. Prints nothing on
@@ -416,10 +398,12 @@ mod tests {
         let launches = recorder.0.into_inner();
         let expected = format!(
             "KAKEMONO_CONFIG={} KAKEMONO_SOCKET={} {} --settings",
-            absolute(Path::new("/etc/k/config.toml"))
+            process::absolute(Path::new("/etc/k/config.toml"))
                 .expect("abs")
                 .display(),
-            absolute(Path::new("/run/k.sock")).expect("abs").display(),
+            process::absolute(Path::new("/run/k.sock"))
+                .expect("abs")
+                .display(),
             ui("/opt/k/bin"),
         )
         .replace('\\', "/");

@@ -311,3 +311,66 @@ fn background_reports_a_daemon_that_fails_at_start_up() {
     let log = std::fs::read_to_string(&logs[0]).unwrap();
     assert!(log.contains("loading config"), "{log}");
 }
+
+/// With `XDG_CONFIG_HOME` set and no `XDG_RUNTIME_DIR`, the default socket and the daemon lock
+/// land in one folder, `$XDG_CONFIG_HOME/kakemono`, and a client with no `--socket` finds the
+/// daemon there. Before the fix the socket went to `~/.config/kakemono` (protocol's own rule)
+/// while the lock followed `Paths::runtime_dir`. Runs in child processes, so the test process's
+/// environment is untouched.
+#[test]
+fn default_socket_sits_next_to_the_lock_under_xdg_config_home() {
+    let env = Env::quiet();
+    // Short folder name: the socket path must stay under macOS's 103-byte `sun_path` limit.
+    let config_home = env.root.join("c");
+    let with_xdg = |mut cmd: Command| {
+        cmd.env("XDG_CONFIG_HOME", &config_home)
+            .env_remove("XDG_RUNTIME_DIR");
+        cmd
+    };
+    let status_ok = || {
+        let mut cmd = with_xdg(env.cmd());
+        cmd.arg("status")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap()
+            .success()
+    };
+
+    let mut daemon = with_xdg(env.cmd());
+    let mut child = daemon
+        .args(["daemon", "--foreground"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + TIMEOUT;
+    while !status_ok() {
+        if let Some(status) = child.try_wait().unwrap() {
+            panic!("daemon exited early: {status}\n{}", stderr_of(&mut child));
+        }
+        assert!(
+            Instant::now() < deadline,
+            "a client without --socket never reached the daemon"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    let want = config_home.join("kakemono");
+    let locks = env.find(|n| n == kakemono_cli::daemon::lock::LOCK_FILE_NAME);
+    assert_eq!(locks, [want.join("daemon.lock")]);
+    let socket = want.join("kakemono.sock");
+    assert!(
+        std::fs::symlink_metadata(&socket).is_ok(),
+        "socket at {}",
+        socket.display()
+    );
+    assert!(
+        !env.root.join(".config/kakemono/kakemono.sock").exists(),
+        "no socket at the old home-based path"
+    );
+
+    signal(child.id(), Signal::SIGTERM);
+    let status = wait_exit(&mut child);
+    assert!(status.success(), "{status}\n{}", stderr_of(&mut child));
+}

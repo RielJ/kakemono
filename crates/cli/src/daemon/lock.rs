@@ -19,8 +19,9 @@ pub enum LockError {
     #[error("{}", already_running_message(path, *pid))]
     AlreadyRunning { path: PathBuf, pid: Option<u32> },
     /// The runtime dir or lock file could not be created, opened or locked.
-    #[error("daemon lock {}: {source}", path.display())]
-    Io { path: PathBuf, source: io::Error },
+    /// The message ends with the cause, which is therefore not also the error's `source()`.
+    #[error("daemon lock {}: {cause}", path.display())]
+    Io { path: PathBuf, cause: io::Error },
 }
 
 fn already_running_message(path: &Path, pid: Option<u32>) -> String {
@@ -60,9 +61,9 @@ impl Drop for LockGuard {
 /// blocking, then writes this process's PID into the lock file.
 pub fn acquire(runtime_dir: &Path) -> Result<LockGuard, LockError> {
     let path = runtime_dir.join(LOCK_FILE_NAME);
-    let io_err = |source| LockError::Io {
+    let io_err = |cause| LockError::Io {
         path: path.clone(),
-        source,
+        cause,
     };
     create_private_dir(runtime_dir).map_err(io_err)?;
     // No truncate on open: the holder's PID must survive a failed attempt.

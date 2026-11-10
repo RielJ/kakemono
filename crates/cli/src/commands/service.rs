@@ -7,7 +7,6 @@
 
 use std::io::Write;
 
-use anyhow::Context as _;
 use kakemono_platform::service::{
     Installed, Os, Running, ServiceManager, ServiceStatus, Uninstalled, launchd, systemd,
 };
@@ -18,10 +17,7 @@ use crate::commands;
 
 pub fn run(ctx: &Context, out: &mut dyn Write, action: ServiceAction) -> anyhow::Result<()> {
     let manager = ServiceManager::system()?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .context("starting the async runtime")?;
+    let runtime = crate::cli::runtime()?;
     let probe = async || ctx.client().await.is_ok();
     let next = runtime.block_on(run_with(&manager, out, action, probe))?;
     // `daemon` builds its own runtime, so it runs after ours is done.

@@ -9,16 +9,16 @@
 //!   to answer, so a child that fails at start-up (bad config, socket in use) is reported here.
 
 use std::io::Write;
-use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail};
 use kakemono_config::paths::Paths;
-use kakemono_protocol::client::Client;
+use kakemono_protocol::client;
 use kakemono_protocol::endpoint::Endpoint;
 
 use crate::cli::Context;
+use crate::commands::process::{self, Detach};
 use crate::daemon::{self, Options, lock};
 use crate::logging::{self, LogTarget};
 
@@ -65,11 +65,8 @@ fn spawn_background(
     // Refuse a second daemon before spawning (Go checked the socket only).
     drop(lock::acquire(&paths.runtime_dir)?);
     let endpoint = ctx.endpoint()?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .context("starting the async runtime")?;
-    if runtime.block_on(answers(&endpoint)) {
+    let runtime = crate::cli::runtime()?;
+    if runtime.block_on(client::is_running(&endpoint)) {
         bail!("daemon is already running (socket: {endpoint})");
     }
 
@@ -91,46 +88,20 @@ fn background_command(options: &Options) -> anyhow::Result<Command> {
     let mut cmd = Command::new(exe);
     cmd.args(["daemon", "--foreground", "--detached"]);
     if let Some(config) = &options.config {
-        cmd.arg("--config").arg(absolute(config)?);
+        cmd.arg("--config").arg(process::absolute(config)?);
     }
     if let Some(socket) = options
         .socket
         .as_ref()
         .filter(|s| !s.as_os_str().is_empty())
     {
-        cmd.arg("--socket").arg(absolute(socket)?);
+        cmd.arg("--socket").arg(process::absolute(socket)?);
     }
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    detach(&mut cmd);
+    process::detach(&mut cmd, Detach::Session);
     Ok(cmd)
-}
-
-fn absolute(path: &std::path::Path) -> anyhow::Result<PathBuf> {
-    std::path::absolute(path).with_context(|| format!("resolving {}", path.display()))
-}
-
-#[cfg(unix)]
-fn detach(cmd: &mut Command) {
-    use std::os::unix::process::CommandExt as _;
-    // SAFETY: `setsid` is async-signal-safe and touches no memory of the parent.
-    unsafe {
-        cmd.pre_exec(|| {
-            nix::unistd::setsid()
-                .map(drop)
-                .map_err(std::io::Error::from)
-        });
-    }
-}
-
-#[cfg(windows)]
-fn detach(cmd: &mut Command) {
-    use std::os::windows::process::CommandExt as _;
-    const DETACHED_PROCESS: u32 = 0x0000_0008;
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
 }
 
 /// Polls until the endpoint answers. Fails if the child exits first or the timeout passes.
@@ -147,7 +118,7 @@ async fn wait_until_ready(
                 log_dir.display()
             );
         }
-        if answers(endpoint).await {
+        if client::is_running(endpoint).await {
             return Ok(());
         }
         if Instant::now() >= deadline {
@@ -160,8 +131,4 @@ async fn wait_until_ready(
         }
         tokio::time::sleep(READY_POLL).await;
     }
-}
-
-async fn answers(endpoint: &Endpoint) -> bool {
-    Client::connect(endpoint).await.is_ok()
 }

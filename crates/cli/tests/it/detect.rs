@@ -126,6 +126,25 @@ fn doctor_reports_locally_without_a_daemon() {
         .stdout(predicate::str::contains("running:    no"));
 }
 
+/// Doctor shows the load warnings the daemon logs (M8): a skipped `[[sources]]` row is visible
+/// without reading the daemon log.
+#[test]
+fn doctor_reports_config_load_warnings() {
+    let dir = setup(
+        r#"[[sources]]
+id = "f"
+type = "flickr"
+"#,
+    );
+    isolated_cmd(dir.path())
+        .args(["doctor", "--env-json", "env.json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "  warning: source \"f\": unknown type \"flickr\"; skipped",
+        ));
+}
+
 #[test]
 fn doctor_apply_without_a_daemon_fails() {
     let dir = setup(CONFIG);

@@ -13,7 +13,8 @@ use toml_edit::{Array, ArrayOfTables, DocumentMut, InlineTable, Item, Table, Tab
 use crate::defaults::home_dir;
 use crate::error::ConfigError;
 use crate::load::parse_str;
-use crate::schema::{Config, DesktopConfig};
+use crate::schema::{Config, DesktopConfig, SourceEntry, SourceType};
+use crate::sources::normalize_sources;
 
 /// Reads `path` (an empty document if it doesn't exist), runs `f`, checks the result still loads,
 /// and writes it with [`kakemono_fs::update`]: atomically, keeping the file mode (new files are
@@ -29,12 +30,12 @@ where
     kakemono_fs::update(path, |old| patched(path, old, f)).map_err(|e| match e {
         UpdateError::Read(source) => ConfigError::Read {
             path: path.to_owned(),
-            source,
+            cause: source,
         },
         UpdateError::Rejected(e) => e,
         UpdateError::Write(source) => ConfigError::Write {
             path: path.to_owned(),
-            source,
+            cause: source,
         },
     })
 }
@@ -50,11 +51,11 @@ where
     };
     let text = std::str::from_utf8(old.unwrap_or_default()).map_err(|e| ConfigError::Read {
         path: path.to_owned(),
-        source: io::Error::new(io::ErrorKind::InvalidData, e),
+        cause: io::Error::new(io::ErrorKind::InvalidData, e),
     })?;
-    let mut doc: DocumentMut = text.parse().map_err(|source| ConfigError::EditParse {
+    let mut doc: DocumentMut = text.parse().map_err(|cause| ConfigError::EditParse {
         path: path.to_owned(),
-        source: Box::new(source),
+        cause: Box::new(cause),
     })?;
     f(&mut doc).map_err(invalid)?;
     let out = doc.to_string();
@@ -108,7 +109,10 @@ fn merge(table: &mut dyn TableLike, obj: &Map<String, Json>, root: bool) -> Resu
                 table.remove(key);
             }
             Json::Array(items) if root && is_rows(items) => {
-                let rows = to_array_of_tables(items).map_err(|e| format!("{key}: {e}"))?;
+                let mut rows = to_array_of_tables(items).map_err(|e| format!("{key}: {e}"))?;
+                if key == SOURCES_KEY {
+                    keep_raw_types(table.get(key), &mut rows);
+                }
                 replace_rows(table, key, rows);
             }
             Json::Array(items)
@@ -154,6 +158,85 @@ fn merge(table: &mut dyn TableLike, obj: &Map<String, Json>, root: bool) -> Resu
         }
     }
     Ok(())
+}
+
+/// The top-level key of the source rows.
+const SOURCES_KEY: &str = "sources";
+
+/// The raw `type` of each `[[sources]]` row in `doc`, in file order: `None` when the row has no
+/// `type` key. Handles both `[[sources]]` blocks and an inline `sources = [{…}]` array.
+pub(crate) fn raw_source_types(doc: &DocumentMut) -> Vec<Option<Item>> {
+    source_rows(doc.get(SOURCES_KEY))
+        .into_iter()
+        .map(|row| row.get("type").cloned())
+        .collect()
+}
+
+/// The rows at `item` (`[[sources]]` blocks or an inline array of tables) as table-likes.
+fn source_rows(item: Option<&Item>) -> Vec<&dyn TableLike> {
+    match item {
+        Some(Item::ArrayOfTables(aot)) => aot.iter().map(|t| t as &dyn TableLike).collect(),
+        Some(Item::Value(Value::Array(arr))) => arr
+            .iter()
+            .filter_map(Value::as_inline_table)
+            .map(|t| t as &dyn TableLike)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// A row this version loads as `unsupported` has its real `type` in the file: one written by a
+/// newer kakemono, a typo, or none at all. The UI sends such a row back as `"unsupported"`; this
+/// puts the file's raw `type` back (or leaves the key out, as the file had it) so a save of the
+/// list never destroys or invents a type. Rows are matched by id, normalised the way loading
+/// does, so the type follows its row through reorders and removals.
+fn keep_raw_types(old: Option<&Item>, rows: &mut ArrayOfTables) {
+    let old_rows = source_rows(old);
+    if old_rows.is_empty() {
+        return;
+    }
+    let str_of = |row: &dyn TableLike, key: &str| {
+        row.get(key)
+            .and_then(Item::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let mut entries: Vec<SourceEntry> = old_rows
+        .iter()
+        .map(|row| SourceEntry {
+            id: str_of(*row, "id"),
+            enabled: true,
+            kind: row
+                .get("type")
+                .and_then(Item::as_str)
+                .map_or(SourceType::Unsupported, SourceType::from_config_str),
+            location: str_of(*row, "location"),
+        })
+        .collect();
+    normalize_sources(&mut entries);
+    let unsupported = SourceType::Unsupported.as_str();
+    for row in rows.iter_mut() {
+        if row.get("type").and_then(Item::as_str) != Some(unsupported) {
+            continue;
+        }
+        let Some(id) = row.get("id").and_then(Item::as_str) else {
+            continue;
+        };
+        let Some(i) = entries
+            .iter()
+            .position(|e| e.id == id && e.kind == SourceType::Unsupported)
+        else {
+            continue;
+        };
+        match old_rows[i].get("type") {
+            Some(raw) => {
+                row.insert("type", raw.clone());
+            }
+            None => {
+                row.remove("type");
+            }
+        }
+    }
 }
 
 /// Keys a `[[sources]]` row writes first, in this order; any others follow alphabetically. JSON
@@ -250,9 +333,9 @@ fn to_value(j: &Json) -> Result<Value, String> {
 /// [`kakemono_fs::PathLock`].
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> {
     create_parent(path)?;
-    kakemono_fs::atomic_write(path, bytes).map_err(|source| ConfigError::Write {
+    kakemono_fs::atomic_write(path, bytes).map_err(|cause| ConfigError::Write {
         path: path.to_owned(),
-        source,
+        cause,
     })
 }
 
@@ -261,9 +344,9 @@ fn create_parent(path: &Path) -> Result<(), ConfigError> {
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    std::fs::create_dir_all(dir).map_err(|source| ConfigError::CreateDir {
+    std::fs::create_dir_all(dir).map_err(|cause| ConfigError::CreateDir {
         path: dir.to_owned(),
-        source,
+        cause,
     })
 }
 

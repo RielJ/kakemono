@@ -117,7 +117,8 @@ pub struct ApplyOutcome {
 /// The `error` of [`ApplyOutcome`] when there is no current wallpaper to re-set.
 pub const NOTHING_TO_APPLY: &str = "no current wallpaper to re-set; run `kakemono next` first";
 
-/// Why [`bind`] failed.
+/// Why [`bind`] failed. A message ends with its cause, which is therefore not also the error's
+/// `source()` (`{e:#}` would print it twice).
 #[derive(Debug, thiserror::Error)]
 pub enum BindError {
     /// Something answers on the endpoint although this process holds the lock: a daemon using a
@@ -129,10 +130,10 @@ pub enum BindError {
     /// The endpoint path exists but is not a socket. Never deleted.
     #[error("{0} exists and is not a socket; refusing to remove it")]
     NotASocket(PathBuf),
-    #[error("server: remove stale socket {}: {source}", path.display())]
-    RemoveStale { path: PathBuf, source: io::Error },
-    #[error("server: listen on {}: {source}", path.display())]
-    Listen { path: PathBuf, source: io::Error },
+    #[error("server: remove stale socket {}: {cause}", path.display())]
+    RemoveStale { path: PathBuf, cause: io::Error },
+    #[error("server: listen on {}: {cause}", path.display())]
+    Listen { path: PathBuf, cause: io::Error },
 }
 
 /// Binds `endpoint`. Holding `_lock` proves no other kakemono daemon runs, so a leftover socket
@@ -142,9 +143,9 @@ pub enum BindError {
 /// listener unlinks the socket file when dropped.
 pub async fn bind(endpoint: &Endpoint, _lock: &LockGuard) -> Result<Listener, BindError> {
     remove_stale(endpoint).await?;
-    endpoint.bind().map_err(|source| BindError::Listen {
+    endpoint.bind().map_err(|cause| BindError::Listen {
         path: endpoint.path().to_owned(),
-        source,
+        cause,
     })
 }
 
@@ -152,13 +153,13 @@ pub async fn bind(endpoint: &Endpoint, _lock: &LockGuard) -> Result<Listener, Bi
 async fn remove_stale(endpoint: &Endpoint) -> Result<(), BindError> {
     use std::os::unix::fs::FileTypeExt;
     let path = endpoint.path();
-    let meta = match std::fs::symlink_metadata(path) {
+    let meta = match tokio::fs::symlink_metadata(path).await {
         Ok(meta) => meta,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(source) => {
+        Err(cause) => {
             return Err(BindError::RemoveStale {
                 path: path.to_owned(),
-                source,
+                cause,
             });
         }
     };
@@ -169,12 +170,12 @@ async fn remove_stale(endpoint: &Endpoint) -> Result<(), BindError> {
         return Err(BindError::InUse(path.to_owned()));
     }
     tracing::info!(socket = %path.display(), "removing stale socket");
-    match std::fs::remove_file(path) {
+    match tokio::fs::remove_file(path).await {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(source) => Err(BindError::RemoveStale {
+        Err(cause) => Err(BindError::RemoveStale {
             path: path.to_owned(),
-            source,
+            cause,
         }),
     }
 }
@@ -194,7 +195,12 @@ pub struct Server {
     engine: Engine,
     config_loader: ConfigLoader,
     env_probe: Option<EnvProbe>,
+    max_connections: usize,
 }
+
+/// How many connections [`Server::serve`] serves at once by default. Each can buffer up to
+/// `MAX_LINE_BYTES`; a UI holds one or two, a CLI command one.
+pub const MAX_CONNECTIONS: usize = 64;
 
 impl fmt::Debug for Server {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -215,7 +221,14 @@ impl Server {
             engine,
             config_loader: Arc::new(config_loader),
             env_probe: None,
+            max_connections: MAX_CONNECTIONS,
         }
+    }
+
+    /// Serves at most `max` connections at once (at least 1) instead of [`MAX_CONNECTIONS`].
+    pub fn with_max_connections(mut self, max: usize) -> Self {
+        self.max_connections = max.max(1);
+        self
     }
 
     /// Adds the daemon's environment snapshot ([`DoctorData::env`]) to `doctor`.
@@ -231,7 +244,8 @@ impl Server {
         &self.engine
     }
 
-    /// Accept loop: one task per connection, until `shutdown` is cancelled. Then the listener is
+    /// Accept loop: one task per connection, at most `max_connections` at once
+    /// ([`Server::with_max_connections`]), until `shutdown` is cancelled. Then the listener is
     /// dropped (which unlinks the Unix socket), open connections are told to stop (subscribers
     /// end at once, a request in flight finishes) and are aborted after [`SHUTDOWN_GRACE`].
     pub async fn serve(self, listener: Listener, shutdown: CancellationToken) {
@@ -246,7 +260,9 @@ impl Server {
                         tracing::error!("server: connection task panicked: {e}");
                     }
                 }
-                accepted = listener.accept() => match accepted {
+                // At the cap, stop accepting: new clients wait in the listen backlog until a
+                // connection ends.
+                accepted = listener.accept(), if conns.len() < self.max_connections => match accepted {
                     Ok(stream) => {
                         let server = self.clone();
                         let stop = shutdown.child_token();
@@ -359,9 +375,12 @@ impl Server {
     }
 
     async fn reload(&self) -> Response {
-        let cfg = match (self.config_loader)() {
-            Ok(cfg) => cfg,
-            Err(e) => return Response::err(format!("reload: {e}")),
+        // The loader reads (and may wait on a lock for) the config file: keep it off the runtime.
+        let loader = Arc::clone(&self.config_loader);
+        let cfg = match tokio::task::spawn_blocking(move || loader()).await {
+            Ok(Ok(cfg)) => cfg,
+            Ok(Err(e)) => return Response::err(format!("reload: {e}")),
+            Err(e) => return Response::err(format!("reload: reading the config failed: {e}")),
         };
         let old = self.engine.config();
         if cfg.daemon.socket_path != old.daemon.socket_path {

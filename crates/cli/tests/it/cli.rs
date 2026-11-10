@@ -317,6 +317,32 @@ async fn daemon_not_running_message() {
     );
     assert!(out.stderr.starts_with(&want), "{}", out.stderr);
     assert!(out.stderr.ends_with(")\n"), "{}", out.stderr);
+    // The cause is printed once, not repeated by the error chain (M11).
+    assert_eq!(out.stderr.matches("os error").count(), 1, "{}", out.stderr);
+}
+
+/// A config error names its cause once: the message has it, so the error chain must not add it
+/// again (M11).
+#[tokio::test]
+async fn config_error_prints_its_cause_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(root.join("config.toml"), "interval = [\n").unwrap();
+    let mut cmd = isolated_cmd(&root);
+    cmd.arg("detect");
+    let out = run(cmd).await;
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    let want = format!(
+        "config: cannot parse {}: ",
+        root.join("config.toml").display()
+    );
+    assert!(out.stderr.contains(&want), "{}", out.stderr);
+    assert_eq!(
+        out.stderr.matches("TOML parse error").count(),
+        1,
+        "{}",
+        out.stderr
+    );
 }
 
 #[tokio::test]

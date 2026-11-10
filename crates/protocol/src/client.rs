@@ -20,29 +20,25 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 /// Round-trip timeout for one request, as Go's connection deadline.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// A failed connect or request. Each message ends with its cause, so the cause is not also
+/// exposed as [`std::error::Error::source`]: `{e:#}` (anyhow) would print it twice.
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
     /// Nothing listens on the endpoint (socket missing, connection refused, or the connect
     /// timed out). The message matches Go's `daemonNotRunning` hint.
     #[error(
         "kakemono daemon is not running.\nStart it with:  kakemono daemon\n\
-         (original error: cannot connect to daemon socket {:?}: {source})",
+         (original error: cannot connect to daemon socket {:?}: {cause})",
         endpoint.display()
     )]
-    DaemonNotRunning {
-        endpoint: PathBuf,
-        source: io::Error,
-    },
+    DaemonNotRunning { endpoint: PathBuf, cause: io::Error },
     /// Any other connect failure, such as permission denied.
-    #[error("cannot connect to daemon socket {:?}: {source}", endpoint.display())]
-    Connect {
-        endpoint: PathBuf,
-        source: io::Error,
-    },
+    #[error("cannot connect to daemon socket {:?}: {cause}", endpoint.display())]
+    Connect { endpoint: PathBuf, cause: io::Error },
     #[error("sending command: {0}")]
-    Send(#[source] CodecError),
+    Send(CodecError),
     #[error("decoding response: {0}")]
-    Receive(#[source] CodecError),
+    Receive(CodecError),
     /// The daemon closed the connection before answering.
     #[error("decoding response: daemon closed the connection")]
     Closed,
@@ -52,16 +48,21 @@ pub enum ClientError {
     /// know the command.
     #[error("subscribe rejected by daemon: {0}")]
     SubscribeRejected(String),
+    /// An earlier request on this connection failed or was abandoned (timed out or cancelled)
+    /// before its reply was read. That reply may still arrive, so the connection can't pair
+    /// requests with responses any more; connect again.
+    #[error("the daemon connection is unusable after an earlier failed request; reconnect")]
+    Poisoned,
 }
 
 impl ClientError {
-    fn from_connect(endpoint: &Endpoint, source: io::Error) -> Self {
+    fn from_connect(endpoint: &Endpoint, cause: io::Error) -> Self {
         let endpoint = endpoint.path().to_path_buf();
-        match source.kind() {
+        match cause.kind() {
             io::ErrorKind::NotFound
             | io::ErrorKind::ConnectionRefused
-            | io::ErrorKind::TimedOut => Self::DaemonNotRunning { endpoint, source },
-            _ => Self::Connect { endpoint, source },
+            | io::ErrorKind::TimedOut => Self::DaemonNotRunning { endpoint, cause },
+            _ => Self::Connect { endpoint, cause },
         }
     }
 }
@@ -72,6 +73,9 @@ pub struct Client {
     // Writes go through `get_mut()`: requests and responses alternate, so the buffer
     // never holds unread bytes when we write.
     conn: BufReader<LocalSocketStream>,
+    /// Set while a round trip is in flight and left set if it doesn't finish with a response:
+    /// after a timeout, a transport error or a dropped request future.
+    poisoned: bool,
 }
 
 impl Client {
@@ -88,16 +92,27 @@ impl Client {
             .map_err(|e| ClientError::from_connect(endpoint, e))?;
         Ok(Self {
             conn: BufReader::new(stream),
+            poisoned: false,
         })
     }
 
     /// Sends one command and waits up to [`REQUEST_TIMEOUT`] for its response. An
     /// `ok:false` response is returned as `Ok`; only transport failures are errors.
+    ///
+    /// After any error, or if this future is dropped before it finishes, the client is poisoned:
+    /// every later request returns [`ClientError::Poisoned`] instead of reading a reply meant for
+    /// the earlier one.
     pub async fn request(&mut self, request: impl Into<Command>) -> Result<Response, ClientError> {
+        if self.poisoned {
+            return Err(ClientError::Poisoned);
+        }
         let command = request.into();
-        tokio::time::timeout(REQUEST_TIMEOUT, self.round_trip(&command))
+        self.poisoned = true;
+        let response = tokio::time::timeout(REQUEST_TIMEOUT, self.round_trip(&command))
             .await
-            .map_err(|_| ClientError::Timeout)?
+            .map_err(|_| ClientError::Timeout)??;
+        self.poisoned = false;
+        Ok(response)
     }
 
     async fn round_trip(&mut self, command: &Command) -> Result<Response, ClientError> {

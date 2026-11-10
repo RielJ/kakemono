@@ -21,7 +21,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::bail;
-use kakemono_config::{Config, ConfigError, SourceType, expand_tilde};
+use kakemono_config::{Config, ConfigError, Loaded, SourceType, expand_tilde};
 use kakemono_engine::files::{Protect, counted_bytes};
 use kakemono_platform::api::Theme;
 use kakemono_platform::linux::detect::env::{BINARIES, DBUS_NAMES, ENV_VARS, PROCESSES};
@@ -59,7 +59,7 @@ pub async fn run(
     env_json: Option<&Path>,
 ) -> anyhow::Result<()> {
     let (paths, _) = ctx.config_source()?;
-    let loaded = paths.load_config(ctx.global.config.as_deref());
+    let loaded = paths.load_config_report(ctx.global.config.as_deref());
     let env = session_env(env_json).await?;
     let daemon = query_daemon(ctx, apply).await;
 
@@ -116,9 +116,11 @@ async fn query_daemon(ctx: &Context, apply: bool) -> DaemonReport {
         Err(e) => return DaemonReport::Unreachable(e.to_string()),
     };
     // Status first, so the rendered argv uses the wallpaper that was current before `apply`.
+    // A transport failure poisons the connection, so it ends the report here.
     let status = match client.request(Request::Status).await {
         Ok(r) if r.ok => r.data_as::<StatusData>().ok().flatten(),
-        _ => None,
+        Ok(_) => None,
+        Err(e) => return DaemonReport::Unreachable(e.to_string()),
     };
     let doctor = match client.request(Request::Doctor { apply }).await {
         Ok(r) if r.ok => r.data_as::<DoctorData>(),
@@ -137,12 +139,13 @@ async fn query_daemon(ctx: &Context, apply: bool) -> DaemonReport {
     }
 }
 
-/// The config line(s). A config that fails to load is reported and the defaults are used.
+/// The config line(s): the file, then each load warning (a replaced source id, a skipped
+/// `[[sources]]` row). A config that fails to load is reported and the defaults are used.
 fn write_config(
     out: &mut dyn Write,
     paths: &kakemono_config::paths::Paths,
     ctx: &Context,
-    loaded: &Result<(Config, kakemono_config::paths::ConfigSource), ConfigError>,
+    loaded: &Result<(Loaded, kakemono_config::paths::ConfigSource), ConfigError>,
 ) -> anyhow::Result<Config> {
     let source = paths.locate_config(ctx.global.config.as_deref());
     let note = if source.is_legacy() {
@@ -154,7 +157,12 @@ fn write_config(
     };
     writeln!(out, "config:       {}{note}", source.path().display())?;
     Ok(match loaded {
-        Ok((cfg, _)) => cfg.clone(),
+        Ok((loaded, _)) => {
+            for warning in &loaded.warnings {
+                writeln!(out, "  warning: {warning}")?;
+            }
+            loaded.config.clone()
+        }
         Err(e) => {
             writeln!(out, "  error: {e}")?;
             writeln!(out, "  (the checks below use the defaults)")?;

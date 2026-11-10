@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use etcetera::BaseStrategy;
 
 use crate::error::ConfigError;
-use crate::load::load_or_default;
+use crate::load::{Loaded, load_or_default_report};
 use crate::schema::Config;
 
 /// App directory name used under every base directory.
@@ -172,15 +172,24 @@ impl Paths {
         ConfigSource::Missing(self.config_file.clone())
     }
 
-    /// [`Paths::locate_config`] then [`load_or_default`]. A missing explicit file also yields the
+    /// [`Paths::locate_config`] then [`load_or_default`](crate::load_or_default). A missing explicit file also yields the
     /// defaults, as Go's `LoadOrDefault` did.
     pub fn load_config(
         &self,
         explicit: Option<&Path>,
     ) -> Result<(Config, ConfigSource), ConfigError> {
+        self.load_config_report(explicit)
+            .map(|(loaded, source)| (loaded.config, source))
+    }
+
+    /// [`Paths::load_config`] with the load warnings ([`Loaded`]).
+    pub fn load_config_report(
+        &self,
+        explicit: Option<&Path>,
+    ) -> Result<(Loaded, ConfigSource), ConfigError> {
         let source = self.locate_config(explicit);
-        let cfg = load_or_default(source.path())?;
-        Ok((cfg, source))
+        let loaded = load_or_default_report(source.path())?;
+        Ok((loaded, source))
     }
 }
 
@@ -227,8 +236,8 @@ pub fn legacy_default_socket(home: &Path) -> PathBuf {
 }
 
 /// How `daemon.socket_path` resolves for a config read from a given [`ConfigSource`]. Returned by
-/// [`Config::effective_socket_path`]; pass [`SocketPath::override_path`] to
-/// `kakemono_protocol::endpoint::default_endpoint`.
+/// [`Config::effective_socket_path`]; pass [`SocketPath::override_path`] and
+/// [`Paths::runtime_dir`] to `kakemono_protocol::endpoint::default_endpoint`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SocketPath<'a> {
     /// `socket_path` is unset or empty: use the endpoint precedence (`$KAKEMONO_SOCKET`, then the
@@ -295,9 +304,9 @@ impl Config {
 /// Copies the legacy Go config to the kakemono path. Refuses to overwrite `to`. Leaves `from` in
 /// place. Only call this when the user agreed.
 pub fn copy_legacy_config(from: &Path, to: &Path) -> Result<(), ConfigError> {
-    let text = std::fs::read(from).map_err(|source| ConfigError::Read {
+    let text = std::fs::read(from).map_err(|cause| ConfigError::Read {
         path: from.to_owned(),
-        source,
+        cause,
     })?;
     write_new(to, &text)
 }
@@ -315,9 +324,9 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> {
         });
     }
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-        std::fs::create_dir_all(parent).map_err(|source| ConfigError::CreateDir {
+        std::fs::create_dir_all(parent).map_err(|cause| ConfigError::CreateDir {
             path: parent.to_owned(),
-            source,
+            cause,
         })?;
     }
     let mut opts = std::fs::OpenOptions::new();
@@ -327,9 +336,9 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> {
         use std::os::unix::fs::OpenOptionsExt;
         opts.mode(0o600);
     }
-    let write_err = |source| ConfigError::Write {
+    let write_err = |cause| ConfigError::Write {
         path: path.to_owned(),
-        source,
+        cause,
     };
     let mut file = opts.open(path).map_err(|source: std::io::Error| {
         if source.kind() == std::io::ErrorKind::AlreadyExists {

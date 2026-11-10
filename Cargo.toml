@@ -1,6 +1,5 @@
 [workspace]
 resolver = "3"
-# crates/ui/src-tauri joins in Task 40.
 members = [
     "crates/protocol",
     "crates/fs",
@@ -142,7 +141,7 @@ windows = { version = "0.62.2", features = [
 # Autostart (macOS LaunchAgent, Windows HKCU Run)
 auto-launch = "0.6.0"
 
-# UI (crates/ui/src-tauri, Task 40). Unused until then.
+# UI (crates/ui/src-tauri).
 tauri = "2.12.5"
 tauri-build = "2.7.4"
 tauri-plugin-single-instance = "2.5.5"

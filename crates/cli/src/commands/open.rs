@@ -6,7 +6,6 @@ use std::io::Write;
 use anyhow::Context as _;
 use kakemono_config::paths::Paths;
 use kakemono_platform::open::Opener;
-use kakemono_protocol::types::{Request, StatusData};
 
 use crate::cli::Context;
 
@@ -57,12 +56,9 @@ pub async fn run_with(
     opener: &Opener,
 ) -> anyhow::Result<()> {
     if target == Target::Current {
-        let response = ctx.call(Request::Status).await?;
-        let status: StatusData = response
-            .data_as()
-            .context("parsing status")?
-            .context("parsing status: no data")?;
-        let path = status
+        let path = ctx
+            .status()
+            .await?
             .current
             .map(|c| c.path)
             .filter(|p| !p.is_empty())

@@ -478,6 +478,31 @@ async fn dispatch_subscribe_without_a_connection_is_an_error() {
     d.stop().await;
 }
 
+/// `reload` reads the config off the async runtime: a slow disk does not hold up the other
+/// connections' requests.
+#[tokio::test]
+async fn a_slow_config_read_does_not_block_other_requests() {
+    let d = start().await;
+    let cfg = d.engine.config();
+    let srv = Server::new(d.engine.clone(), move || {
+        std::thread::sleep(Duration::from_millis(500));
+        Ok((*cfg).clone())
+    });
+    let started = std::time::Instant::now();
+    let status = async {
+        let r = srv.dispatch(Request::Status).await;
+        (r, started.elapsed())
+    };
+    let (reload, (status, waited)) = tokio::join!(srv.dispatch(Request::Reload), status);
+    assert!(reload.ok, "{reload:?}");
+    assert!(status.ok, "{status:?}");
+    assert!(
+        waited < Duration::from_millis(250),
+        "status waited {waited:?} for the config read"
+    );
+    d.stop().await;
+}
+
 /// `doctor` with `apply` re-sets the current wallpaper through the daemon's own setter, and a
 /// failed set is reported inside an `ok:true` report.
 #[tokio::test]
@@ -612,5 +637,34 @@ async fn source_requests_on_the_wire() {
         status.current.map(|c| (c.path, c.source_id)),
         Some((manual.to_string_lossy().into_owned(), "manual".to_owned()))
     );
+    d.stop().await;
+}
+
+/// The server serves at most `max_connections` connections at once (a same-user client that
+/// opens connections in a loop can't make it buffer without bound). The next one waits until a
+/// slot frees up.
+#[tokio::test]
+async fn connections_over_the_cap_wait_for_a_free_slot() {
+    let d = start_with(|srv| srv.with_max_connections(1)).await;
+    let idle = LocalSocketStream::connect(d.endpoint.name().unwrap())
+        .await
+        .unwrap();
+    // Let the server accept the idle connection first.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let endpoint = d.endpoint.clone();
+    let waiting = tokio::spawn(async move {
+        let mut client = Client::connect(&endpoint).await.unwrap();
+        client.request(Request::Status).await.unwrap()
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!waiting.is_finished(), "served over the cap");
+
+    drop(idle);
+    let response = tokio::time::timeout(STEP, waiting)
+        .await
+        .expect("served once a slot is free")
+        .unwrap();
+    assert!(response.ok, "{response:?}");
     d.stop().await;
 }

@@ -124,7 +124,10 @@ file). All of it lands before Task 27 of `variety-sources-impl.md`. The five ful
 
 **Task F5: config, protocol and cli** (owns `crates/config/**` apart from the F1 files, `crates/protocol/**` and
 `crates/cli/**`):
-- M5: `Unsupported(String)` keeps the raw type, and a missing `type` is an error.
+- M5: `SourceType::Unsupported` stays a unit variant (`Copy`; wire and UI JSON unchanged). A save of the
+  `[[sources]]` list keeps the file's raw `type` for an `unsupported` row with the same id (and no `type` key
+  when the file had none). A missing `type` loads as `Unsupported`, not an enabled Bing row; it is skipped at
+  runtime and reported as a load warning (`source "<id>": missing type; skipped`), like an unknown type.
 - M6: a client that timed out is poisoned and must reconnect.
 - M7: the daemon takes the single-instance lock before it migrates or creates the config.
 - M8: `normalize_sources` warnings reach the load report and doctor.

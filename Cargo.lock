@@ -2452,6 +2452,7 @@ dependencies = [
  "predicates",
  "serde",
  "serde_json",
+ "shell-words",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -2547,10 +2548,10 @@ dependencies = [
 name = "kakemono-protocol"
 version = "2.0.0-alpha.0"
 dependencies = [
- "chrono",
  "futures",
  "insta",
  "interprocess",
+ "nix",
  "serde",
  "serde_json",
  "tempfile",

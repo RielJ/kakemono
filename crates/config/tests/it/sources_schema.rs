@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use kakemono_config::load::parse_str;
+use kakemono_config::load::{parse_report, parse_str};
 use kakemono_config::{SourceEntry, SourceType, defaults_for_home};
 
 const HOME: &str = "/home/golden";
@@ -79,8 +79,60 @@ fn unknown_type_loads_as_unsupported() {
 
 #[test]
 fn missing_keys_in_a_row_take_row_defaults() {
-    let cfg = parse_str("[[sources]]\nid = \"b\"\n", home()).unwrap();
+    let cfg = parse_str("[[sources]]\nid = \"b\"\ntype = \"bing\"\n", home()).unwrap();
     assert_eq!(cfg.sources, vec![row("b", SourceType::Bing, "")]);
+}
+
+/// A row without `type` is a typo, not a request for Bing: it loads as `unsupported` (skipped at
+/// runtime) and the load report says so.
+#[test]
+fn missing_type_loads_as_unsupported_with_a_warning() {
+    let loaded = parse_report("[[sources]]\nid = \"b\"\nlocation = \"cats\"\n", home()).unwrap();
+    assert_eq!(
+        loaded.config.sources,
+        vec![row("b", SourceType::Unsupported, "cats")]
+    );
+    assert!(!loaded.config.sources[0].kind.is_online());
+    assert_eq!(loaded.warnings, [r#"source "b": missing type; skipped"#]);
+}
+
+#[test]
+fn unknown_type_is_reported() {
+    let loaded = parse_report(
+        "[[sources]]\nid = \"fl-0001\"\ntype = \"flickr\"\nlocation = \"cats\"\n",
+        home(),
+    )
+    .unwrap();
+    assert_eq!(
+        loaded.warnings,
+        [r#"source "fl-0001": unknown type "flickr"; skipped"#]
+    );
+}
+
+/// `normalize_sources` replacements reach the load report instead of being dropped (M8).
+#[test]
+fn replaced_ids_are_reported() {
+    let loaded = parse_report(
+        "[[sources]]\nid = \"dup\"\ntype = \"bing\"\n\n[[sources]]\nid = \"dup\"\ntype = \"apod\"\n",
+        home(),
+    )
+    .unwrap();
+    assert_eq!(loaded.config.sources[0].id, "dup");
+    let new_id = &loaded.config.sources[1].id;
+    assert_ne!(new_id, "dup");
+    assert_eq!(
+        loaded.warnings,
+        [format!(
+            r#"sources[1] (apod ""): duplicate id "dup"; using {new_id:?}"#
+        )]
+    );
+}
+
+#[test]
+fn a_clean_config_has_no_warnings() {
+    let loaded = parse_report(kakemono_config::paths::TEMPLATE, home()).unwrap();
+    assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+    assert!(parse_report("", home()).unwrap().warnings.is_empty());
 }
 
 #[test]

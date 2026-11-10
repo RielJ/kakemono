@@ -163,12 +163,13 @@ pub struct SourceEntry {
 }
 
 impl Default for SourceEntry {
-    /// A row missing `enabled` is on: the user wrote it to use it.
+    /// A row missing `enabled` is on: the user wrote it to use it. A row missing `type` is
+    /// [`SourceType::Unsupported`], which the engine skips, never a guessed source.
     fn default() -> Self {
         Self {
             id: String::new(),
             enabled: true,
-            kind: SourceType::default(),
+            kind: SourceType::Unsupported,
             location: String::new(),
         }
     }

@@ -15,9 +15,10 @@ use clap::{CommandFactory, Parser, Subcommand};
 use kakemono_config::paths::{self, ConfigSource, Paths};
 use kakemono_protocol::client::Client;
 use kakemono_protocol::endpoint::{self, Endpoint};
-use kakemono_protocol::types::{Request, Response};
+use kakemono_protocol::types::{Request, Response, StatusData};
 
 use crate::commands;
+use crate::commands::simple::{self, Simple};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -202,7 +203,8 @@ impl Context {
 
     /// The daemon endpoint: `--socket`, else the config's `socket_path` (through
     /// `Config::effective_socket_path`, so the legacy Go socket is ignored), else
-    /// `$KAKEMONO_SOCKET`, else the platform default. Same choice as the daemon. A config that
+    /// `$KAKEMONO_SOCKET`, else the platform default in `Paths::runtime_dir` (next to the daemon
+    /// lock). Same choice as the daemon. A config that
     /// fails to load is reported on stderr and skipped.
     pub fn endpoint(&self) -> anyhow::Result<Endpoint> {
         if let Some(socket) = self
@@ -211,22 +213,28 @@ impl Context {
             .as_deref()
             .filter(|s| !s.as_os_str().is_empty())
         {
-            return Ok(endpoint::default_endpoint(Some(socket))?);
+            return Ok(endpoint::default_endpoint(Some(socket), None)?);
         }
-        let configured = match self.load_config() {
+        let (configured, runtime_dir) = match self.load_config() {
             Ok((paths, cfg, source)) => {
                 let socket = cfg.effective_socket_path(&source, &paths.home);
                 if let Some(notice) = socket.notice() {
                     tracing::info!("{notice}");
                 }
-                socket.override_path().map(Path::to_path_buf)
+                (
+                    socket.override_path().map(Path::to_path_buf),
+                    Some(paths.runtime_dir),
+                )
             }
             Err(e) => {
                 eprintln!("warning: {e:#}; using the default socket");
-                None
+                (None, Paths::detect().ok().map(|p| p.runtime_dir))
             }
         };
-        Ok(endpoint::default_endpoint(configured.as_deref())?)
+        Ok(endpoint::default_endpoint(
+            configured.as_deref(),
+            runtime_dir.as_deref(),
+        )?)
     }
 
     fn load_config(&self) -> anyhow::Result<(Paths, kakemono_config::Config, ConfigSource)> {
@@ -239,6 +247,15 @@ impl Context {
     pub async fn client(&self) -> anyhow::Result<Client> {
         let endpoint = self.endpoint()?;
         Ok(Client::connect(&endpoint).await?)
+    }
+
+    /// IPC `status`, decoded. A missing or malformed payload is `parsing status: ...`, as Go.
+    pub async fn status(&self) -> anyhow::Result<StatusData> {
+        self.call(Request::Status)
+            .await?
+            .data_as()
+            .context("parsing status")?
+            .context("parsing status: no data")
     }
 
     /// Sends one request on a fresh connection. `ok:false` becomes `daemon error: <message>`.
@@ -334,14 +351,14 @@ fn dispatch(ctx: &Context, command: Commands) -> anyhow::Result<()> {
 
 fn run_command(ctx: &Context, out: &mut dyn Write, command: Commands) -> anyhow::Result<()> {
     match command {
-        Commands::Next => block_on(commands::next::run(ctx, out)),
-        Commands::Prev => block_on(commands::prev::run(ctx, out)),
+        Commands::Next => block_on(simple::run(ctx, out, Simple::Next)),
+        Commands::Prev => block_on(simple::run(ctx, out, Simple::Prev)),
         Commands::Set { path } => block_on(commands::set::run(ctx, out, &path)),
-        Commands::Favorite => block_on(commands::favorite::run(ctx, out)),
-        Commands::Trash => block_on(commands::trash::run(ctx, out)),
-        Commands::Status { json } => block_on(commands::status::run(ctx, out, json)),
-        Commands::Pause => block_on(commands::pause::run(ctx, out)),
-        Commands::Resume => block_on(commands::resume::run(ctx, out)),
+        Commands::Favorite => block_on(simple::run(ctx, out, Simple::Favorite)),
+        Commands::Trash => block_on(simple::run(ctx, out, Simple::Trash)),
+        Commands::Status { json } => block_on(simple::status(ctx, out, json)),
+        Commands::Pause => block_on(simple::run(ctx, out, Simple::Pause)),
+        Commands::Resume => block_on(simple::run(ctx, out, Simple::Resume)),
         Commands::Completions { shell } => {
             // `generate` panics when a write fails, so render to memory first.
             let mut script = Vec::new();
@@ -378,11 +395,15 @@ fn run_command(ctx: &Context, out: &mut dyn Write, command: Commands) -> anyhow:
 }
 
 fn block_on<F: Future<Output = anyhow::Result<()>>>(future: F) -> anyhow::Result<()> {
+    runtime()?.block_on(future)
+}
+
+/// The current-thread runtime every client command runs on.
+pub(crate) fn runtime() -> anyhow::Result<tokio::runtime::Runtime> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .context("starting the async runtime")?
-        .block_on(future)
+        .context("starting the async runtime")
 }
 
 fn config_command(ctx: &Context, out: &mut dyn Write, action: ConfigAction) -> anyhow::Result<()> {
@@ -416,7 +437,7 @@ fn config_command(ctx: &Context, out: &mut dyn Write, action: ConfigAction) -> a
                 .or_else(|| std::env::var_os("EDITOR").filter(|v| !v.is_empty()))
                 .ok_or_else(|| anyhow!("set $VISUAL or $EDITOR to edit {}", path.display()))?;
             let editor = editor.to_string_lossy().into_owned();
-            let mut argv = shell_split(&editor);
+            let mut argv = shell_split(&editor)?;
             if argv.is_empty() {
                 bail!("$VISUAL/$EDITOR is empty");
             }
@@ -434,14 +455,26 @@ fn config_command(ctx: &Context, out: &mut dyn Write, action: ConfigAction) -> a
     Ok(())
 }
 
-/// `$EDITOR` may carry flags (`code -w`); split on whitespace like most tools do.
-fn shell_split(s: &str) -> Vec<String> {
-    s.split_whitespace().map(str::to_owned).collect()
+/// `$EDITOR` may carry flags (`code -w`) and a quoted path with spaces; split it with shell
+/// quoting rules, as git does.
+fn shell_split(s: &str) -> anyhow::Result<Vec<String>> {
+    shell_words::split(s).with_context(|| format!("cannot parse $VISUAL/$EDITOR: {s}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `$EDITOR` is split like a shell would: a quoted path with spaces stays one word.
+    #[test]
+    fn editor_is_split_like_a_shell() {
+        assert_eq!(
+            shell_split("'/Applications/Sublime Text.app/bin/subl' -w").unwrap(),
+            ["/Applications/Sublime Text.app/bin/subl", "-w"]
+        );
+        assert_eq!(shell_split("code --wait").unwrap(), ["code", "--wait"]);
+        assert!(shell_split("vim 'unclosed").is_err());
+    }
 
     #[test]
     fn clap_tree_is_valid() {

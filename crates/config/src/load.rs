@@ -15,6 +15,15 @@ use crate::paths::{ConfigSource, Paths, legacy_default_socket};
 use crate::schema::Config;
 use crate::sources::normalize_sources;
 
+/// A loaded config and what loading had to fix or skip, e.g. a replaced source id or a
+/// `[[sources]]` row with an unknown or missing `type`. Each warning is one line for a log or
+/// `doctor`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Loaded {
+    pub config: Config,
+    pub warnings: Vec<String>,
+}
+
 /// Reads and parses `path`. Missing keys take the defaults. Fails if the file does not exist.
 pub fn load(path: &Path) -> Result<Config, ConfigError> {
     load_with_home(path, &home_dir())
@@ -27,25 +36,51 @@ pub fn load_or_default(path: &Path) -> Result<Config, ConfigError> {
 
 /// [`load`] with an explicit home directory for `~` expansion and default paths.
 pub fn load_with_home(path: &Path, home: &Path) -> Result<Config, ConfigError> {
-    let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
-        path: path.to_owned(),
-        source,
-    })?;
-    parse_str(&text, home).map_err(|source| ConfigError::Parse {
-        path: path.to_owned(),
-        source: Box::new(source),
-    })
+    load_report_with_home(path, home).map(|l| l.config)
 }
 
 /// [`load_or_default`] with an explicit home directory.
 pub fn load_or_default_with_home(path: &Path, home: &Path) -> Result<Config, ConfigError> {
-    match load_with_home(path, home) {
-        Err(e) if e.is_not_found() => Ok(defaults_for_home(home)),
+    load_or_default_report_with_home(path, home).map(|l| l.config)
+}
+
+/// [`load_or_default`] with the load warnings ([`Loaded`]).
+pub fn load_or_default_report(path: &Path) -> Result<Loaded, ConfigError> {
+    load_or_default_report_with_home(path, &home_dir())
+}
+
+/// [`load_with_home`] with the load warnings ([`Loaded`]).
+pub fn load_report_with_home(path: &Path, home: &Path) -> Result<Loaded, ConfigError> {
+    let text = std::fs::read_to_string(path).map_err(|cause| ConfigError::Read {
+        path: path.to_owned(),
+        cause,
+    })?;
+    parse_report(&text, home).map_err(|cause| ConfigError::Parse {
+        path: path.to_owned(),
+        cause: Box::new(cause),
+    })
+}
+
+/// [`load_or_default_with_home`] with the load warnings ([`Loaded`]). A missing file gives the
+/// defaults and no warnings.
+pub fn load_or_default_report_with_home(path: &Path, home: &Path) -> Result<Loaded, ConfigError> {
+    match load_report_with_home(path, home) {
+        Err(e) if e.is_not_found() => Ok(Loaded {
+            config: defaults_for_home(home),
+            warnings: Vec::new(),
+        }),
         other => other,
     }
 }
 
-/// Parses TOML text into a [`Config`] and expands `~` against `home`. Pure.
+/// Parses TOML text into a [`Config`] and expands `~` against `home`. Pure. [`parse_report`]
+/// without the warnings.
+pub fn parse_str(text: &str, home: &Path) -> Result<Config, toml::de::Error> {
+    parse_report(text, home).map(|l| l.config)
+}
+
+/// Parses TOML text into a [`Config`], expands `~` against `home`, and reports what it fixed or
+/// skipped. Pure.
 ///
 /// Expanded fields: `daemon.download_dir`, `daemon.trash_dir`, `daemon.socket_path` (Go left this
 /// one unexpanded, which made a literal `~` directory), `daemon.manual_dir`, `favorites.dir`, and the
@@ -53,16 +88,53 @@ pub fn load_or_default_with_home(path: &Path, home: &Path) -> Result<Config, Con
 ///
 /// A legacy config (`[light]`/`[dark]`, provider `enabled` flags, …) is migrated in memory first
 /// ([`migrate_document`]), so every reader sees `sources`. Source ids are then normalised
-/// ([`normalize_sources`]): empty, invalid and duplicate ids get deterministic replacements.
-pub fn parse_str(text: &str, home: &Path) -> Result<Config, toml::de::Error> {
+/// ([`normalize_sources`]): empty, invalid and duplicate ids get deterministic replacements, each
+/// with a warning. A row whose `type` is missing or unknown loads as
+/// [`SourceType::Unsupported`](crate::SourceType::Unsupported), which the engine skips, also with
+/// a warning.
+pub fn parse_report(text: &str, home: &Path) -> Result<Loaded, toml::de::Error> {
     let migrated = migrated_text(text, home);
+    let text = migrated.as_deref().unwrap_or(text);
+    let mut cfg: Config = toml::from_str(text)?;
+    let mut warnings = normalize_sources(&mut cfg.sources);
+    warnings.extend(type_warnings(text, &cfg));
     // `#[serde(default)]` fills missing keys from `Default`, which reads the real home dir. Rebase
     // those defaults onto `home` by comparing against the real-home defaults first.
-    let mut cfg: Config = toml::from_str(migrated.as_deref().unwrap_or(text))?;
-    normalize_sources(&mut cfg.sources);
     rebase_defaults(&mut cfg, home);
     expand_all(&mut cfg, home);
-    Ok(cfg)
+    Ok(Loaded {
+        config: cfg,
+        warnings,
+    })
+}
+
+/// One warning per `[[sources]]` row of `text` that loaded as `unsupported`, naming the row by
+/// its (normalised) id in `cfg`. `text` already parsed as `cfg`, so its rows line up with
+/// `cfg.sources`.
+fn type_warnings(text: &str, cfg: &Config) -> Vec<String> {
+    if !cfg
+        .sources
+        .iter()
+        .any(|s| s.kind == crate::SourceType::Unsupported)
+    {
+        return Vec::new();
+    }
+    let Ok(doc) = text.parse::<DocumentMut>() else {
+        return Vec::new();
+    };
+    let raw_types = crate::edit::raw_source_types(&doc);
+    cfg.sources
+        .iter()
+        .zip(raw_types)
+        .filter(|(src, _)| src.kind == crate::SourceType::Unsupported)
+        .map(
+            |(src, raw)| match raw.as_ref().and_then(toml_edit::Item::as_str) {
+                None if raw.is_none() => format!("source {:?}: missing type; skipped", src.id),
+                None => format!("source {:?}: type is not a string; skipped", src.id),
+                Some(kind) => format!("source {:?}: unknown type {kind:?}; skipped", src.id),
+            },
+        )
+        .collect()
 }
 
 /// `text` migrated to `[[sources]]`, or `None` when it isn't legacy (or isn't valid TOML, which
@@ -119,9 +191,9 @@ impl FileMigration {
 /// migrations (the UI's commands run on a blocking pool). Between processes, the `.bak` claim and
 /// the identical (deterministic) output keep it safe.
 fn migrate_lock(path: &Path) -> Result<PathLock, ConfigError> {
-    PathLock::acquire(path).map_err(|source| ConfigError::Read {
+    PathLock::acquire(path).map_err(|cause| ConfigError::Read {
         path: path.to_owned(),
-        source,
+        cause,
     })
 }
 
@@ -134,10 +206,10 @@ fn read_and_migrate(
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(source) => {
+        Err(cause) => {
             return Err(ConfigError::Read {
                 path: path.to_owned(),
-                source,
+                cause,
             });
         }
     };
@@ -200,7 +272,22 @@ pub fn migrate_legacy_file(
     if let Some(note) = drop_legacy_socket(&mut doc, home) {
         report.notes.push(note);
     }
-    if !create_atomic(primary, doc.to_string().as_bytes())? {
+    let dir = primary
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    std::fs::create_dir_all(dir).map_err(|cause| ConfigError::CreateDir {
+        path: dir.to_owned(),
+        cause,
+    })?;
+    let created =
+        kakemono_fs::create_new(primary, doc.to_string().as_bytes()).map_err(|cause| {
+            ConfigError::Write {
+                path: primary.to_owned(),
+                cause,
+            }
+        })?;
+    if !created {
         return Ok(None);
     }
     Ok(Some(FileMigration {
@@ -257,9 +344,9 @@ fn keep_backup(path: &Path, original: &[u8]) -> Result<PathBuf, ConfigError> {
         .chain(std::iter::once(format!("{name}.bak.{ts}")))
         .chain((1..100).map(|n| format!("{name}.bak.{ts}-{n}")));
     for candidate in candidates.map(|c| path.with_file_name(c)) {
-        let write_err = |source| ConfigError::Write {
+        let write_err = |cause| ConfigError::Write {
             path: candidate.clone(),
-            source,
+            cause,
         };
         match open_new(&candidate) {
             Ok(mut f) => {
@@ -280,7 +367,7 @@ fn keep_backup(path: &Path, original: &[u8]) -> Result<PathBuf, ConfigError> {
     }
     Err(ConfigError::Write {
         path: path.with_file_name(format!("{name}.bak")),
-        source: io::Error::new(io::ErrorKind::AlreadyExists, "no free backup name"),
+        cause: io::Error::new(io::ErrorKind::AlreadyExists, "no free backup name"),
     })
 }
 
@@ -299,51 +386,6 @@ fn holds(file: &Path, bytes: &[u8]) -> bool {
     false
 }
 
-/// Creates `path` with `bytes`, never replacing an existing file, and never showing a partial
-/// file: the bytes go to a temp file first, which is then hard-linked into place (an atomic
-/// create-new). Where hard links aren't supported, falls back to a create-new write. Returns
-/// `false` when `path` already exists.
-fn create_atomic(path: &Path, bytes: &[u8]) -> Result<bool, ConfigError> {
-    let write_err = |source| ConfigError::Write {
-        path: path.to_owned(),
-        source,
-    };
-    let dir = path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    std::fs::create_dir_all(dir).map_err(|source| ConfigError::CreateDir {
-        path: dir.to_owned(),
-        source,
-    })?;
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "config.toml".to_owned());
-    let tmp = dir.join(format!(".{name}.new.{}", std::process::id()));
-    let written =
-        open_new_replacing(&tmp).and_then(|mut f| f.write_all(bytes).and_then(|()| f.sync_all()));
-    if let Err(e) = written {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(write_err(e));
-    }
-    let linked = std::fs::hard_link(&tmp, path);
-    let _ = std::fs::remove_file(&tmp);
-    match linked {
-        Ok(()) => Ok(true),
-        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(false),
-        Err(_) => match open_new(path) {
-            Ok(mut f) => f
-                .write_all(bytes)
-                .and_then(|()| f.sync_all())
-                .map(|()| true)
-                .map_err(write_err),
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(false),
-            Err(e) => Err(write_err(e)),
-        },
-    }
-}
-
 /// Opens `path` for writing with create-new semantics, mode 0600 on Unix (the config may hold
 /// API keys).
 fn open_new(path: &Path) -> io::Result<std::fs::File> {
@@ -355,16 +397,6 @@ fn open_new(path: &Path) -> io::Result<std::fs::File> {
         opts.mode(0o600);
     }
     opts.open(path)
-}
-
-/// [`open_new`], after removing a stale `path` (a temp file left by a crashed run of this PID).
-fn open_new_replacing(path: &Path) -> io::Result<std::fs::File> {
-    match std::fs::remove_file(path) {
-        Ok(()) => {}
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-        Err(e) => return Err(e),
-    }
-    open_new(path)
 }
 
 /// Replaces default paths computed from the real home with the same paths under `home`.

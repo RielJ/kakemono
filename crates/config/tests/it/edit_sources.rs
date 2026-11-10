@@ -109,3 +109,48 @@ fn filters_object_merges_as_a_table() {
     assert_eq!(cfg.filters.brightness, BrightnessFilter::Dark);
     assert!(cfg.filters.landscape);
 }
+
+/// What the UI's Save does: load, send every row back as JSON, patch.
+fn ui_save(text: &str) -> String {
+    let cfg = parse_str(text, home()).expect("loads");
+    let mut d = doc(text);
+    apply_json(&mut d, &json!({ "sources": cfg.sources })).expect("patch");
+    d.to_string()
+}
+
+/// A type this version doesn't know (written by a newer kakemono) survives a save of the list.
+#[test]
+fn unknown_type_survives_a_ui_save_byte_for_byte() {
+    let text = "[daemon]\ninterval = \"30m\"\n\n\
+         [[sources]]\nid = \"bing\"\nenabled = true\ntype = \"bing\"\nlocation = \"\"\n\n\
+         [[sources]]\nid = \"fl-0001\"\nenabled = true\ntype = \"flickr\" # newer build\nlocation = \"cats\"\n";
+    assert_eq!(ui_save(text), text);
+}
+
+/// A row without `type` is saved without one: the save never invents a value.
+#[test]
+fn missing_type_survives_a_ui_save_byte_for_byte() {
+    let text = "[[sources]]\nid = \"bing\"\nenabled = true\ntype = \"bing\"\nlocation = \"\"\n\n\
+         [[sources]]\nid = \"x-1\"\nenabled = false\nlocation = \"cats\"\n";
+    assert_eq!(ui_save(text), text);
+}
+
+/// The raw type is matched by id, so it follows its row when the UI reorders or drops others.
+#[test]
+fn unknown_type_follows_its_row_by_id() {
+    let mut d = doc(
+        "[[sources]]\nid = \"bing\"\nenabled = true\ntype = \"bing\"\nlocation = \"\"\n\n\
+         [[sources]]\nid = \"fl-0001\"\nenabled = true\ntype = \"flickr\"\nlocation = \"cats\"\n",
+    );
+    apply_json(
+        &mut d,
+        &json!({"sources": [
+            {"id": "fl-0001", "enabled": false, "type": "unsupported", "location": "dogs"},
+        ]}),
+    )
+    .expect("patch");
+    assert_eq!(
+        d.to_string(),
+        "[[sources]]\nid = \"fl-0001\"\nenabled = false\ntype = \"flickr\"\nlocation = \"dogs\"\n"
+    );
+}
