@@ -199,7 +199,7 @@ fn browse_item(post: Post, subreddit: &str) -> Option<RemoteItem> {
         author: post.author,
         width: size(image.source.width),
         height: size(image.source.height),
-        // `over_18` posts are dropped above (plan Decisions §5).
+        // `over_18` posts are dropped above.
         nsfw: false,
     })
 }

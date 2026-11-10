@@ -1,4 +1,4 @@
-//! Safe external command execution (plan §E "Safe command execution").
+//! Safe external command execution.
 //!
 //! - Commands are argv vectors, never run through a shell.
 //! - [`render`] substitutes `{path}`, `{uri}`, `{fit}` and `{theme}` inside each token and never

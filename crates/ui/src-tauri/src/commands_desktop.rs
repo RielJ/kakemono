@@ -1,4 +1,4 @@
-//! Tauri commands for the settings window's Desktop panel (plan Task 42).
+//! Tauri commands for the settings window's Desktop panel.
 //!
 //! - `desktop_backend` → the daemon's `doctor` reply: the backend it is using right now.
 //! - `test_desktop` → IPC `reload`, then `doctor` with `apply`: the daemon re-sets the current

@@ -5,7 +5,7 @@
  * - One call per intersection: the sentinel must leave view before it fires again.
  * - Nothing fires while `busy` (a page is loading). When `busy` clears, a fresh observer
  *   reports the sentinel's current state, so a page too short to push the sentinel out of view
- *   still loads the next one. This keeps at most one page request in flight (plan risk 2).
+ *   still loads the next one. This keeps at most one page request in flight.
  *
  * The sentinel element must be mounted when the effect runs (`ref.current` is read when
  * `busy` or `rootMargin` change, not on every render).

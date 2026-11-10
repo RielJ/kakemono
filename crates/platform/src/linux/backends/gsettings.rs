@@ -1,4 +1,4 @@
-//! GNOME, Cinnamon and MATE: set the wallpaper with the `gsettings` command (plan §E, Task 31).
+//! GNOME, Cinnamon and MATE: set the wallpaper with the `gsettings` command.
 //!
 //! Each `set` runs one `gsettings set <schema> <key> <value>` per key, in order, with no shell:
 //!

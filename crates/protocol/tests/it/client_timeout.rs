@@ -1,4 +1,4 @@
-//! `Client::request_with_timeout` (`docs/plans/picker-browse-impl.md` Task 2): a caller-chosen
+//! `Client::request_with_timeout`: a caller-chosen
 //! round-trip deadline, used by the UI for the slow `browse_use` download.
 
 use std::time::Duration;

@@ -1,4 +1,4 @@
-//! `kakemono pick` (plan Task 46): open the picker in the UI app. Also the shared launcher that
+//! `kakemono pick`: open the picker in the UI app. Also the shared launcher that
 //! `kakemono settings` uses ([`open`]).
 //!
 //! Both commands find `kakemono-ui` ([`locate`]) and start it with `--picker` or `--settings`,

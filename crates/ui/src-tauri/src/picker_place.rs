@@ -1,5 +1,5 @@
 //! Where the picker goes: edge geometry, saved-position checks and the per-platform
-//! [`Placer`]s (plan §H, "User-placed picker").
+//! [`Placer`]s.
 //!
 //! Wayland clients can't read or set their own position, so on Hyprland and sway the
 //! compositor is asked through `hyprctl` / `swaymsg`. Those calls go through an injected

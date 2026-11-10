@@ -1,4 +1,4 @@
-//! The wallpaper engine (plan §A, §D): the history state, the ops (next/prev/set/favorite/
+//! The wallpaper engine: the history state, the ops (next/prev/set/favorite/
 //! trash, manual fetch and import), the image pool and its filters, the rotation loop, the
 //! background downloader, file management, events and hooks.
 

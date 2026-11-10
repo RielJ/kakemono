@@ -1,5 +1,5 @@
 //! The OS seam: `WallpaperSetter` and `SystemSignals`, the main-thread `host()`, argv execution,
-//! URL open / file reveal and service installation (plan §A, §B, §E, §F).
+//! URL open / file reveal and service installation.
 
 pub mod api;
 pub mod deadline;

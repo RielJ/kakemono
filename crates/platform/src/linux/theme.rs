@@ -1,4 +1,4 @@
-//! Linux `SystemSignals` (plan §E, Task 34).
+//! Linux `SystemSignals`.
 //!
 //! - **Theme.** `[desktop] theme` when it is `light` or `dark` (the same rule as macOS and
 //!   Windows). Otherwise the XDG Settings portal's `org.freedesktop.appearance color-scheme`

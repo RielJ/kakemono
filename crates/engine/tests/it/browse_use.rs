@@ -1,4 +1,4 @@
-//! `Engine::browse_use` (`docs/plans/picker-browse-impl.md` Task 13): set, favorite or download
+//! `Engine::browse_use`: set, favorite or download
 //! a browsed remote item. Downloads go through a `permissive_loopback` guarded client to a
 //! local wiremock server; the scripted providers come from `browse_session.rs`.
 

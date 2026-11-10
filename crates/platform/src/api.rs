@@ -1,4 +1,4 @@
-//! The platform seam: the only types the engine sees (plan §B).
+//! The platform seam: the only types the engine sees.
 //!
 //! `WallpaperSetter` applies an image to every display; `SystemSignals` reports the theme and
 //! streams OS events. They are separate because Linux combines them independently (theme from the
@@ -75,7 +75,7 @@ pub struct ParseEnumError {
     value: String,
 }
 
-/// An OS event the engine reacts to (plan §D).
+/// An OS event the engine reacts to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Signal {
     /// The system theme flipped. Emitted only on change (deduplicated by the platform).

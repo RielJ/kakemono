@@ -1,4 +1,4 @@
-//! IPC wire types (plan §I). Serialisation matches the Go daemon byte for byte:
+//! IPC wire types. Serialisation matches the Go daemon byte for byte:
 //! `Response.error`/`data` and `Command.args` are omitted when empty (Go `omitempty`),
 //! every `WallpaperInfo` field is always written, and `StatusData.current` is written as
 //! `null` when unset.
@@ -7,7 +7,7 @@
 //! and is not written when empty, so Go fixtures, old `state.json` files and old clients are
 //! unaffected.
 //!
-//! # Source requests (`docs/plans/variety-sources-impl.md` Task 16)
+//! # Source requests
 //!
 //! Errors use the usual `{"ok":false,"error":"<text>"}` line. A malformed request gets the
 //! [`RequestError`] text; an engine failure gets the engine's text.
@@ -69,7 +69,7 @@
 //! in config order; `path` is the first success, and the call fails only when all failed. The
 //! image is not set.
 //!
-//! # Browse requests (`docs/plans/picker-browse-impl.md` Task 2)
+//! # Browse requests
 //!
 //! **`browse`**: one page of remote images from the enabled online sources, for the picker's
 //! Sources tab. Nothing is downloaded except small previews into `preview_dir`.

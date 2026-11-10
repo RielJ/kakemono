@@ -1,5 +1,5 @@
 //! The source ops behind the `check_source`, `fetch` and `download_now` requests
-//! (`docs/plans/variety-sources-impl.md` Task 16; wire shapes in `kakemono_protocol::types`).
+//! (wire shapes in `kakemono_protocol::types`).
 //!
 //! - [`Engine::check_source`] counts the images a `[[sources]]` row would give. Online types run
 //!   one provider query (no download, [`CHECK_TIMEOUT`]); local types count files with

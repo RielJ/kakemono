@@ -1,4 +1,4 @@
-//! macOS `host()`: `NSApplication` on the real main thread, the daemon on tokio (plan §B, §F).
+//! macOS `host()`: `NSApplication` on the real main thread, the daemon on tokio.
 //!
 //! The main thread runs `NSApplication::run` with the `Prohibited` activation policy (no Dock icon,
 //! no menu bar). A scoped worker thread runs [`crate::host::default_host`] with

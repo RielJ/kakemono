@@ -1,5 +1,5 @@
 //! `service install|uninstall|status [--json]`: the login service that starts the daemon
-//! (plan Task 39; backends in `kakemono_platform::service`).
+//! (backends in `kakemono_platform::service`).
 //!
 //! Exit codes: 0 on success (`uninstall` also when nothing is installed), 1 on failure with the
 //! message on stderr. `status --json` prints exactly

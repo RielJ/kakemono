@@ -1,4 +1,4 @@
-//! `kakemono service install|uninstall|status`: start the daemon at login (plan §F, Task 39).
+//! `kakemono service install|uninstall|status`: start the daemon at login.
 //!
 //! | OS | Mechanism | Definition |
 //! |---|---|---|

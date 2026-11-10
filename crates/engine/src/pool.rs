@@ -1,5 +1,4 @@
-//! The local image pool and the pick a wallpaper change makes from it
-//! (`docs/plans/variety-sources-impl.md` Task 12).
+//! The local image pool and the pick a wallpaper change makes from it.
 //!
 //! [`Pool::collect`] lists, for each enabled `[[sources]]` row, the images already on disk:
 //!

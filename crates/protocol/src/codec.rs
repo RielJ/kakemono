@@ -1,4 +1,4 @@
-//! Newline-delimited JSON codec (plan §I) with a 1 MiB line cap, plus a JSON encoder that
+//! Newline-delimited JSON codec with a 1 MiB line cap, plus a JSON encoder that
 //! matches Go's `encoding/json` byte for byte for the protocol types.
 
 use std::io;

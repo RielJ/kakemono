@@ -1,4 +1,4 @@
-//! `kakemono settings` (plan Task 46): open the settings window in the UI app. The search and
+//! `kakemono settings`: open the settings window in the UI app. The search and
 //! launch rules are [`super::pick`]'s.
 
 use std::io::Write;

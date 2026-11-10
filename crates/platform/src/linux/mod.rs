@@ -1,4 +1,4 @@
-//! Linux platform (plan §E): detection ([`detect`]), backends ([`backends`]), signals
+//! Linux platform: detection ([`detect`]), backends ([`backends`]), signals
 //! ([`theme`]), the self-healing [`ResilientSetter`] and [`open_platform`].
 //!
 //! `detect` compiles everywhere (pure resolver). `backends` and [`ResilientSetter`] compile on

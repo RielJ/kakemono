@@ -1,4 +1,4 @@
-//! `service` (plan Task 39): the generated launchd plist / systemd unit / Windows Run value, and
+//! `service`: the generated launchd plist / systemd unit / Windows Run value, and
 //! the install / uninstall / status command sequences against `RecordingRunner` and
 //! `MemoryRunKey`. Every OS's backend runs on every host: definitions go to a temp dir and no
 //! real `launchctl`, `systemctl` or registry is touched.

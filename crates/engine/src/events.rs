@@ -1,4 +1,4 @@
-//! Engine events, broadcast to `subscribe` clients and the UI (plan §D).
+//! Engine events, broadcast to `subscribe` clients and the UI.
 //!
 //! `Engine` owns the sender. Every op that sets the wallpaper sends `Changed`: `next`, `prev`,
 //! `set_file`, `trash`, `fetch_url`, and `next` with an empty pool after its on-demand

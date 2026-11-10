@@ -1,4 +1,4 @@
-//! Preset argv table and `CommandSetter` (plan Task 29). `linux::backends` builds on every Unix,
+//! Preset argv table and `CommandSetter`. `linux::backends` builds on every Unix,
 //! so this runs on macOS and Linux CI. Process tests use `tests/bin/record-argv` and `sh`.
 #![cfg(unix)]
 

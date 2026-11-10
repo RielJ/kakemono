@@ -1,4 +1,4 @@
-//! The browse preview cache (`docs/plans/picker-browse-impl.md` Task 11): guarded, capped
+//! The browse preview cache: guarded, capped
 //! preview downloads into `<root>/<source_id>/<remote_id>.<ext>`, bounded concurrency and
 //! pruning. A local wiremock server (or a raw TCP server for the concurrency count) stands in
 //! for the provider CDN, reached through a `permissive_loopback` guarded client.

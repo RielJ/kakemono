@@ -1,4 +1,4 @@
-//! Async client for the daemon socket (plan §I).
+//! Async client for the daemon socket.
 //!
 //! One connection carries any number of request/response pairs, one line each, like Go's
 //! server loop. [`Client::subscribe`] turns the connection into an event stream.

@@ -1,4 +1,4 @@
-//! UI ↔ daemon lifecycle (plan §C, Task 46).
+//! UI ↔ daemon lifecycle.
 //!
 //! - At startup the UI starts the daemon when nothing answers on its socket
 //!   ([`ensure_running`]). It never hosts the engine and never starts a second daemon: it runs

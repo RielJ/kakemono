@@ -1,4 +1,4 @@
-//! History provenance of explicit picks (`docs/plans/picker-browse-impl.md` Task 10):
+//! History provenance of explicit picks:
 //! `set_file` infers the source from the folder under `download_dir`, and `set_file_with`
 //! records exactly the provenance it is given.
 

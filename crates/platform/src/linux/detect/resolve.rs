@@ -1,5 +1,5 @@
-//! The pure resolver: `resolve(&Env, &DesktopConfig) -> Resolution`, implementing the plan §E
-//! order. No system access, so it compiles and is table-tested on every OS.
+//! The pure resolver: `resolve(&Env, &DesktopConfig) -> Resolution`, in
+//! backend order. No system access, so it compiles and is table-tested on every OS.
 
 use std::fmt;
 
@@ -315,7 +315,7 @@ const WPAPERD_HINT: &str = "wpaperd is running and manages the wallpaper itself 
 const COMMAND_HINT: &str =
     "`[desktop] backend = \"command\"` needs `[desktop] set_command`. Run `kakemono doctor`.";
 
-/// Resolve the backend (plan §E order, first match wins):
+/// Resolve the backend (first match wins):
 /// 1. a pinned `[desktop] backend` (anything but `auto`/`native`), unless `managed_by =
 ///    "detect"` and the session drifted from `detected_session`;
 /// 2. a full desktop environment;

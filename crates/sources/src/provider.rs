@@ -1,5 +1,5 @@
 //! The `Provider` seam every wallpaper source implements, the candidate type it returns and the
-//! shared error type (plan §A, §G).
+//! shared error type.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

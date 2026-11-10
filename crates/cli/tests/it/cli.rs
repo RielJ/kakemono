@@ -1,4 +1,4 @@
-//! CLI parity (plan Task 35): the real `kakemono` binary (assert_cmd) against the Task 23 IPC
+//! CLI parity: the real `kakemono` binary (assert_cmd) against the Task 23 IPC
 //! server running in this test process on a temp socket, over the fake platform and a static
 //! source. HOME, XDG dirs, `KAKEMONO_CONFIG` and the socket all point into a temp dir.
 

@@ -1,4 +1,4 @@
-//! `host()`: owns the process main thread for the platform and runs the daemon on tokio (plan §B).
+//! `host()`: owns the process main thread for the platform and runs the daemon on tokio.
 //!
 //! - macOS: `macos::mainloop::host` (NSApplication on the main thread, tokio on workers).
 //! - Windows: `windows::host` (message window on the main thread, tokio on a worker).

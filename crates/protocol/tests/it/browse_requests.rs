@@ -1,4 +1,4 @@
-//! The browse requests (`docs/plans/picker-browse-impl.md` Task 2): `browse` and `browse_use`,
+//! The browse requests: `browse` and `browse_use`,
 //! their argument parsing and errors, and their response payloads. The byte-exact fixtures
 //! are in `golden.rs`.
 

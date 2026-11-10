@@ -1,4 +1,4 @@
-//! The `Env` snapshot that [`resolve`](super::resolve::resolve) reads (plan §E "Inputs").
+//! The `Env` snapshot that [`resolve`](super::resolve::resolve) reads.
 //!
 //! Everything here except [`capture`], [`probe_dbus_names`] and [`capture_with_dbus`] is pure
 //! or takes its inputs as arguments, so it compiles and is tested on every OS.

@@ -1,5 +1,5 @@
 //! The `kakemono` CLI and the headless daemon host. A library so integration tests can drive
-//! the commands and the IPC server in-process (plan §A, §C, §I).
+//! the commands and the IPC server in-process.
 
 pub mod cli;
 pub mod commands;

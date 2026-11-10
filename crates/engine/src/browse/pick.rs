@@ -1,4 +1,4 @@
-//! [`Engine::browse_use`] (`docs/plans/picker-browse-impl.md` Task 13): set, favorite or
+//! [`Engine::browse_use`]: set, favorite or
 //! download a remote item the user picked in the Sources tab.
 //!
 //! The item comes from the browse item index by `(source_id, remote_id)`; the UI never sends a

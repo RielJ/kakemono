@@ -1,4 +1,4 @@
-//! Single-instance lock (plan §C): an exclusive `File::try_lock` on `<runtime_dir>/daemon.lock`.
+//! Single-instance lock: an exclusive `File::try_lock` on `<runtime_dir>/daemon.lock`.
 //!
 //! The lock, not the socket, decides which daemon runs. Connect-then-bind races when launchd and
 //! a manual start both see a stale socket; a file lock does not, and the OS drops it on crash.

@@ -1,4 +1,4 @@
-//! The source requests (`docs/plans/variety-sources-impl.md` Task 16): `check_source`, `fetch`
+//! The source requests: `check_source`, `fetch`
 //! and `download_now`, their response payloads, and `WallpaperInfo.source_id`.
 
 use kakemono_protocol::types::{

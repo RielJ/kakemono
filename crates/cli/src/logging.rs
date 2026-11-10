@@ -1,4 +1,4 @@
-//! Tracing setup for the daemon (plan §C "Logging").
+//! Tracing setup for the daemon.
 //!
 //! - Foreground (`daemon -f`, services): human-readable lines on stderr, so a terminal, launchd's
 //!   `StandardErrorPath` or journald gets them.

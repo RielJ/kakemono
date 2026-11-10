@@ -1,5 +1,5 @@
-//! What the daemon's engine needs to browse the online sources from the picker
-//! (`docs/plans/picker-browse-impl.md` Task 14): the strict SSRF-guarded client and the preview
+//! What the daemon's engine needs to browse the online sources from the picker:
+//! the strict SSRF-guarded client and the preview
 //! folder `<cache_dir>/previews`.
 
 use std::path::Path;

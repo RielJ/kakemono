@@ -1,7 +1,7 @@
 //! `config.toml` schema.
 //!
 //! Starts from Go's `internal/config.Config`, plus the new optional `[desktop]`, `[hooks]` and
-//! `[ui]` sections, the new `[daemon]`/`[picker]` keys (plan §I), `[[sources]]` and `[filters]`.
+//! `[ui]` sections, the new `[daemon]`/`[picker]` keys, `[[sources]]` and `[filters]`.
 //! Every struct is `#[serde(default)]`, so a missing key takes its value from
 //! [`crate::defaults::defaults`], and unknown keys are ignored, as BurntSushi/toml did.
 //!
@@ -35,9 +35,9 @@ pub struct Config {
     pub filters: FiltersConfig,
     pub favorites: FavoritesConfig,
     pub picker: PickerConfig,
-    /// New in the Rust rewrite (plan §E). Go ignores it.
+    /// New in the Rust rewrite. Go ignores it.
     pub desktop: DesktopConfig,
-    /// New in the Rust rewrite (plan §I). Go ignores it.
+    /// New in the Rust rewrite. Go ignores it.
     pub hooks: HooksConfig,
     /// New in the Rust rewrite. Settings only the UI reads.
     pub ui: UiConfig,
@@ -64,7 +64,7 @@ pub struct DaemonConfig {
     /// Trash directory. `~` is expanded at load.
     #[ts(type = "string")]
     pub trash_dir: PathBuf,
-    /// IPC socket path. `None` means the platform default (plan §I, owned by `protocol::endpoint`).
+    /// IPC socket path. `None` means the platform default (see `protocol::endpoint`).
     /// `~` is expanded at load. Ignored on Windows (named pipe).
     #[ts(type = "string | null")]
     pub socket_path: Option<PathBuf>,
@@ -376,7 +376,7 @@ pub struct PickerCustom {
     pub monitor: String,
 }
 
-/// `[desktop]` (plan §E). Selects and remembers the wallpaper backend.
+/// `[desktop]`. Selects and remembers the wallpaper backend.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct DesktopConfig {
@@ -488,7 +488,7 @@ impl std::fmt::Display for Backend {
 }
 
 /// How the image is scaled. Defined here (not in `platform`) because `[desktop] fit` needs it and
-/// `platform` depends on `config`; `platform` should re-export this type (plan §B shape).
+/// `platform` depends on `config`; `platform` should re-export this type.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum Fit {
@@ -540,7 +540,7 @@ pub enum ManagedBy {
     User,
 }
 
-/// `[hooks]` (plan §I).
+/// `[hooks]`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct HooksConfig {
@@ -569,7 +569,7 @@ pub enum Appearance {
     System,
 }
 
-/// A non-empty argv vector. Never run through a shell (plan §E "Safe command execution").
+/// A non-empty argv vector. Never run through a shell.
 ///
 /// Deserializes from a TOML array of strings, or from a string split with `shell-words`.
 /// Serializes as an array.

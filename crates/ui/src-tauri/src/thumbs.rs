@@ -1,4 +1,4 @@
-//! The `thumb://` protocol: picker thumbnails behind an id → path allowlist (plan §H, Task 44).
+//! The `thumb://` protocol: picker thumbnails behind an id → path allowlist.
 //!
 //! The picker never sends a path. `tab_thumbnails` (and `current_thumbnail`) admits the listed files with [`Thumbs::admit`],
 //! which gives each one an opaque id (a per-process keyed hash of its real path). A request

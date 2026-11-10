@@ -1,4 +1,4 @@
-//! Browse sessions (`docs/plans/picker-browse-impl.md` Task 12): `Engine::browse` interleaves
+//! Browse sessions: `Engine::browse` interleaves
 //! the enabled online sources, slices their batches into pages of 10, dedupes, reports each
 //! source's state, and keeps pages idempotent. Scripted providers stand in for the real ones;
 //! their preview URLs are refused by the guard (no media hosts), so no test touches the network.

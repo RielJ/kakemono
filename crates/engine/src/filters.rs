@@ -1,4 +1,4 @@
-//! Soft filters (spec items 19–24, "When possible, use images that…"). Pure: no I/O.
+//! Soft filters. Pure: no I/O.
 //!
 //! [`Filters::compile`] turns `[filters]` into a checker once per config load. An invalid regex
 //! or colour becomes a warning and that filter is skipped, so a typo never blocks every image.
@@ -19,9 +19,9 @@ use regex::Regex;
 
 use crate::facts::ImageFacts;
 
-/// Luminance below this is dark (spec item 21).
+/// Luminance below this is dark.
 pub const DARK_MAX: f32 = 0.35;
-/// Luminance above this is light (spec item 21).
+/// Luminance above this is light.
 pub const LIGHT_MIN: f32 = 0.60;
 /// Largest CIE76 ΔE between the chosen colour and a palette colour that still counts as a match.
 pub const COLOR_MAX_DELTA_E: f32 = 30.0;

@@ -1,5 +1,5 @@
 /**
- * The picker tabs (plan "Picker layout and keys"), in display order. `1`–`5` jump to them in
+ * The picker tabs, in display order. `1`–`5` jump to them in
  * this order, and the cross-axis arrows step through them with wrap-around.
  */
 import type { IconName } from './components/Icon'

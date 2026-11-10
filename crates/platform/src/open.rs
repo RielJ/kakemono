@@ -1,5 +1,5 @@
 //! Open an http(s) URL in the browser, open a folder, or reveal a file in the file manager
-//! (plan §G "URL open / reveal").
+//!.
 //!
 //! Every launch is an argv run through a [`CommandRunner`] (never a shell string):
 //!

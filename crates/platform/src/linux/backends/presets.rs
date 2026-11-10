@@ -1,4 +1,4 @@
-//! The preset argv table: one entry per command-driven backend (plan Task 29).
+//! The preset argv table: one entry per command-driven backend.
 //!
 //! Each entry is an argv *template* for [`exec::render`](crate::exec::render): `{path}` is
 //! substituted per token at set time, while the fit flag is chosen here from [`Fit`]. Nothing is

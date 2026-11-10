@@ -26,11 +26,11 @@ sources: Array<SourceEntry>,
  */
 filters: FiltersConfig, favorites: FavoritesConfig, picker: PickerConfig, 
 /**
- * New in the Rust rewrite (plan §E). Go ignores it.
+ * New in the Rust rewrite. Go ignores it.
  */
 desktop: DesktopConfig, 
 /**
- * New in the Rust rewrite (plan §I). Go ignores it.
+ * New in the Rust rewrite. Go ignores it.
  */
 hooks: HooksConfig, 
 /**

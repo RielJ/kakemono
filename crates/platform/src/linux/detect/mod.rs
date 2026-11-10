@@ -1,4 +1,4 @@
-//! Linux backend discovery (plan §E). Compiles on every OS: `resolve` is pure and its table tests
+//! Linux backend discovery. Compiles on every OS: `resolve` is pure and its table tests
 //! run on all CI runners. Only `env::capture*` / `env::probe_dbus_names` touch the system, and
 //! those are `cfg(target_os = "linux")`.
 

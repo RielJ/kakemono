@@ -1,4 +1,4 @@
-//! The rotation loop: `Engine::run(shutdown)` (plan §D). It rotates every `[daemon] interval`,
+//! The rotation loop: `Engine::run(shutdown)`. It rotates every `[daemon] interval`,
 //! skips ticks while paused, and reacts to platform signals.
 //!
 //! # Timer

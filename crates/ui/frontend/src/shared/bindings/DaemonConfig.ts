@@ -22,7 +22,7 @@ download_dir: string,
  */
 trash_dir: string, 
 /**
- * IPC socket path. `None` means the platform default (plan §I, owned by `protocol::endpoint`).
+ * IPC socket path. `None` means the platform default (see `protocol::endpoint`).
  * `~` is expanded at load. Ignored on Windows (named pipe).
  */
 socket_path: string | null, 

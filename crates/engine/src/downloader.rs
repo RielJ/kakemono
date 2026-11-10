@@ -1,4 +1,4 @@
-//! The background downloader (`docs/plans/variety-sources-impl.md` Task 13).
+//! The background downloader.
 //!
 //! It keeps `<download_dir>/<id>/` filled for every enabled online source, so a wallpaper change
 //! can pick from disk ([`crate::pool`]) instead of downloading on demand.

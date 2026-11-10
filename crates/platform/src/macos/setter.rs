@@ -1,5 +1,5 @@
 //! `MacSetter`: NSWorkspace `setDesktopImageURL:forScreen:options:error:` for every screen, run on
-//! the main queue (plan §F).
+//! the main queue.
 //!
 //! macOS has no API to set every Space: this changes the current Space of each screen, which is
 //! what the Go daemon's `tell every desktop` did.

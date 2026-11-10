@@ -1,4 +1,4 @@
-//! `linux::backends::kde` (plan Task 32). The D-Bus tests serve a fake `org.kde.PlasmaShell` with
+//! `linux::backends::kde`. The D-Bus tests serve a fake `org.kde.PlasmaShell` with
 //! `#[zbus::interface]` on a peer-to-peer Unix socket pair: no session bus, no `dbus-daemon`.
 #![cfg(target_os = "linux")]
 

@@ -1,6 +1,6 @@
 //! The daemon's IPC server: newline JSON over a local socket (Unix socket or named pipe), one task
 //! per connection, each request dispatched onto [`Engine`]. Port of Go `internal/daemon/server.go`
-//! plus the new `reload`, `subscribe`, `version` and `doctor` commands (plan §I).
+//! plus the new `reload`, `subscribe`, `version` and `doctor` commands.
 //!
 //! Start-up order (Task 36): [`lock::acquire`](super::lock::acquire), then [`bind`] (which needs
 //! the [`LockGuard`], so a stale socket is only unlinked under the lock), then [`Server::serve`].

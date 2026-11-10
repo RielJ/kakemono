@@ -1,6 +1,6 @@
 //! Wallpaper history and the persisted `state.json` (port of Go `internal/wallpaper/state.go`).
 //!
-//! The file format is byte-compatible with the Go daemon (plan §I):
+//! The file format is byte-compatible with the Go daemon:
 //!
 //! - Keys in order `current` (nullable), `history` (`null` when empty), `history_index` (`-1`
 //!   when empty), `paused`, `last_changed`.

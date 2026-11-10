@@ -1,5 +1,4 @@
-//! [`ResilientSetter`]: re-detect in memory after repeated `SetError`s (plan §E, "Failure,
-//! fallback and re-detection").
+//! [`ResilientSetter`]: re-detect in memory after repeated `SetError`s.
 
 use std::fmt;
 use std::path::Path;

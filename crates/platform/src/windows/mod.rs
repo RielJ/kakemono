@@ -1,4 +1,4 @@
-//! Windows platform (plan §F): `host` (hidden signal window + message loop on the calling thread,
+//! Windows platform: `host` (hidden signal window + message loop on the calling thread,
 //! tokio on a worker) and `open_platform` (`IDesktopWallpaper` setter + registry/window signals).
 //!
 //! Threads:

@@ -1,4 +1,4 @@
-//! Windows wallpaper setter (plan §F): a dedicated "desktop thread" owns a single-threaded COM
+//! Windows wallpaper setter: a dedicated "desktop thread" owns a single-threaded COM
 //! apartment and the `IDesktopWallpaper` object. Requests arrive over an mpsc channel and each
 //! gets its result back on a oneshot (the same actor shape as the macOS main-queue setter).
 //!

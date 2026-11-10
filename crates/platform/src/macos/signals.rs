@@ -1,4 +1,4 @@
-//! macOS `SystemSignals` (plan §F):
+//! macOS `SystemSignals`:
 //!
 //! - `NSWorkspaceActiveSpaceDidChangeNotification` → [`Signal::SpaceChanged`] (always emitted; the
 //!   engine re-applies only when `[daemon] reapply_on_space_change = true`)

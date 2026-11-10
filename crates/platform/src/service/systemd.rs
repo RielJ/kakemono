@@ -1,5 +1,5 @@
 //! Linux: a systemd user unit, `$XDG_CONFIG_HOME/systemd/user/kakemono.service`, bound to
-//! `graphical-session.target` (plan §F).
+//! `graphical-session.target`.
 //!
 //! Compositors that never start `graphical-session.target` (Hyprland without uwsm, plain sway or
 //! niri sessions) won't start the unit, and a unit may miss `WAYLAND_DISPLAY` and friends unless

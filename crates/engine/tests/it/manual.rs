@@ -1,5 +1,5 @@
-//! `Engine::check_source`, `Engine::fetch_url` and `Engine::download_now`
-//! (`docs/plans/variety-sources-impl.md` Task 16). Fakes only (`RecordingSetter`,
+//! `Engine::check_source`, `Engine::fetch_url` and `Engine::download_now`.
+//! Fakes only (`RecordingSetter`,
 //! `ManualSignals`, `StaticProvider`) plus a local wiremock server.
 
 use std::path::{Path, PathBuf};

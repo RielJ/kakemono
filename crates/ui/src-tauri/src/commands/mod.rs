@@ -1,4 +1,4 @@
-//! Tauri commands for the settings window and the picker (plan §H).
+//! Tauri commands for the settings window and the picker.
 //!
 //! Every command is a thin wrapper: daemon calls go through the shared [`DaemonLink`](crate::daemon_link::DaemonLink), config
 //! reads and writes through `kakemono-config` (writes use its `toml_edit` writer, so comments

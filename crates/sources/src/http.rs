@@ -1,4 +1,4 @@
-//! Shared HTTP client and the retry helper every provider and `download` use (plan §G "Retry").
+//! Shared HTTP client and the retry helper every provider and `download` use.
 //!
 //! Retries are hand-rolled (reqwest-retry ignores `Retry-After`). Sleeps use `tokio::time`, so
 //! tests can run under a paused clock.

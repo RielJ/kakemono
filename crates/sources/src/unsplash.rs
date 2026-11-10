@@ -2,7 +2,7 @@
 //!
 //! Port of Go `internal/providers/unsplash/unsplash.go`, API mode only. Go's keyless mode used
 //! `source.unsplash.com`, which Unsplash has shut down, so without an `access_key` `fetch`
-//! returns [`ProviderError::NotConfigured`] and sends no request (plan Task 13, risk 6).
+//! returns [`ProviderError::NotConfigured`] and sends no request.
 //!
 //! Browsing (picker Sources tab) pages through the editorial feed (`/photos`) for an empty
 //! query and through `/search/photos` otherwise. The cursor is the next page number.

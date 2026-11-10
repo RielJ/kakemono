@@ -1,4 +1,4 @@
-//! macOS platform (plan §F): the NSApplication main-thread host ([`mainloop`]), the NSWorkspace
+//! macOS platform: the NSApplication main-thread host ([`mainloop`]), the NSWorkspace
 //! setter ([`setter`]) and the Space/wake/screen/theme signals ([`signals`]).
 //!
 //! `[desktop] backend` and `set_command` are ignored on macOS: the native setter is always used,

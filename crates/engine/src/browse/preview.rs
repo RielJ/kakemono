@@ -1,5 +1,5 @@
 //! The browse preview cache: each remote item's small preview, downloaded through the SSRF
-//! guard into `<root>/<source_id>/<remote_id>.<ext>` (plan Decisions §7, Risks §3 and §6).
+//! guard into `<root>/<source_id>/<remote_id>.<ext>`.
 //!
 //! A preview is kept only when it passes every check: the URL passes
 //! [`GuardConfig::check_url`] against the provider's host list, the response is a success

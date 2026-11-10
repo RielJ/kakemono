@@ -1,4 +1,4 @@
-//! `doctor [--apply]`: diagnose the desktop backend and the daemon (plan §E, Task 37).
+//! `doctor [--apply]`: diagnose the desktop backend and the daemon.
 //!
 //! Local checks run in this shell. On Linux (or with the hidden `--env-json`) they cover the
 //! session env, the probes (`PATH`, processes, D-Bus names), the tray watcher, the resolution

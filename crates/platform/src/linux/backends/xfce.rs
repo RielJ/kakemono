@@ -1,4 +1,4 @@
-//! XFCE: set the wallpaper through xfconf over D-Bus (plan §E, Task 33).
+//! XFCE: set the wallpaper through xfconf over D-Bus.
 //!
 //! `org.xfce.Xfconf.GetAllProperties("xfce4-desktop", "/backdrop")` lists every backdrop
 //! property. Each `…/last-image` key is one monitor × workspace. For each, [`steps`] plans a

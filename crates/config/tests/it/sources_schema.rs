@@ -1,4 +1,4 @@
-//! `[[sources]]`: one row per source instance (spec "Config shape").
+//! `[[sources]]`: one row per source instance.
 
 use std::path::Path;
 

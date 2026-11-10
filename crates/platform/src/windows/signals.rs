@@ -1,4 +1,4 @@
-//! Windows system signals (plan §F) and the host thread's message loop.
+//! Windows system signals and the host thread's message loop.
 //!
 //! - **Window.** A hidden top-level window on the host (main) thread maps `WM_DISPLAYCHANGE` →
 //!   `DisplaysChanged` and `WM_POWERBROADCAST`/`PBT_APMRESUMEAUTOMATIC` → `Resumed`. It is a

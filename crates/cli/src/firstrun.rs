@@ -1,4 +1,4 @@
-//! First-run desktop detection (plan §E "Persistence", Task 37).
+//! First-run desktop detection.
 //!
 //! At start the daemon calls [`ensure_desktop`]. On Linux it captures the session, resolves the
 //! backend, and when detection ran (`backend = "auto"`, or `managed_by = "detect"` with a

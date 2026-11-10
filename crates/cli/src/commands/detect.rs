@@ -1,4 +1,4 @@
-//! `detect [--write [--force]]`: what backend detection picks in this session (plan §E, Task 37).
+//! `detect [--write [--force]]`: what backend detection picks in this session.
 //!
 //! Detection ignores a pinned `[desktop] backend`, so the output answers "what would `auto`
 //! choose here", and the `in use` line shows what the daemon actually resolves. `--write` saves

@@ -1,4 +1,4 @@
-//! `kakemono daemon` wiring (plan Task 36): the real binary on the fake platform
+//! `kakemono daemon` wiring: the real binary on the fake platform
 //! (`KAKEMONO_FAKE_PLATFORM=1`) with HOME, XDG dirs, `KAKEMONO_CONFIG` and the socket inside a
 //! temp dir. Never touches the real desktop, config or socket.
 #![cfg(unix)]

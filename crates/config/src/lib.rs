@@ -1,5 +1,5 @@
 //! `config.toml` schema, Go-compatible defaults, loading, comment-preserving edits, platform paths
-//! and the Go-duration parser (plan §A, §I).
+//! and the Go-duration parser.
 
 pub mod defaults;
 pub mod duration;

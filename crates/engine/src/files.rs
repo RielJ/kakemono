@@ -1,4 +1,4 @@
-//! Favorites, trash and download-folder trimming (plan §D). Port of Go `Manager.Favorite`,
+//! Favorites, trash and download-folder trimming. Port of Go `Manager.Favorite`,
 //! `Manager.Trash` and `copyFile` (`internal/wallpaper/manager.go`).
 //!
 //! Differences from Go:
@@ -8,7 +8,7 @@
 //! - An empty favorites or trash dir is an error. Go would have written into the working dir.
 //!
 //! [`safe_delete`] and [`trim_to_mb`] (with [`Protect`]) replace Go's count-based `trimCache`
-//! for the per-source download layout (`docs/plans/variety-sources-impl.md` Task 11): every
+//! for the per-source download layout: every
 //! delete is checked against the download dir and the protected dirs and files.
 //!
 //! The file work runs on tokio's blocking pool (`spawn_blocking`) with `std::fs`. Copies go

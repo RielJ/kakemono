@@ -1,4 +1,4 @@
-//! `linux::backends::gsettings` (plan Task 31): GNOME, Cinnamon and MATE through `gsettings`.
+//! `linux::backends::gsettings`: GNOME, Cinnamon and MATE through `gsettings`.
 //! The module is plain argv code, so this runs on macOS and Linux CI. Process tests put a fake
 //! `gsettings` (a `sh` script written by the test) first on a private `PATH`.
 #![cfg(unix)]

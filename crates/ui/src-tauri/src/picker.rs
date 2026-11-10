@@ -1,4 +1,4 @@
-//! The picker window (plan §H, Task 43).
+//! The picker window.
 //!
 //! The window is created hidden at startup and reused. `show` places it, `hide` remembers
 //! where the user dragged it. Placement comes in two tiers:
@@ -499,7 +499,7 @@ pub async fn reset_picker_position<R: Runtime>(app: AppHandle<R>) -> Result<(), 
 
 /// `[picker] force_x11`: on native Wayland, re-executes this process with `GDK_BACKEND=x11`
 /// (XWayland), so the picker can position itself. Returns only when no relaunch is needed or
-/// the exec failed. Must run before Tauri starts. UNVERIFIED on real hardware (plan §H).
+/// the exec failed. Must run before Tauri starts. UNVERIFIED on real hardware.
 pub fn relaunch_under_x11_if_asked() {
     let force_x11 = load_picker().force_x11;
     if !picker_place::needs_x11_relaunch(std::env::consts::OS, force_x11, &|key| {

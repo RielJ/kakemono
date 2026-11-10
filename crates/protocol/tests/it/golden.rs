@@ -1,4 +1,4 @@
-//! Golden compatibility tests against the Go fixtures (plan §I, §J, Task 3).
+//! Golden compatibility tests against the Go fixtures.
 //!
 //! Every test lives in this module, so `cargo nextest run -p kakemono-protocol -E 'test(golden::)'`
 //! selects them all.

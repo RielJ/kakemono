@@ -1,5 +1,5 @@
 /**
- * The picker tab bar (plan "Picker layout and keys"): five icon-only tabs that pick what the
+ * The picker tab bar: five icon-only tabs that pick what the
  * strip shows.
  *
  * Horizontal picker: a 32 px column on the left that also carries the drag handle (the column

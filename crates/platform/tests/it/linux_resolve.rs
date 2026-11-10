@@ -1,4 +1,4 @@
-//! Table test for the pure Linux resolver (plan §E). Runs on every OS: no system access.
+//! Table test for the pure Linux resolver. Runs on every OS: no system access.
 
 use kakemono_config::schema::{Backend, CommandSpec, DesktopConfig, ManagedBy};
 use kakemono_platform::linux::detect::{BackendKind, Env, Origin, Resolution, resolve};

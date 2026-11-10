@@ -5,7 +5,7 @@ import type { ManagedBy } from "./ManagedBy";
 import type { ThemeOverride } from "./ThemeOverride";
 
 /**
- * `[desktop]` (plan §E). Selects and remembers the wallpaper backend.
+ * `[desktop]`. Selects and remembers the wallpaper backend.
  */
 export type DesktopConfig = { 
 /**

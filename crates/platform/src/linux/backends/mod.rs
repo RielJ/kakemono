@@ -1,4 +1,4 @@
-//! Linux `WallpaperSetter` backends (plan §E).
+//! Linux `WallpaperSetter` backends.
 //!
 //! `command`, `presets`, `persistent` and `gsettings` are plain argv/process code, so they compile
 //! on every Unix and their tests run on macOS CI too. They only ship on Linux (`open_platform`).

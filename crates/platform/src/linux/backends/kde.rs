@@ -1,4 +1,4 @@
-//! KDE Plasma: set the wallpaper with a Plasma desktop script over D-Bus (plan §E, Task 32).
+//! KDE Plasma: set the wallpaper with a Plasma desktop script over D-Bus.
 //!
 //! [`script_for`] builds JavaScript that switches every desktop containment (`desktops()`, one
 //! per screen and activity) to the `org.kde.image` plugin and writes `Image` and `FillMode`.

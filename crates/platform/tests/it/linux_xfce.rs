@@ -1,4 +1,4 @@
-//! `linux::backends::xfce` (plan Task 33). Key selection is pure and tested on sample property
+//! `linux::backends::xfce`. Key selection is pure and tested on sample property
 //! maps. The D-Bus tests serve a fake `org.xfce.Xfconf` with `#[zbus::interface]` on a
 //! peer-to-peer Unix socket pair: no session bus, no `dbus-daemon`.
 #![cfg(target_os = "linux")]

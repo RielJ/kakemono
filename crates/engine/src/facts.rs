@@ -1,4 +1,4 @@
-//! Image facts for the soft filters (spec items 19–23): pixel size, mean luminance, dominant
+//! Image facts for the soft filters: pixel size, mean luminance, dominant
 //! colours and the EXIF/XMP rating. [`compute`] does the blocking work; [`FactsCache`] keeps the
 //! results in `<state_dir>/facts.json`, keyed by path and checked against `(mtime_ns, size)`.
 //!

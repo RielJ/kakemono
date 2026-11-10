@@ -5,8 +5,7 @@ Deferred work. Each entry says why it was deferred and where to start.
 ## Clipboard monitoring (Variety item 18)
 
 Variety item 18: watch the clipboard and fetch image URLs copied by the user, optionally only
-from a list of hosts. Deferred from the Variety-style settings work (`docs/plans/variety-sources.md`)
-because each platform needs its own watcher.
+from a list of hosts. Deferred because each platform needs its own watcher.
 
 - **Where:** in the daemon, since it always runs. Fetched images go to `[daemon] manual_dir`, the
   same folder that drag and drop uses.

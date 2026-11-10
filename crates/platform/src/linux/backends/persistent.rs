@@ -1,4 +1,4 @@
-//! Long-running setters (swaybg, wbg, `persistent = true` commands), plan §E.
+//! Long-running setters (swaybg, wbg, `persistent = true` commands).
 //!
 //! A persistent setter shows the wallpaper for as long as it runs. Each `set` starts a new
 //! instance in its own process group, waits [`SETTLE`] so the new surface is up (no black flash),

@@ -1,5 +1,5 @@
 //! Client tests against an in-test interprocess listener that replays canned Go responses
-//! (plan Task 4).
+//!.
 
 use std::path::Path;
 

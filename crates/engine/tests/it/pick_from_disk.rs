@@ -1,4 +1,4 @@
-//! Wallpaper changes pick from disk (`docs/plans/variety-sources-impl.md` Task 14): `next` over
+//! Wallpaper changes pick from disk: `next` over
 //! the local pool, the on-demand download for an empty pool, `NoImages`, `change_on_start`, the
 //! downloader wake on `reload`, the filter context and what deletes must spare. Fakes only
 //! (`RecordingSetter`, `ManualSignals`, `StaticProvider`) plus a local wiremock server.

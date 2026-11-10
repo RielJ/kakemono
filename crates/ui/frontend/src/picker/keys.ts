@@ -1,11 +1,11 @@
 /**
- * The picker key map (plan §H): pure, so it is tested without a DOM.
+ * The picker key map: pure, so it is tested without a DOM.
  *
  * ←/→ move (↑/↓ when the strip is vertical), Home/End jump, Enter or Space sets, F favourites,
  * Delete or Backspace trashes, Shift+F10 or the Menu key opens the context menu, Esc closes,
  * ⌘Z / Ctrl+Z undoes a pending trash.
  *
- * Tab keys (plan "Picker layout and keys") work even in an empty strip: the cross-axis arrows
+ * Tab keys work even in an empty strip: the cross-axis arrows
  * (↑/↓ when the strip is horizontal, ←/→ when it is vertical) switch tabs, 1–5 jump to a
  * tab, and [ / ] cycle the Sources source filter. Tab keeps its native focus behaviour.
  */

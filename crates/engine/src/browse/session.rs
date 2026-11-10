@@ -1,4 +1,4 @@
-//! Browse sessions and [`Engine::browse`] (`docs/plans/picker-browse-impl.md` Task 12).
+//! Browse sessions and [`Engine::browse`].
 //!
 //! A session interleaves its online sources round-robin into pages of [`BROWSE_PAGE`] items.
 //! Each source keeps its provider's cursor, a buffer of items not yet shown and the remote ids

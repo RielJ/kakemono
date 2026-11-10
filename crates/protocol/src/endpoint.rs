@@ -1,4 +1,4 @@
-//! Where the daemon listens (plan §I).
+//! Where the daemon listens.
 //!
 //! Precedence: the explicit `socket_override` (CLI `--socket` or config `socket_path`), then
 //! the `KAKEMONO_SOCKET` environment variable, then the platform default:

@@ -1,4 +1,4 @@
-//! Defaults copied from Go `config.Defaults()` (plan §I), plus the new keys.
+//! Defaults copied from Go `config.Defaults()`, plus the new keys.
 
 use std::path::{Path, PathBuf};
 
@@ -21,7 +21,7 @@ pub fn defaults() -> Config {
 
 /// Defaults with paths rooted at `home`. Pure; tests use it with a fixed home.
 ///
-/// Deviation from Go: `daemon.socket_path` is `None` (platform default, plan §I) instead of
+/// Deviation from Go: `daemon.socket_path` is `None` (the platform default) instead of
 /// `~/.config/wallpaperd/daemon.sock`. On macOS the platform default is that same path.
 pub fn defaults_for_home(home: &Path) -> Config {
     let wallpapers = home.join("Pictures").join("Wallpapers");
@@ -89,7 +89,7 @@ pub fn defaults_for_home(home: &Path) -> Config {
 }
 
 /// The rows a fresh install starts with: Bing, Wallhaven "nature" and the favorites folder, all
-/// enabled (spec "Acceptance").
+/// enabled.
 pub fn default_sources(favorites: &Path) -> Vec<SourceEntry> {
     let row = |id: &str, kind, location: &str| SourceEntry {
         id: id.to_owned(),

@@ -2,6 +2,6 @@
 
 /**
  * How the image is scaled. Defined here (not in `platform`) because `[desktop] fit` needs it and
- * `platform` depends on `config`; `platform` should re-export this type (plan §B shape).
+ * `platform` depends on `config`; `platform` should re-export this type.
  */
 export type Fit = "fill" | "fit" | "center" | "stretch" | "tile";

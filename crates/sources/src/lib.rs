@@ -1,5 +1,5 @@
 //! Wallpaper providers behind the `Provider` seam, plus the shared HTTP client, retry, download
-//! helpers, per-row online sources and local listing (plan §A, §G).
+//! helpers, per-row online sources and local listing.
 
 pub mod apod;
 pub mod bing;

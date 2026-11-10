@@ -1,4 +1,4 @@
-//! IPC server + instance lock (plan Task 23): a real server on a tempdir socket over a fake
+//! IPC server + instance lock: a real server on a tempdir socket over a fake
 //! platform and a static source, driven through `protocol::Client` and raw socket lines.
 //! Never touches the real socket or config.
 

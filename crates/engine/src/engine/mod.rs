@@ -1,6 +1,6 @@
 //! `Engine`: the wallpaper ops (`next`, `prev`, `set_file`, `favorite`, `trash`, `pause`,
 //! `resume`, `status`, `reload`) over history state, the local image pool, the online sources
-//! and the platform seam (plan §D). Port of Go `internal/wallpaper/manager.go`.
+//! and the platform seam. Port of Go `internal/wallpaper/manager.go`.
 //!
 //! # Changes pick from disk
 //!

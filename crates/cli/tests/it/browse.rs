@@ -1,4 +1,4 @@
-//! `browse` and `browse_use` through the daemon (`docs/plans/picker-browse-impl.md` Task 14):
+//! `browse` and `browse_use` through the daemon:
 //! the dispatch arms, the wire texts the picker matches on, and session resume.
 
 use std::path::{Path, PathBuf};

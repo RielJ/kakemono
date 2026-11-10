@@ -1,4 +1,4 @@
-//! The clap derive tree (plan §I), the shared [`Context`] (global `--config` / `--socket`, the
+//! The clap derive tree, the shared [`Context`] (global `--config` / `--socket`, the
 //! IPC endpoint) and the dispatcher [`run`].
 //!
 //! Client commands (`next`, `prev`, `set`, `favorite`, `trash`, `status`, `pause`, `resume`) run

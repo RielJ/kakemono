@@ -1,4 +1,4 @@
-//! `[hooks] on_change` (plan §I).
+//! `[hooks] on_change`.
 //!
 //! After every wallpaper change the engine runs the user's `on_change` argv:
 //! - No shell. The argv is rendered with [`kakemono_platform::exec::render`], so `{path}`,
