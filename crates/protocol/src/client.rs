@@ -42,8 +42,10 @@ pub enum ClientError {
     /// The daemon closed the connection before answering.
     #[error("decoding response: daemon closed the connection")]
     Closed,
-    #[error("request timed out after {}s", REQUEST_TIMEOUT.as_secs())]
-    Timeout,
+    /// No reply within the round-trip deadline, which this carries ([`REQUEST_TIMEOUT`] for
+    /// [`Client::request`], the caller's for [`Client::request_with_timeout`]).
+    #[error("request timed out after {}s", .0.as_secs_f64())]
+    Timeout(Duration),
     /// The daemon answered `subscribe` with `ok:false`, e.g. an older daemon that does not
     /// know the command.
     #[error("subscribe rejected by daemon: {0}")]
@@ -121,7 +123,7 @@ impl Client {
         self.poisoned = true;
         let response = tokio::time::timeout(timeout, self.round_trip(&command))
             .await
-            .map_err(|_| ClientError::Timeout)??;
+            .map_err(|_| ClientError::Timeout(timeout))??;
         self.poisoned = false;
         Ok(response)
     }

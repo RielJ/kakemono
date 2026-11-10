@@ -38,14 +38,30 @@ async fn request_with_timeout_gives_timeout_when_the_server_is_silent() {
     .expect("request_with_timeout must return on its own deadline");
     let elapsed = started.elapsed();
 
+    let err = result.expect_err("the silent server must time out");
     assert!(
-        matches!(result, Err(ClientError::Timeout)),
-        "expected Timeout, got {result:?}"
+        matches!(err, ClientError::Timeout(after) if after == Duration::from_millis(50)),
+        "expected Timeout(50ms), got {err:?}"
     );
+    assert_eq!(err.to_string(), "request timed out after 0.05s");
     assert!(
         elapsed >= Duration::from_millis(50) && elapsed < Duration::from_secs(2),
         "timed out after {elapsed:?}"
     );
     done_tx.send(()).expect("server waiting");
     assert_eq!(server.await.expect("server"), "{\"cmd\":\"status\"}\n");
+}
+
+/// `request` keeps the default deadline, so its message names `REQUEST_TIMEOUT`.
+#[test]
+fn timeout_message_names_the_duration_it_was_given() {
+    use kakemono_protocol::client::REQUEST_TIMEOUT;
+    assert_eq!(
+        ClientError::Timeout(REQUEST_TIMEOUT).to_string(),
+        "request timed out after 30s"
+    );
+    assert_eq!(
+        ClientError::Timeout(Duration::from_secs(100)).to_string(),
+        "request timed out after 100s"
+    );
 }
