@@ -450,6 +450,20 @@ async fn prune_reports_how_many_files_it_removed() {
 }
 
 #[tokio::test]
+async fn reused_preview_survives_the_next_prune() {
+    // `expect(0)`: the old file is reused, not fetched again.
+    let server = serving(ResponseTemplate::new(200).set_body_bytes(png()), 0).await;
+    let c = cache();
+    let old = aged(&c.root, "wh-1", "abc.png", 25 * HOUR);
+    let it = item("abc", format!("{}/p", server.uri()));
+    bounded(c.cache.fetch(job(&it))).await;
+
+    bounded(c.cache.prune()).await.unwrap();
+
+    assert_eq!(files_under(&c.root), [old]);
+}
+
+#[tokio::test]
 async fn prune_of_a_missing_root_removes_nothing() {
     let c = cache();
 

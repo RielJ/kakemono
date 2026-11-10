@@ -154,6 +154,7 @@ impl PreviewCache {
         let dir = self.root.join(sanitize_remote_id(job.source_id));
         let stem = sanitize_remote_id(&job.item.remote_id);
         if let Some(cached) = cached_file(&dir, &stem).await {
+            touch(&cached).await;
             return Ok(cached);
         }
         let url = Url::parse(&job.item.preview_url).map_err(|_| PreviewError::BadUrl)?;
@@ -286,6 +287,24 @@ async fn cached_file(dir: &Path, stem: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// Sets `path`'s modification time to now, so [`PreviewCache::prune`] ages a preview from
+/// its last use, not its download. A failure only costs a re-download later, so it is logged.
+async fn touch(path: &Path) {
+    let owned = path.to_path_buf();
+    let result = tokio::task::spawn_blocking(move || {
+        // Write access, not truncation: Windows needs it to change file times.
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&owned)?
+            .set_modified(SystemTime::now())
+    })
+    .await
+    .unwrap_or_else(|join| Err(io::Error::other(join)));
+    if let Err(err) = result {
+        tracing::debug!(path = %path.display(), error = %err, "preview mtime not refreshed");
+    }
 }
 
 /// Writes `bytes` to a `.part` file in `dir`, then renames it to `path`.
