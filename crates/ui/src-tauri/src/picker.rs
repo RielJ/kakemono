@@ -502,13 +502,11 @@ pub async fn reset_picker_position<R: Runtime>(app: AppHandle<R>) -> Result<(), 
 /// the exec failed. Must run before Tauri starts. UNVERIFIED on real hardware.
 pub fn relaunch_under_x11_if_asked() {
     let force_x11 = load_picker().force_x11;
-    if !picker_place::needs_x11_relaunch(std::env::consts::OS, force_x11, &|key| {
+    let needed = picker_place::needs_x11_relaunch(std::env::consts::OS, force_x11, &|key| {
         std::env::var(key).ok()
-    }) {
-        return;
-    }
+    });
     #[cfg(unix)]
-    {
+    if needed {
         use std::os::unix::process::CommandExt;
         let Ok(exe) = std::env::current_exe() else {
             tracing::warn!("force_x11: cannot find the current executable");
@@ -522,6 +520,9 @@ pub fn relaunch_under_x11_if_asked() {
             .exec();
         tracing::warn!(error = %err, "force_x11: relaunch failed; staying on Wayland");
     }
+    // Only Linux relaunches; `needs_x11_relaunch` is false everywhere else.
+    #[cfg(not(unix))]
+    let _ = needed;
 }
 
 #[cfg(test)]
