@@ -276,7 +276,8 @@ pub(crate) mod fake_daemon {
 
     pub fn temp_endpoint() -> (tempfile::TempDir, Endpoint) {
         let dir = tempfile::tempdir().expect("tempdir");
-        let endpoint = Endpoint::new(dir.path().join("run/k.sock")).expect("endpoint");
+        let path = kakemono_protocol::endpoint::test_socket_path(dir.path(), "k.sock");
+        let endpoint = Endpoint::new(path).expect("endpoint");
         (dir, endpoint)
     }
 

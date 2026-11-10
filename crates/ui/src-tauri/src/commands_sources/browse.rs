@@ -220,6 +220,7 @@ mod tests {
     use super::super::fake_daemon::{serve, temp_endpoint};
     use super::*;
     use crate::error::{ErrorKind, Kinded};
+    use crate::thumbs::url_for;
     use interprocess::local_socket::tokio::prelude::*;
     use kakemono_protocol::types::BrowseSourceState;
     use std::path::PathBuf;
@@ -295,7 +296,7 @@ mod tests {
         let path = png(&f.preview_dir.join("wh-1"), "a.png");
         let got = listing(&f, data(&f, "s1", 0, vec![item("a", Some(path.clone()))]));
         let url = got.items[0].image_url.as_deref().unwrap_or_default();
-        assert!(url.starts_with("thumb://localhost/"), "{url:?}");
+        assert!(url.starts_with(&url_for("")), "{url:?}");
         assert!(f.thumbs.is_admitted(Path::new(&path)));
     }
 
@@ -345,7 +346,12 @@ mod tests {
         let path = png(&f.preview_dir.join("wh-1"), "a.png");
         let got = listing(&f, data(&f, "s1", 0, vec![item("a", Some(path))]));
         let json = serde_json::to_string(&got).unwrap();
-        assert!(!json.contains("http"), "{json}");
+        // Windows serves `thumb` as `http://thumb.localhost/`; that local URL is allowed.
+        let remote = json.replace(&url_for(""), "");
+        assert!(
+            json.contains(&url_for("")) && !remote.contains("http"),
+            "{json}"
+        );
     }
 
     #[test]
@@ -413,13 +419,16 @@ mod tests {
     #[test]
     fn admitted_previews_stop_at_the_cap() {
         let mut admitted = Admitted::default();
+        // Only absolute paths are admitted, and `/p` is not absolute on Windows.
+        let root = std::env::temp_dir().join("p");
+        let path = |i: usize| root.join(format!("{i}.png")).to_string_lossy().into_owned();
         let items: Vec<BrowseItem> = (0..PREVIEW_ADMIT_CAP + 5)
-            .map(|i| item(&i.to_string(), Some(format!("/p/{i}.png"))))
+            .map(|i| item(&i.to_string(), Some(path(i))))
             .collect();
         admitted.extend(&items);
         assert_eq!(
             (admitted.paths.len(), admitted.paths.front().cloned()),
-            (PREVIEW_ADMIT_CAP, Some("/p/5.png".to_owned()))
+            (PREVIEW_ADMIT_CAP, Some(path(5)))
         );
     }
 
