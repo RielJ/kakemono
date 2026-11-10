@@ -150,7 +150,7 @@ jobs:
         run: bash scripts/build-sidecar.sh --target "${{ matrix.target }}"
 
       # MSI versions are numeric (major.minor.patch), so a pre-release like
-      # 2.0.0-alpha.0 cannot be derived; the MSI gets 2.0.0 instead.
+      # 0.2.0-beta.1 cannot be used; the MSI gets 0.2.0 instead.
       - name: MSI version
         if: runner.os == 'Windows'
         run: |
