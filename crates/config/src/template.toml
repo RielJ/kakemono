@@ -9,8 +9,6 @@ rotation_enabled = true
 interval = "30m"
 # Directory where downloaded wallpapers are cached
 download_dir = "~/Pictures/Wallpapers/cache"
-# Maximum number of images to keep in the cache directory
-cache_size = 50
 # Directory where trashed wallpapers are moved
 trash_dir = "~/Pictures/Wallpapers/trash"
 # IPC socket path used between the daemon, CLI and UI. Leave unset for the platform default:
@@ -22,16 +20,28 @@ trash_dir = "~/Pictures/Wallpapers/trash"
 # rotate_on_theme_change = true
 # macOS: re-apply the current wallpaper when you switch Spaces
 # reapply_on_space_change = false
+# Change the wallpaper once when the daemon starts
+# change_on_start = false
+# Allow online sources (background downloads and on-demand fetches)
+# internet = true
+# Download new images from online sources in the background
+# download_enabled = true
+# How often to download one new image (Go duration string)
+# download_interval = "10m"
+# Keep downloaded images under a size limit; the oldest downloads are deleted first
+# download_limit_mb_enabled = true
+# download_limit_mb = 500
+# Folder for dropped and fetched images. Leave unset for <download_dir>/manual
+# manual_dir = "~/Pictures/Wallpapers/cache/manual"
 
-# --- Providers ---
+# --- Provider settings ---
+# Shared by every [[sources]] row of that type.
 
 [bing]
-enabled = true
 # Bing market code controlling language/region of results
 market = "en-US"
 
 [wallhaven]
-enabled = false
 # Optional Wallhaven API key — without it the provider falls back to HTML scraping
 api_key = ""
 # Purity filter: "100" = SFW, "110" = SFW+Sketchy, "111" = all
@@ -42,39 +52,51 @@ sorting = "random"
 categories = "111"
 
 [unsplash]
-enabled = false
 # Unsplash API access key
 access_key = ""
 
-[reddit]
-enabled = false
-# List of subreddits to pick from (one is chosen at random per request)
-subreddits = ["EarthPorn", "wallpapers", "spaceporn"]
-
 [apod]
-enabled = false
 # NASA API key — "DEMO_KEY" works for low-volume use
 api_key = "DEMO_KEY"
 
-[local]
-enabled = false
-# Directories to scan for local wallpapers
-dirs = []
-# Whether to scan subdirectories recursively
-recursive = true
+# --- Sources ---
+# One [[sources]] block per source. Several blocks of the same type are allowed.
+# Without any [[sources]] blocks kakemono uses Bing, Wallhaven "nature" and the favorites folder.
+# type: wallhaven | unsplash | reddit | bing | apod | folder | images | album-name | album-date
+# location: search keywords or URL, a subreddit, a path (~ allowed), or "" for bing and apod.
+# id: letters a-z, digits and "-" (at most 32); names the download folder downloads/<id>/.
+#
+# [[sources]]
+# id = "wh-nature"
+# enabled = true
+# type = "wallhaven"
+# location = "nature"
+#
+# [[sources]]
+# id = "pictures"
+# enabled = true
+# type = "folder"
+# location = "~/Pictures/Wallpapers"
 
-# --- Theme-aware provider selection ---
-
-[light]
-# Providers to use in light mode
-sources = ["bing"]
-# Search queries passed to providers that support them
-queries = ["landscape", "nature", "cityscape"]
-
-[dark]
-# Providers to use in dark mode
-sources = ["bing"]
-queries = ["space", "night", "dark minimal", "galaxy"]
+# --- Filters ---
+# Filters are soft: when no image passes, kakemono uses the image that passes the most filters.
+# [filters]
+# Only landscape images
+# landscape = false
+# Only images at least min_size_percent (50, 80 or 100) of the screen size
+# min_size_enabled = false
+# min_size_percent = 80
+# off | dark | light | system (dark images in dark mode, light images in light mode)
+# brightness = "off"
+# Prefer images whose main colour is close to this "#rrggbb" colour
+# color_enabled = false
+# color = "#3b82f6"
+# Only images with an EXIF/XMP rating of at least min_rating (1-5)
+# rating_enabled = false
+# min_rating = 4
+# Only images whose file name matches this regular expression
+# name_regex_enabled = false
+# name_regex = ""
 
 # --- Favorites ---
 
@@ -87,6 +109,8 @@ dir = "~/Pictures/Wallpapers/favorites"
 [picker]
 # Position of the floating thumbnail picker: "bottom", "top", "left", "right"
 position = "bottom"
+# Strip direction: "auto" (vertical on left/right edges), "horizontal" or "vertical"
+# orientation = "auto"
 # Close the picker when it loses focus
 # close_on_blur = true
 # Wayland: run the picker under XWayland so it can be positioned (experimental)
@@ -119,3 +143,8 @@ position = "bottom"
 #
 # [hooks]
 # on_change = ["sketchybar", "--trigger", "wallpaper_changed"]
+
+# --- Settings window ---
+# [ui]
+# Colour scheme of the settings window: "light", "dark" or "system"
+# appearance = "light"

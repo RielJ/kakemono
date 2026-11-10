@@ -16,7 +16,7 @@ use kakemono_platform::fake::{ArgvSetter, ManualSignals};
 use kakemono_protocol::client::Client;
 use kakemono_protocol::endpoint::Endpoint;
 use kakemono_protocol::types::{Request, Response};
-use kakemono_sources::registry::Registry;
+use kakemono_sources::SourceSet;
 use tokio_util::sync::CancellationToken;
 
 fn ok_data<T: serde::de::DeserializeOwned>(response: &Response) -> T {
@@ -56,7 +56,7 @@ async fn reload_rebuilds_the_setter_that_doctor_apply_uses() {
         signals: Arc::new(ManualSignals::new(Theme::Light)),
     };
     let deps = Deps::new(platform, kakemono_sources::http::client().unwrap())
-        .with_registry(Registry::new());
+        .with_sources(SourceSet::default());
     let engine = Engine::new(cfg, State::new(), root.join("state.json"), deps).unwrap();
     let image = root.join("a.jpg");
     std::fs::write(&image, b"fake image data").unwrap();

@@ -1,0 +1,4 @@
+[local]
+enabled = true
+dirs = ["/home/u/Pictures/Walls", "~/Downloads/art", "/mnt/share/pics"]
+recursive = false

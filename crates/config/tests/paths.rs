@@ -109,16 +109,16 @@ fn locate_prefers_new_then_legacy() {
     let (cfg, src) = p.load_config(None).unwrap();
     assert_eq!(src, ConfigSource::Missing(p.config_file.clone()));
     assert!(!src.is_legacy());
-    assert_eq!(cfg.daemon.cache_size, 50);
+    assert_eq!(cfg.daemon.interval, "30m");
 
-    // Only the Go file exists: read it, report Legacy, move nothing.
+    // Only the Go file exists (a non-legacy key as the marker: cache_size is migrated away): read it, report Legacy, move nothing.
     std::fs::create_dir_all(p.legacy_config_file.parent().unwrap()).unwrap();
-    std::fs::write(&p.legacy_config_file, "[daemon]\ncache_size = 7\n").unwrap();
+    std::fs::write(&p.legacy_config_file, "[daemon]\ninterval = \"7m\"\n").unwrap();
     let (cfg, src) = p.load_config(None).unwrap();
     assert_eq!(src, ConfigSource::Legacy(p.legacy_config_file.clone()));
     assert!(src.is_legacy());
     assert_eq!(src.path(), p.legacy_config_file);
-    assert_eq!(cfg.daemon.cache_size, 7);
+    assert_eq!(cfg.daemon.interval, "7m");
     assert!(p.legacy_config_file.exists());
     assert!(!p.config_file.exists());
 
@@ -127,7 +127,7 @@ fn locate_prefers_new_then_legacy() {
     assert!(p.legacy_config_file.exists());
     let (cfg, src) = p.load_config(None).unwrap();
     assert_eq!(src, ConfigSource::Primary(p.config_file.clone()));
-    assert_eq!(cfg.daemon.cache_size, 7);
+    assert_eq!(cfg.daemon.interval, "7m");
 
     // Copying again refuses to overwrite.
     let err = copy_legacy_config(&p.legacy_config_file, &p.config_file).unwrap_err();
@@ -164,7 +164,7 @@ fn explicit_and_env_override_win() {
 
     // A missing explicit file yields defaults, as Go's LoadOrDefault did.
     let (cfg, _) = p.load_config(Some(&flag)).unwrap();
-    assert_eq!(cfg.daemon.cache_size, 50);
+    assert_eq!(cfg.daemon.download_limit_mb, 500);
 }
 
 #[test]
@@ -205,9 +205,14 @@ fn template_loads_like_go_template() {
     assert!(go_cfg.daemon.socket_path.is_some());
     assert_eq!(cfg.daemon.socket_path, None);
     go_cfg.daemon.socket_path = None;
+    // And the sources: Go's template is a legacy file and migrates to one Bing row; ours has no
+    // legacy keys and no `[[sources]]`, so it starts with the default rows.
+    let defaults = defaults_for_home(dir.path());
+    assert_eq!(go_cfg.sources.len(), 1);
+    assert_eq!(cfg.sources, defaults.sources);
+    go_cfg.sources.clone_from(&cfg.sources);
     assert_eq!(cfg, go_cfg);
     // The new sections are commented out, so they keep their defaults.
-    let defaults = defaults_for_home(dir.path());
     assert_eq!(cfg.desktop, defaults.desktop);
     assert_eq!(cfg.hooks, defaults.hooks);
 }

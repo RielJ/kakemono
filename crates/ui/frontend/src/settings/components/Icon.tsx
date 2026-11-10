@@ -1,5 +1,5 @@
 /**
- * Stroke icons (lucide geometry, 24×24 viewBox, 2 px stroke). Inline so the settings window
+ * Stroke icons (lucide geometry, ISC license, 24×24 viewBox, 2 px stroke). Inline so the settings window
  * needs no icon package; every icon here carries meaning next to a label or an aria-label.
  */
 const PATHS = {
@@ -22,11 +22,17 @@ const PATHS = {
   alert: ['M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0z', 'M12 8v4', 'M12 16h.01'],
   check: ['M20 6 9 17l-5-5'],
   x: ['M18 6 6 18', 'm6 6 12 12'],
+  eye: ['M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0', 'M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z'],
+  eyeOff: ['M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49', 'M14.084 14.158a3 3 0 0 1-4.242-4.242', 'M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143', 'm2 2 20 20'],
   chevronUp: ['m18 15-6-6-6 6'],
   chevronDown: ['m6 9 6 6 6-6'],
   plus: ['M5 12h14', 'M12 5v14'],
   terminal: ['m4 17 6-6-6-6', 'M12 19h8'],
   zap: ['M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z'],
+  /** A screen with a thumbnail strip along its bottom edge: the picker. */
+  layout: ['M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z', 'M3 15h18', 'M9 15v6', 'M15 15v6'],
+  monitor: ['M4 3h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z', 'M8 21h8', 'M12 17v4'],
+  sliders: ['M21 4h-7', 'M10 4H3', 'M21 12h-9', 'M8 12H3', 'M21 20h-5', 'M12 20H3', 'M14 2v4', 'M8 10v4', 'M16 18v4'],
 } as const
 
 export type IconName = keyof typeof PATHS

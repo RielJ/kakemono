@@ -30,9 +30,6 @@ pub trait Provider: Send + Sync {
     /// Canonical lower-case identifier, e.g. `"wallhaven"`. Matches the config section name.
     fn name(&self) -> &'static str;
 
-    /// Whether the provider is turned on in the config.
-    fn enabled(&self) -> bool;
-
     /// Fetches a batch of candidates. `query` may be empty; providers without search ignore it.
     /// An empty `Ok(vec![])` is a valid answer ("nothing matched").
     async fn fetch(&self, query: &str) -> Result<Vec<WallpaperResult>, ProviderError>;

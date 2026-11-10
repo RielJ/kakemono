@@ -3,7 +3,7 @@
 /**
  * `[bing]`.
  */
-export type BingConfig = { enabled: boolean, 
+export type BingConfig = { 
 /**
  * Market code, e.g. `"en-US"`.
  */

@@ -6,18 +6,23 @@ pub mod duration;
 pub mod edit;
 pub mod error;
 pub mod load;
+pub mod migrate;
 pub mod paths;
 pub mod schema;
+pub mod sources;
 
 pub use defaults::{defaults, defaults_for_home};
 pub use duration::{DurationError, parse_go};
 pub use error::ConfigError;
 pub use load::{
-    expand_tilde, load, load_or_default, load_or_default_with_home, load_with_home, parse_str,
+    FileMigration, MigrationTarget, expand_tilde, load, load_or_default, load_or_default_with_home,
+    load_with_home, migrate_config, migrate_file, migrate_legacy_file, parse_str,
 };
+pub use migrate::{MigrationReport, migrate_document, needs_migration};
 pub use schema::{
-    ApodConfig, Backend, BingConfig, CommandSpec, CommandSpecError, Config, DaemonConfig,
-    DesktopConfig, FavoritesConfig, Fit, HooksConfig, LocalConfig, ManagedBy, PickerConfig,
-    PickerCustom, PickerPlacement, PickerPosition, RedditConfig, ThemeConfig, ThemeOverride,
-    UiConfig, UnsplashConfig, WallhavenConfig,
+    ApodConfig, Appearance, Backend, BingConfig, BrightnessFilter, CommandSpec, CommandSpecError,
+    Config, DaemonConfig, DesktopConfig, FavoritesConfig, FiltersConfig, Fit, HooksConfig,
+    ManagedBy, PickerConfig, PickerCustom, PickerOrientation, PickerPlacement, PickerPosition,
+    SourceEntry, SourceType, ThemeOverride, UiConfig, UnsplashConfig, WallhavenConfig,
 };
+pub use sources::{MAX_ID_LEN, deterministic_id, normalize_sources, valid_id};

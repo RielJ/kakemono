@@ -1,6 +1,6 @@
 [package]
 name = "kakemono-sources"
-description = "kakemono image providers (Bing, APOD, Reddit, Unsplash, Wallhaven, Local), HTTP retry and download helpers"
+description = "kakemono image providers (Bing, APOD, Reddit, Unsplash, Wallhaven), local image listing, HTTP retry and download helpers"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -26,7 +26,6 @@ serde_json.workspace = true
 url.workspace = true
 httpdate.workspace = true
 rand.workspace = true
-walkdir.workspace = true
 chrono.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

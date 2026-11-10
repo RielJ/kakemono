@@ -200,6 +200,7 @@ impl WallpaperSetter for ArgvSetter {
 #[derive(Clone, Debug)]
 pub struct ManualSignals {
     theme: Arc<Mutex<Theme>>,
+    screen: Arc<Mutex<Option<(u32, u32)>>>,
     tx: broadcast::Sender<Signal>,
 }
 
@@ -208,8 +209,15 @@ impl ManualSignals {
         let (tx, _) = broadcast::channel(64);
         Self {
             theme: Arc::new(Mutex::new(theme)),
+            screen: Arc::default(),
             tx,
         }
+    }
+
+    /// Set what `screen_size()` returns (`None` at first). Emits nothing; follow it with
+    /// `emit(Signal::DisplaysChanged)` to model a display change.
+    pub fn set_screen_size(&self, size: Option<(u32, u32)>) {
+        *lock(&self.screen) = size;
     }
 
     /// Broadcast `signal` as-is. A `ThemeChanged` here does not update `theme()`; use `set_theme`.
@@ -240,6 +248,10 @@ impl SystemSignals for ManualSignals {
 
     fn subscribe(&self) -> broadcast::Receiver<Signal> {
         self.tx.subscribe()
+    }
+
+    fn screen_size(&self) -> Option<(u32, u32)> {
+        *lock(&self.screen)
     }
 }
 
@@ -335,6 +347,24 @@ mod tests {
             .await
             .unwrap();
         assert!(rebuilt.is_none());
+    }
+
+    #[test]
+    fn manual_signals_screen_size_is_settable() {
+        let signals = ManualSignals::default();
+        let dyn_signals: Arc<dyn SystemSignals> = Arc::new(signals.clone());
+        let mut rx = dyn_signals.subscribe();
+        assert_eq!(dyn_signals.screen_size(), None);
+
+        signals.set_screen_size(Some((5120, 2880)));
+        assert_eq!(dyn_signals.screen_size(), Some((5120, 2880)));
+        signals.set_screen_size(None);
+        assert_eq!(dyn_signals.screen_size(), None);
+        assert_eq!(
+            rx.try_recv(),
+            Err(TryRecvError::Empty),
+            "setting the size emits nothing; emit DisplaysChanged explicitly"
+        );
     }
 
     #[test]

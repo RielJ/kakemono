@@ -66,5 +66,8 @@ fn build_settings<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWindow
     .min_inner_size(640.0, 440.0)
     .center()
     .visible(false)
+    // Image drops are HTML5 events in the page (`useImageDrop`); the native handler would
+    // swallow them.
+    .disable_drag_drop_handler()
     .build()
 }

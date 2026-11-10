@@ -19,14 +19,12 @@ use serde_json::Value as Json;
 use tauri::{AppHandle, Runtime, State};
 use tauri_plugin_opener::OpenerExt;
 
+use crate::commands_sources::{ThumbDir, list_images, thumbnail_dirs};
 use crate::daemon_link::{DaemonLink, LinkError};
 use crate::thumbs::Thumbs;
 
 /// The picker shows at most this many entries, as the Go picker did.
 pub const MAX_THUMBNAILS: usize = 100;
-
-/// Image extensions the picker lists from the cache and favourites dirs (Go's set).
-const IMAGE_EXTS: [&str; 4] = ["jpg", "jpeg", "png", "webp"];
 
 /// A failed command, serialised for the frontend as `{ "kind": "...", "message": "..." }`.
 #[derive(Debug, thiserror::Error)]
@@ -100,10 +98,56 @@ fn load_config() -> CmdResult<Config> {
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
-/// `get_config` → the effective config (defaults filled in, `~` expanded).
+/// `get_config` → the effective config (defaults filled in, `~` expanded, a legacy config
+/// migrated to `sources`). The first call also migrates a legacy config file on disk.
 #[tauri::command]
 pub async fn get_config() -> CmdResult<Config> {
-    blocking(load_config).await
+    blocking(|| {
+        migrate_config_once();
+        load_config()
+    })
+    .await
+}
+
+/// Runs [`migrate_config_file`] on the located config once per process, so its notes are
+/// logged once and a failing write (a read-only dir) isn't retried on every `get_config`.
+fn migrate_config_once() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| match locate_config() {
+        Ok((paths, source)) => {
+            migrate_config_file(&paths, &source);
+        }
+        Err(e) => tracing::warn!(error = %e, "could not locate the config to migrate it"),
+    });
+}
+
+/// Rewrites a legacy config to `[[sources]]` on disk and logs each line at info level. The
+/// wallpaperd file is migrated into the kakemono path (later saves go there, since
+/// [`locate_config`] then finds it); a kakemono file is rewritten in place with a `.bak`.
+/// Errors are logged, not returned: loading migrates in memory either way.
+fn migrate_config_file(
+    paths: &Paths,
+    source: &ConfigSource,
+) -> Option<kakemono_config::FileMigration> {
+    match kakemono_config::migrate_config(paths, source) {
+        Ok(done) => {
+            for line in done
+                .iter()
+                .flat_map(kakemono_config::FileMigration::messages)
+            {
+                tracing::info!("{line}");
+            }
+            done
+        }
+        Err(e) => {
+            tracing::warn!(
+                path = %source.path().display(),
+                error = %e,
+                "could not migrate the config file; using the migrated config in memory"
+            );
+            None
+        }
+    }
 }
 
 /// Result of [`save_config`]. The file is written either way; `reloaded` says whether the
@@ -370,9 +414,10 @@ pub struct Thumbnail {
     pub image_url: String,
 }
 
-/// `thumbnails` → history (newest first), then the cache dir, then the favourites dir;
-/// de-duplicated, missing files skipped, at most [`MAX_THUMBNAILS`]. The listed files become
-/// the `thumb://` allowlist.
+/// `thumbnails` → history (newest first), then the folders of enabled sources (online
+/// downloads, then `manual_dir`, then local sources), then the favourites dir
+/// ([`thumbnail_dirs`]); de-duplicated, missing files skipped, at most [`MAX_THUMBNAILS`].
+/// The listed files become the `thumb://` allowlist.
 #[tauri::command]
 pub async fn thumbnails(thumbs: State<'_, Arc<Thumbs>>) -> CmdResult<Vec<Thumbnail>> {
     let thumbs = Arc::clone(&thumbs);
@@ -385,9 +430,10 @@ pub async fn thumbnails(thumbs: State<'_, Arc<Thumbs>>) -> CmdResult<Vec<Thumbna
             &paths.legacy_state_file
         };
         let state = read_state(state_file);
-        let mut list = list_thumbnails(&state, &cfg.daemon.download_dir, &cfg.favorites.dir);
+        let dirs = thumbnail_dirs(&cfg);
+        let mut list = list_thumbnails(&state, &dirs);
         let mut roots = vec![cfg.daemon.download_dir.clone(), cfg.favorites.dir.clone()];
-        roots.extend(cfg.local.dirs.iter().cloned());
+        roots.extend(dirs.into_iter().map(|d| d.path));
         let paths: Vec<&str> = list.iter().map(|t| t.path.as_str()).collect();
         let urls = thumbs.admit(&roots, &paths);
         for (thumb, url) in list.iter_mut().zip(urls) {
@@ -418,12 +464,8 @@ pub fn read_state(path: &Path) -> StateView {
     }
 }
 
-/// Pure listing logic behind [`thumbnails`].
-pub fn list_thumbnails(
-    state: &StateView,
-    download_dir: &Path,
-    favorites_dir: &Path,
-) -> Vec<Thumbnail> {
+/// Pure listing logic behind [`thumbnails`]: history, then the images in `dirs` in order.
+pub fn list_thumbnails(state: &StateView, dirs: &[ThumbDir]) -> Vec<Thumbnail> {
     let current = state
         .current
         .as_ref()
@@ -447,15 +489,18 @@ pub fn list_thumbnails(
             image_url: String::new(),
         });
     }
-    for (dir, source) in [(download_dir, "cache"), (favorites_dir, "favorites")] {
-        for (path, stem) in images_in(dir) {
+    for dir in dirs {
+        if out.len() >= MAX_THUMBNAILS {
+            break;
+        }
+        for (path, stem) in list_images(dir, MAX_THUMBNAILS) {
             if !seen.insert(path.clone()) {
                 continue;
             }
             out.push(Thumbnail {
                 is_current: path == current,
                 path,
-                source: source.to_owned(),
+                source: dir.source.clone(),
                 title: stem,
                 image_url: String::new(),
             });
@@ -463,28 +508,6 @@ pub fn list_thumbnails(
     }
     out.truncate(MAX_THUMBNAILS);
     out
-}
-
-/// Image files directly in `dir`, sorted by name, as `(path, file stem)`.
-fn images_in(dir: &Path) -> Vec<(String, String)> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut found: Vec<(String, String)> = entries
-        .filter_map(Result::ok)
-        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
-        .filter_map(|e| {
-            let path = e.path();
-            let ext = path.extension()?.to_str()?.to_ascii_lowercase();
-            if !IMAGE_EXTS.contains(&ext.as_str()) {
-                return None;
-            }
-            let stem = path.file_stem()?.to_string_lossy().into_owned();
-            Some((path.to_string_lossy().into_owned(), stem))
-        })
-        .collect();
-    found.sort();
-    found
 }
 
 /// Runs blocking file work off the async runtime.
@@ -499,6 +522,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands_sources::Listing;
     use serde_json::json;
 
     const COMMENTED: &str = "\
@@ -552,7 +576,8 @@ enabled = true
             json!({ "daemon": { "interval": "0s" } }),
             json!({ "daemon": { "interval": 30 } }),
             json!(["not", "an", "object"]),
-            json!({ "daemon": { "cache_size": "lots" } }),
+            // Not cache_size: COMMENTED is a legacy config, and loading migrates that key away.
+            json!({ "daemon": { "download_limit_mb": "lots" } }),
         ] {
             let err = write_patch(&path, &patch).expect_err(&patch.to_string());
             assert!(matches!(err.kind(), "invalid" | "config"), "{err}");
@@ -588,26 +613,46 @@ enabled = true
     }
 
     #[test]
-    fn thumbnails_list_history_then_cache_then_favorites() {
+    fn thumbnails_list_history_then_source_dirs_in_order() {
         let dir = tempfile::tempdir().unwrap();
-        let cache = dir.path().join("cache");
+        let wh = dir.path().join("dl/wh-1");
+        let manual = dir.path().join("dl/manual");
+        let pics = dir.path().join("pics");
         let favs = dir.path().join("favs");
-        std::fs::create_dir_all(&cache).unwrap();
-        std::fs::create_dir_all(&favs).unwrap();
-        let a = cache.join("a.jpg");
-        let b = cache.join("b.PNG");
-        let gone = cache.join("gone.jpg");
+        for d in [&wh, &manual, &pics.join("sub"), &favs] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let a = wh.join("a.jpg");
+        let b = wh.join("b.PNG");
+        let gone = wh.join("gone.jpg");
+        let dropped = manual.join("m.jpg");
+        let nested = pics.join("sub/n.webp");
         let fav = favs.join("f.webp");
-        for p in [&a, &b, &fav] {
+        for p in [&a, &b, &dropped, &nested, &fav] {
             std::fs::write(p, b"x").unwrap();
         }
-        std::fs::write(cache.join("notes.txt"), b"x").unwrap();
+        std::fs::write(wh.join("notes.txt"), b"x").unwrap();
 
         let state = StateView {
-            current: Some(info(&b, "bing")),
-            history: Some(vec![info(&a, "reddit"), info(&gone, "x"), info(&b, "bing")]),
+            current: Some(info(&b, "wallhaven")),
+            history: Some(vec![
+                info(&a, "reddit"),
+                info(&gone, "x"),
+                info(&b, "wallhaven"),
+            ]),
         };
-        let got = list_thumbnails(&state, &cache, &favs);
+        let td = |path: &Path, source: &str, listing| ThumbDir {
+            path: path.to_owned(),
+            source: source.to_owned(),
+            listing,
+        };
+        let dirs = [
+            td(&wh, "wallhaven", Listing::Flat),
+            td(&manual, "manual", Listing::Flat),
+            td(&pics, "folder", Listing::Recursive),
+            td(&favs, "favorites", Listing::Flat),
+        ];
+        let got = list_thumbnails(&state, &dirs);
         let summary: Vec<(String, &str, bool)> = got
             .iter()
             .map(|t| (t.title.clone(), t.source.as_str(), t.is_current))
@@ -615,8 +660,10 @@ enabled = true
         assert_eq!(
             summary,
             vec![
-                ("bing title".to_owned(), "bing", true),
+                ("wallhaven title".to_owned(), "wallhaven", true),
                 ("reddit title".to_owned(), "reddit", false),
+                ("m".to_owned(), "manual", false),
+                ("n".to_owned(), "folder", false),
                 ("f".to_owned(), "favorites", false),
             ]
         );
@@ -643,6 +690,66 @@ enabled = true
             read_state(&dir.path().join("missing.json"))
                 .history
                 .is_none()
+        );
+    }
+
+    fn temp_paths(root: &Path) -> Paths {
+        let base = kakemono_config::paths::BaseDirs {
+            home: root.to_owned(),
+            config_home: root.join("cfg"),
+            cache_home: root.join("cache"),
+            state_home: Some(root.join("state")),
+            runtime_home: Some(root.join("run")),
+            config_override: None,
+        };
+        Paths::from_base(&base, kakemono_config::paths::Os::Linux)
+    }
+
+    #[test]
+    fn migrating_the_wallpaperd_config_moves_saves_to_the_kakemono_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = temp_paths(dir.path());
+        let legacy = "[light]\nsources = [\"bing\"]\n[dark]\nsources = [\"bing\"]\n";
+        std::fs::create_dir_all(paths.legacy_config_file.parent().unwrap()).unwrap();
+        std::fs::write(&paths.legacy_config_file, legacy).unwrap();
+        let source = paths.locate_config(None);
+        assert!(source.is_legacy());
+
+        assert!(migrate_config_file(&paths, &source).is_some());
+        // Only once: the next call finds the kakemono file and does nothing.
+        assert!(migrate_config_file(&paths, &paths.locate_config(None)).is_none());
+
+        // `save_config` and `app_info` locate the config again on each call: the kakemono file.
+        assert_eq!(
+            paths.locate_config(None),
+            ConfigSource::Primary(paths.config_file.clone())
+        );
+        assert_eq!(
+            std::fs::read_to_string(&paths.legacy_config_file).unwrap(),
+            legacy
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_migration_is_logged_not_returned() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let paths = temp_paths(dir.path());
+        let ro = dir.path().join("ro");
+        std::fs::create_dir(&ro).unwrap();
+        let file = ro.join("config.toml");
+        std::fs::write(&file, "[light]\nsources = [\"bing\"]\n").unwrap();
+        std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let done = migrate_config_file(&paths, &ConfigSource::Explicit(file.clone()));
+        std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(done.is_none());
+        assert_eq!(
+            kakemono_config::load_or_default(&file)
+                .unwrap()
+                .sources
+                .len(),
+            1
         );
     }
 

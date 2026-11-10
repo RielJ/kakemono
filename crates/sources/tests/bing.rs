@@ -189,17 +189,7 @@ async fn persistent_503_is_retried_then_reported() {
 }
 
 #[test]
-fn name_and_enabled_come_from_config() {
-    let client = reqwest::Client::new();
-    let on = Bing::new(BingConfig::default(), client.clone());
-    assert_eq!(on.name(), "bing");
-    assert!(on.enabled(), "Bing is enabled by default");
-    let off = Bing::new(
-        BingConfig {
-            enabled: false,
-            ..BingConfig::default()
-        },
-        client,
-    );
-    assert!(!off.enabled());
+fn name_is_bing() {
+    let bing = Bing::new(BingConfig::default(), reqwest::Client::new());
+    assert_eq!(bing.name(), "bing");
 }

@@ -6,7 +6,8 @@
 //! ```
 //!
 //! On macOS: switch Space, sleep and wake, toggle Appearance, plug in a display; each should
-//! print within about 1 s.
+//! print within about 1 s. `screen:` is the largest display in physical pixels, printed at start
+//! and after each display change.
 
 use std::time::Duration;
 
@@ -17,11 +18,17 @@ fn main() -> anyhow::Result<()> {
     kakemono_platform::host(&DesktopConfig::default(), move |platform| async move {
         println!("backend: {:?}", platform.setter.info());
         println!("theme:   {}", platform.signals.theme());
+        println!("screen:  {:?}", platform.signals.screen_size());
         let mut rx = platform.signals.subscribe();
         let printing = async {
             loop {
                 match rx.recv().await {
-                    Ok(signal) => println!("signal:  {signal:?}"),
+                    Ok(signal) => {
+                        println!("signal:  {signal:?}");
+                        if signal == kakemono_platform::Signal::DisplaysChanged {
+                            println!("screen:  {:?}", platform.signals.screen_size());
+                        }
+                    }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         println!("lagged:  {n} signals dropped");
                     }

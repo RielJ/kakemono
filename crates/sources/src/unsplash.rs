@@ -57,11 +57,6 @@ impl Provider for Unsplash {
         "unsplash"
     }
 
-    /// The config's `enabled` flag (as in Go). A missing key surfaces as a `fetch` error.
-    fn enabled(&self) -> bool {
-        self.cfg.enabled
-    }
-
     /// `GET {base}/photos/random?client_id=..&count=10&orientation=landscape[&query=..]`.
     async fn fetch(&self, query: &str) -> Result<Vec<WallpaperResult>, ProviderError> {
         let access_key = self.cfg.access_key.trim();

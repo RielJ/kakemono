@@ -15,6 +15,7 @@ use kakemono_cli::daemon::server::{
     self, ApplyOutcome, BindError, DoctorData, NOTHING_TO_APPLY, Server, VersionData,
 };
 use kakemono_config::Config;
+use kakemono_config::schema::{SourceEntry, SourceType};
 use kakemono_engine::state::State;
 use kakemono_engine::{Deps, Engine};
 use kakemono_platform::api::{Fit, Platform, Theme};
@@ -23,8 +24,7 @@ use kakemono_platform::linux::detect::Env;
 use kakemono_protocol::client::{self, Client};
 use kakemono_protocol::endpoint::Endpoint;
 use kakemono_protocol::types::{Command, Event, Request, Response, StatusData, WallpaperInfo};
-use kakemono_sources::fake::StaticProvider;
-use kakemono_sources::registry::Registry;
+use kakemono_sources::SourceSet;
 use tempfile::TempDir;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::task::JoinHandle;
@@ -86,15 +86,23 @@ fn config(root: &Path) -> Config {
     cfg.daemon.interval = "45m".to_owned();
     cfg.daemon.socket_path = Some(root.join("run/k.sock"));
     cfg.desktop.fit = Fit::Fill;
-    cfg.light.sources = vec!["local".to_owned()];
-    cfg.light.queries = vec!["day".to_owned()];
-    cfg.dark.sources = vec!["local".to_owned()];
-    cfg.dark.queries = vec!["night".to_owned()];
+    cfg.daemon.internet = false;
+    cfg.sources = vec![pics_row(root)];
     cfg
 }
 
-/// Lock, bind and serve on `<tmp>/run/k.sock`. The static source serves two local images
-/// (`one.jpg`, `two.jpg`); `next` picks one of them at random.
+/// The folder source `<tmp>/pics`, the only pool `next` picks from.
+fn pics_row(root: &Path) -> SourceEntry {
+    SourceEntry {
+        id: "pics".to_owned(),
+        enabled: true,
+        kind: SourceType::Folder,
+        location: root.join("pics").to_string_lossy().into_owned(),
+    }
+}
+
+/// Lock, bind and serve on `<tmp>/run/k.sock`. The folder source `<tmp>/pics` holds two
+/// images (`one.jpg`, `two.jpg`); `next` picks one of them at random.
 async fn start() -> Daemon {
     start_with(|srv| srv).await
 }
@@ -103,15 +111,10 @@ async fn start() -> Daemon {
 async fn start_with(customize: impl FnOnce(Server) -> Server) -> Daemon {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
-    let images: Vec<_> = ["one.jpg", "two.jpg"]
-        .iter()
-        .map(|name| {
-            let p = root.join(name);
-            std::fs::write(&p, b"fake image data").unwrap();
-            StaticProvider::result("local", p.to_str().unwrap())
-        })
-        .collect();
-    let registry = Registry::new().with(Arc::new(StaticProvider::new("local", images)));
+    std::fs::create_dir(root.join("pics")).unwrap();
+    for name in ["one.jpg", "two.jpg"] {
+        std::fs::write(root.join("pics").join(name), b"fake image data").unwrap();
+    }
 
     let cfg = config(&root);
     // `reload` re-reads this file.
@@ -124,7 +127,7 @@ async fn start_with(customize: impl FnOnce(Server) -> Server) -> Daemon {
     };
     let now: DateTime<FixedOffset> = DateTime::parse_from_rfc3339(NOW).unwrap();
     let deps = Deps::new(platform, kakemono_sources::http::client().unwrap())
-        .with_registry(registry)
+        .with_sources(SourceSet::default())
         .with_clock(move || now);
     let engine = Engine::new(cfg.clone(), State::new(), root.join("state.json"), deps).unwrap();
 
@@ -141,8 +144,8 @@ async fn start_with(customize: impl FnOnce(Server) -> Server) -> Daemon {
         cfg.daemon.download_dir = download_dir.clone();
         cfg.daemon.trash_dir = download_dir.with_file_name("trash");
         cfg.favorites.dir = download_dir.with_file_name("favorites");
-        cfg.light.sources = vec!["local".to_owned()];
-        cfg.dark.sources = vec!["local".to_owned()];
+        cfg.daemon.internet = false;
+        cfg.sources = vec![pics_row(&home)];
         Ok(cfg)
     });
     let srv = customize(srv);
@@ -202,7 +205,7 @@ async fn every_command_through_client() {
     assert_eq!(status.theme, "light");
 
     let first: WallpaperInfo = ok_data(&c.request(Request::Next).await.unwrap());
-    assert_eq!(first.source, "local");
+    assert_eq!(first.source, "folder");
     assert_eq!(d.setter.last().unwrap().0, PathBuf::from(&first.path));
 
     let image = d.root.join("three.jpg");
@@ -273,11 +276,13 @@ async fn every_command_through_client() {
     );
     assert!(Path::new(&current).exists());
 
-    // trash moves the current image away and advances.
+    // trash moves the current image (`first`, after `prev`) away and advances forward in
+    // history to the `set` image (source "local").
     let trashed: WallpaperInfo =
         ok_data(&c.request(Request::Trash { expected: None }).await.unwrap());
     assert_eq!(trashed.source, "local");
-    assert!(!Path::new(&first.path).exists() || trashed.path == first.path);
+    assert_eq!(trashed.path, set.path);
+    assert!(!Path::new(&first.path).exists());
 
     let r = c.request(Command::new("bogus")).await.unwrap();
     assert!(!r.ok);
@@ -542,6 +547,70 @@ async fn doctor_apply_resets_the_current_wallpaper_through_the_daemon() {
     assert_eq!(
         lines[1],
         r#"{"ok":false,"error":"doctor: argument 'apply' must be a boolean"}"#
+    );
+    d.stop().await;
+}
+
+/// Task 16: `check_source`, `fetch` and `download_now` on the wire (`[daemon] internet` is off
+/// in this harness).
+#[tokio::test]
+async fn source_requests_on_the_wire() {
+    let d = start().await;
+    let pics = d.root.join("pics");
+    let dropped = d.root.join("drop/My Pic.png");
+    std::fs::create_dir_all(dropped.parent().unwrap()).unwrap();
+    std::fs::write(&dropped, b"\x89PNG\r\n\x1a\nnot decoded").unwrap();
+    let check_pics =
+        serde_json::json!({"cmd":"check_source","args":{"type":"folder","location":pics}});
+    let fetch_file = serde_json::json!({"cmd":"fetch","args":{"url":dropped}});
+
+    let lines = raw_exchange(
+        &d.endpoint,
+        &[
+            &check_pics.to_string(),
+            r#"{"cmd":"check_source","args":{"type":"wallhaven","location":"forest"}}"#,
+            r#"{"cmd":"check_source","args":{"type":"folder","location":"/definitely/not/here"}}"#,
+            r#"{"cmd":"check_source","args":{"type":"nope"}}"#,
+            r#"{"cmd":"check_source","args":{"location":"x"}}"#,
+            &fetch_file.to_string(),
+            r#"{"cmd":"fetch","args":{"url":"https://example.com/a.jpg"}}"#,
+            r#"{"cmd":"fetch","args":{"url":"a.jpg"}}"#,
+            r#"{"cmd":"fetch"}"#,
+            r#"{"cmd":"download_now"}"#,
+            r#"{"cmd":"download_now","args":{"id":"pics"}}"#,
+            r#"{"cmd":"download_now","args":{"id":7}}"#,
+        ],
+    )
+    .await;
+    let lines: Vec<String> = lines.iter().map(|l| d.redact(l)).collect();
+    assert_eq!(
+        lines,
+        [
+            r#"{"ok":true,"data":{"count":2}}"#,
+            r#"{"ok":false,"error":"Internet access is off"}"#,
+            r#"{"ok":false,"error":"no images found"}"#,
+            r#"{"ok":false,"error":"check_source: unknown source type \"nope\""}"#,
+            r#"{"ok":false,"error":"check_source: missing required argument 'type'"}"#,
+            concat!(
+                r#"{"ok":true,"data":{"path":"[ROOT]/downloads/manual/My Pic.png","#,
+                r#""source":"manual","source_id":"manual","source_url":"","image_url":"","#,
+                r#""title":"My Pic.png","author":"","width":0,"height":0,"#,
+                r#""set_at":"2026-03-04T05:06:07+08:00"}}"#
+            ),
+            r#"{"ok":false,"error":"Internet access is off"}"#,
+            r#"{"ok":false,"error":"not an http(s) URL or absolute file path: \"a.jpg\""}"#,
+            r#"{"ok":false,"error":"fetch: missing required argument 'url'"}"#,
+            r#"{"ok":false,"error":"Internet access is off"}"#,
+            r#"{"ok":false,"error":"no enabled online source \"pics\""}"#,
+            r#"{"ok":false,"error":"download_now: argument 'id' must be a string"}"#,
+        ]
+    );
+    let manual = d.root.join("downloads/manual/My Pic.png");
+    assert_eq!(d.setter.calls(), vec![(manual.clone(), Fit::Fill)]);
+    let status = d.engine.status();
+    assert_eq!(
+        status.current.map(|c| (c.path, c.source_id)),
+        Some((manual.to_string_lossy().into_owned(), "manual".to_owned()))
     );
     d.stop().await;
 }

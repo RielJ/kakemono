@@ -1,0 +1,7 @@
+sources = []
+
+[bing]
+enabled = true
+
+[light]
+sources = ["bing"]

@@ -1,9 +1,14 @@
 //! `config.toml` schema.
 //!
-//! Mirrors Go's `internal/config.Config` key for key, plus the new optional `[desktop]`, `[hooks]` and
-//! `[ui]` sections and the new `[daemon]`/`[picker]` keys (plan §I). Every struct is
-//! `#[serde(default)]`, so a missing key takes its value from [`crate::defaults::defaults`], and
-//! unknown keys are ignored, as BurntSushi/toml did.
+//! Starts from Go's `internal/config.Config`, plus the new optional `[desktop]`, `[hooks]` and
+//! `[ui]` sections, the new `[daemon]`/`[picker]` keys (plan §I), `[[sources]]` and `[filters]`.
+//! Every struct is `#[serde(default)]`, so a missing key takes its value from
+//! [`crate::defaults::defaults`], and unknown keys are ignored, as BurntSushi/toml did.
+//!
+//! The legacy keys (`[light]`, `[dark]`, `daemon.cache_size`, each provider's `enabled`,
+//! `[reddit]`, `[local]`) are not part of the schema: [`crate::migrate`] reads them into
+//! `[[sources]]` through its own copies, and any left in a file are ignored like other unknown
+//! keys.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -21,25 +26,20 @@ pub struct Config {
     pub daemon: DaemonConfig,
     pub wallhaven: WallhavenConfig,
     pub unsplash: UnsplashConfig,
-    pub reddit: RedditConfig,
     pub bing: BingConfig,
     pub apod: ApodConfig,
-    pub local: LocalConfig,
-    /// Keys missing inside a present `[light]` keep the light defaults, as Go's decode-over-defaults did.
-    #[serde(with = "light_theme_serde")]
-    #[ts(as = "ThemeConfig")]
-    pub light: ThemeConfig,
-    /// Keys missing inside a present `[dark]` keep the dark defaults.
-    #[serde(with = "dark_theme_serde")]
-    #[ts(as = "ThemeConfig")]
-    pub dark: ThemeConfig,
+    /// `[[sources]]`: one row per source instance. A missing key gives the default rows; an
+    /// explicit `sources = []` stays empty.
+    pub sources: Vec<SourceEntry>,
+    /// `[filters]`: soft filters applied when picking and downloading images.
+    pub filters: FiltersConfig,
     pub favorites: FavoritesConfig,
     pub picker: PickerConfig,
     /// New in the Rust rewrite (plan §E). Go ignores it.
     pub desktop: DesktopConfig,
     /// New in the Rust rewrite (plan §I). Go ignores it.
     pub hooks: HooksConfig,
-    /// New in the Rust rewrite. Reserved for UI-only settings; currently empty.
+    /// New in the Rust rewrite. Settings only the UI reads.
     pub ui: UiConfig,
 }
 
@@ -61,20 +61,34 @@ pub struct DaemonConfig {
     /// Download cache directory. `~` is expanded at load.
     #[ts(type = "string")]
     pub download_dir: PathBuf,
-    /// Maximum number of images kept in `download_dir`.
-    pub cache_size: u32,
     /// Trash directory. `~` is expanded at load.
     #[ts(type = "string")]
     pub trash_dir: PathBuf,
     /// IPC socket path. `None` means the platform default (plan §I, owned by `protocol::endpoint`).
     /// `~` is expanded at load. Ignored on Windows (named pipe).
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(type = "string | null")]
     pub socket_path: Option<PathBuf>,
     /// Rotate when the system theme flips light/dark. New; default `true`.
     pub rotate_on_theme_change: bool,
     /// Re-set the current image when the macOS Space changes. New; default `false`.
     pub reapply_on_space_change: bool,
+    /// Change the wallpaper once when the daemon starts. Default `false`.
+    pub change_on_start: bool,
+    /// Whether online sources may be used at all (downloads and on-demand fetches). Default `true`.
+    pub internet: bool,
+    /// Whether the background downloader runs. Default `true`.
+    pub download_enabled: bool,
+    /// Go duration between background downloads, e.g. `"10m"`; use
+    /// [`DaemonConfig::download_interval_duration`] to parse.
+    pub download_interval: String,
+    /// Whether [`DaemonConfig::download_limit_mb`] is enforced on `download_dir`. Default `true`.
+    pub download_limit_mb_enabled: bool,
+    /// Size limit for downloaded images in MB; the oldest downloads are deleted first. Default 500.
+    pub download_limit_mb: u32,
+    /// Folder for dropped and fetched images. `None` means `<download_dir>/manual`; use
+    /// [`DaemonConfig::manual_dir_resolved`]. `~` is expanded at load.
+    #[ts(type = "string | null")]
+    pub manual_dir: Option<PathBuf>,
 }
 
 impl DaemonConfig {
@@ -82,13 +96,24 @@ impl DaemonConfig {
     pub fn interval_duration(&self) -> Result<Duration, DurationError> {
         duration::parse_go(&self.interval)
     }
+
+    /// Parses [`DaemonConfig::download_interval`] with Go `time.ParseDuration` grammar.
+    pub fn download_interval_duration(&self) -> Result<Duration, DurationError> {
+        duration::parse_go(&self.download_interval)
+    }
+
+    /// [`DaemonConfig::manual_dir`], or `<download_dir>/manual` when unset.
+    pub fn manual_dir_resolved(&self) -> PathBuf {
+        self.manual_dir
+            .clone()
+            .unwrap_or_else(|| self.download_dir.join("manual"))
+    }
 }
 
 /// `[wallhaven]`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct WallhavenConfig {
-    pub enabled: bool,
     /// Optional; empty means HTML-scrape mode.
     pub api_key: String,
     /// `"100"` = SFW, `"110"` = SFW+Sketchy, `"111"` = all.
@@ -103,24 +128,14 @@ pub struct WallhavenConfig {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct UnsplashConfig {
-    pub enabled: bool,
     /// Optional access key; empty means not configured.
     pub access_key: String,
-}
-
-/// `[reddit]`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(default)]
-pub struct RedditConfig {
-    pub enabled: bool,
-    pub subreddits: Vec<String>,
 }
 
 /// `[bing]`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct BingConfig {
-    pub enabled: bool,
     /// Market code, e.g. `"en-US"`.
     pub market: String,
 }
@@ -129,30 +144,155 @@ pub struct BingConfig {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct ApodConfig {
-    pub enabled: bool,
     /// NASA API key; `"DEMO_KEY"` works for light use.
     pub api_key: String,
 }
 
-/// `[local]`.
+/// One `[[sources]]` row.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
-pub struct LocalConfig {
+pub struct SourceEntry {
+    /// `[a-z0-9-]{1,32}`; names the download folder `downloads/<id>/`.
+    pub id: String,
     pub enabled: bool,
-    /// Directories to scan. `~` is expanded at load.
-    #[ts(type = "Array<string>")]
-    pub dirs: Vec<PathBuf>,
-    pub recursive: bool,
+    #[serde(rename = "type")]
+    pub kind: SourceType,
+    /// Keywords, URL, subreddit or path; empty for `bing` and `apod`. `~` is expanded at load for
+    /// local types.
+    pub location: String,
 }
 
-/// `[light]` and `[dark]`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+impl Default for SourceEntry {
+    /// A row missing `enabled` is on: the user wrote it to use it.
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            enabled: true,
+            kind: SourceType::default(),
+            location: String::new(),
+        }
+    }
+}
+
+/// `[[sources]] type`. A string this version doesn't know loads as `unsupported` instead of failing
+/// the whole load.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, TS)]
+#[serde(rename_all = "kebab-case")]
+pub enum SourceType {
+    Wallhaven,
+    Unsplash,
+    Reddit,
+    #[default]
+    Bing,
+    Apod,
+    /// A folder of images, picked at random, recursive.
+    Folder,
+    /// Individual image files.
+    Images,
+    /// A folder shown in file-name order.
+    AlbumName,
+    /// A folder shown in file-date order.
+    AlbumDate,
+    /// A type this version doesn't know. The engine skips it; the UI shows "Unknown".
+    Unsupported,
+}
+
+impl SourceType {
+    /// Every variant, in declaration order.
+    pub const ALL: [SourceType; 10] = [
+        SourceType::Wallhaven,
+        SourceType::Unsplash,
+        SourceType::Reddit,
+        SourceType::Bing,
+        SourceType::Apod,
+        SourceType::Folder,
+        SourceType::Images,
+        SourceType::AlbumName,
+        SourceType::AlbumDate,
+        SourceType::Unsupported,
+    ];
+
+    /// The config string, e.g. `"album-name"`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SourceType::Wallhaven => "wallhaven",
+            SourceType::Unsplash => "unsplash",
+            SourceType::Reddit => "reddit",
+            SourceType::Bing => "bing",
+            SourceType::Apod => "apod",
+            SourceType::Folder => "folder",
+            SourceType::Images => "images",
+            SourceType::AlbumName => "album-name",
+            SourceType::AlbumDate => "album-date",
+            SourceType::Unsupported => "unsupported",
+        }
+    }
+
+    /// Parses a config string. Anything unrecognised is [`SourceType::Unsupported`].
+    pub fn from_config_str(s: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|t| *t != SourceType::Unsupported && t.as_str() == s)
+            .unwrap_or(SourceType::Unsupported)
+    }
+
+    /// Whether `location` is a filesystem path (`~` is expanded at load).
+    pub fn is_local(self) -> bool {
+        matches!(
+            self,
+            SourceType::Folder | SourceType::Images | SourceType::AlbumName | SourceType::AlbumDate
+        )
+    }
+}
+
+impl std::fmt::Display for SourceType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+// Hand-written (not `#[serde(other)]`) so ts-rs sees no serde attribute it can't parse.
+impl<'de> Deserialize<'de> for SourceType {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        Ok(Self::from_config_str(&s))
+    }
+}
+
+/// `[filters]`. Every filter is off by default. Filters are soft: when no image passes, the picker
+/// takes the one that passes the most.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
-pub struct ThemeConfig {
-    /// Provider names, e.g. `["bing", "wallhaven"]`.
-    pub sources: Vec<String>,
-    /// Search terms for providers that support them.
-    pub queries: Vec<String>,
+pub struct FiltersConfig {
+    /// Only landscape images (width > height).
+    pub landscape: bool,
+    pub min_size_enabled: bool,
+    /// Minimum image size as a percentage of the screen size: 50, 80 or 100. Default 80.
+    pub min_size_percent: u32,
+    pub brightness: BrightnessFilter,
+    pub color_enabled: bool,
+    /// Target colour as `"#rrggbb"`. Default `"#3b82f6"`.
+    pub color: String,
+    pub rating_enabled: bool,
+    /// Minimum EXIF/XMP rating, 1–5. Default 4.
+    pub min_rating: u8,
+    pub name_regex_enabled: bool,
+    /// Regular expression the file name must match (Rust `regex` syntax).
+    pub name_regex: String,
+}
+
+/// `[filters] brightness`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum BrightnessFilter {
+    #[default]
+    Off,
+    /// Only dark images.
+    Dark,
+    /// Only light images.
+    Light,
+    /// Dark images in dark mode, light images in light mode.
+    System,
 }
 
 /// `[favorites]`.
@@ -170,6 +310,8 @@ pub struct FavoritesConfig {
 pub struct PickerConfig {
     /// Screen edge for `placement = "edge"`.
     pub position: PickerPosition,
+    /// Strip direction. `auto` follows `position` (vertical on left/right). New.
+    pub orientation: PickerOrientation,
     /// Relaunch the picker with `GDK_BACKEND=x11` on Wayland. New; default `false`.
     pub force_x11: bool,
     /// Close the picker when it loses focus. New; default `true`.
@@ -177,7 +319,6 @@ pub struct PickerConfig {
     /// `edge` (default) or `custom` (user dragged it; see `custom`). New.
     pub placement: PickerPlacement,
     /// Saved user position, used when `placement = "custom"`. New.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub custom: Option<PickerCustom>,
 }
 
@@ -190,6 +331,28 @@ pub enum PickerPosition {
     Top,
     Left,
     Right,
+}
+
+/// `[picker] orientation`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum PickerOrientation {
+    /// Vertical on the left and right edges, horizontal on top and bottom.
+    #[default]
+    Auto,
+    Horizontal,
+    Vertical,
+}
+
+impl PickerOrientation {
+    /// Whether the strip runs vertically when docked at `position`.
+    pub fn is_vertical(self, position: PickerPosition) -> bool {
+        match self {
+            Self::Auto => matches!(position, PickerPosition::Left | PickerPosition::Right),
+            Self::Horizontal => false,
+            Self::Vertical => true,
+        }
+    }
 }
 
 /// `[picker] placement`.
@@ -218,7 +381,7 @@ pub struct DesktopConfig {
     pub backend: Backend,
     /// Argv for `command` and preset backends. Accepts a TOML array or a string split with shell-words.
     /// Empty array/string loads as `None`.
-    #[serde(skip_serializing_if = "Option::is_none", with = "opt_command_serde")]
+    #[serde(with = "opt_command_serde")]
     #[ts(type = "Array<string> | null")]
     pub set_command: Option<CommandSpec>,
     /// `true` = the command stays running (swaybg-style) and the previous instance is replaced.
@@ -229,10 +392,8 @@ pub struct DesktopConfig {
     /// `detect` = re-detection may overwrite `[desktop]`; `user` = never touch.
     pub managed_by: ManagedBy,
     /// Session key from the last detection, e.g. `"hyprland:wayland"`.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub detected_session: Option<String>,
     /// RFC 3339 time of the last detection.
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(type = "string | null")]
     pub detected_at: Option<DateTime<Utc>>,
 }
@@ -381,15 +542,29 @@ pub enum ManagedBy {
 #[serde(default)]
 pub struct HooksConfig {
     /// Run after every wallpaper change. Array or shell-words string; empty loads as `None`.
-    #[serde(skip_serializing_if = "Option::is_none", with = "opt_command_serde")]
+    #[serde(with = "opt_command_serde")]
     #[ts(type = "Array<string> | null")]
     pub on_change: Option<CommandSpec>,
 }
 
-/// `[ui]`. Reserved for UI-only settings; no keys yet.
+/// `[ui]`. Settings only the UI reads; the daemon ignores them.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
-pub struct UiConfig {}
+pub struct UiConfig {
+    /// Colour scheme of the settings window. New; default `light`.
+    pub appearance: Appearance,
+}
+
+/// `[ui] appearance`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    #[default]
+    Light,
+    Dark,
+    /// Follow the system light/dark setting.
+    System,
+}
 
 /// A non-empty argv vector. Never run through a shell (plan §E "Safe command execution").
 ///
@@ -487,50 +662,8 @@ impl TryFrom<CommandRepr> for CommandSpec {
     }
 }
 
-#[derive(Default, Deserialize)]
-#[serde(default)]
-struct ThemeConfigPartial {
-    sources: Option<Vec<String>>,
-    queries: Option<Vec<String>>,
-}
-
-fn merge_theme(partial: ThemeConfigPartial, base: ThemeConfig) -> ThemeConfig {
-    ThemeConfig {
-        sources: partial.sources.unwrap_or(base.sources),
-        queries: partial.queries.unwrap_or(base.queries),
-    }
-}
-
 // `#[serde(with = ...)]` modules: ts-rs accepts `with` (unlike `deserialize_with`), so these
 // keep the build free of ts-rs attribute warnings.
-
-/// `[light]`: keys missing in a present table keep the light defaults.
-mod light_theme_serde {
-    use super::*;
-
-    pub fn serialize<S: Serializer>(t: &ThemeConfig, s: S) -> Result<S::Ok, S::Error> {
-        t.serialize(s)
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<ThemeConfig, D::Error> {
-        let partial = ThemeConfigPartial::deserialize(d)?;
-        Ok(merge_theme(partial, crate::defaults::light_theme()))
-    }
-}
-
-/// `[dark]`: keys missing in a present table keep the dark defaults.
-mod dark_theme_serde {
-    use super::*;
-
-    pub fn serialize<S: Serializer>(t: &ThemeConfig, s: S) -> Result<S::Ok, S::Error> {
-        t.serialize(s)
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<ThemeConfig, D::Error> {
-        let partial = ThemeConfigPartial::deserialize(d)?;
-        Ok(merge_theme(partial, crate::defaults::dark_theme()))
-    }
-}
 
 /// Optional command: empty array or blank string → `None`; otherwise a [`CommandSpec`].
 mod opt_command_serde {

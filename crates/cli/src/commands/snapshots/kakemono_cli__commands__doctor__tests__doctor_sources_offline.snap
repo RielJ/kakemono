@@ -1,0 +1,10 @@
+---
+source: crates/cli/src/commands/doctor.rs
+expression: "report(&online, Some(MB))"
+---
+
+Sources
+  enabled:    1 of 2 (1 bing)
+  internet:   off
+  downloads:  1.0 MB of 500 MB in /dl
+  warning:    Internet access is off and every enabled source is online: nothing new is downloaded, so changes only use images already on disk

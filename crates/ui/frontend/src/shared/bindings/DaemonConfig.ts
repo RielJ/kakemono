@@ -18,10 +18,6 @@ interval: string,
  */
 download_dir: string, 
 /**
- * Maximum number of images kept in `download_dir`.
- */
-cache_size: number, 
-/**
  * Trash directory. `~` is expanded at load.
  */
 trash_dir: string, 
@@ -37,4 +33,34 @@ rotate_on_theme_change: boolean,
 /**
  * Re-set the current image when the macOS Space changes. New; default `false`.
  */
-reapply_on_space_change: boolean, };
+reapply_on_space_change: boolean, 
+/**
+ * Change the wallpaper once when the daemon starts. Default `false`.
+ */
+change_on_start: boolean, 
+/**
+ * Whether online sources may be used at all (downloads and on-demand fetches). Default `true`.
+ */
+internet: boolean, 
+/**
+ * Whether the background downloader runs. Default `true`.
+ */
+download_enabled: boolean, 
+/**
+ * Go duration between background downloads, e.g. `"10m"`; use
+ * [`DaemonConfig::download_interval_duration`] to parse.
+ */
+download_interval: string, 
+/**
+ * Whether [`DaemonConfig::download_limit_mb`] is enforced on `download_dir`. Default `true`.
+ */
+download_limit_mb_enabled: boolean, 
+/**
+ * Size limit for downloaded images in MB; the oldest downloads are deleted first. Default 500.
+ */
+download_limit_mb: number, 
+/**
+ * Folder for dropped and fetched images. `None` means `<download_dir>/manual`; use
+ * [`DaemonConfig::manual_dir_resolved`]. `~` is expanded at load.
+ */
+manual_dir: string | null, };

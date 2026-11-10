@@ -70,7 +70,6 @@ async fn api_errors_never_contain_the_key() {
         listener.local_addr().unwrap().port()
     };
     let cfg = WallhavenConfig {
-        enabled: true,
         api_key: "testkey".to_owned(),
         ..WallhavenConfig::default()
     };
@@ -196,25 +195,10 @@ async fn api_rate_limited_after_retries() {
 }
 
 #[test]
-fn name_and_enabled() {
+fn name_is_wallhaven() {
     let client = kakemono_sources::http::client().unwrap();
-    let on = Wallhaven::new(
-        WallhavenConfig {
-            enabled: true,
-            ..WallhavenConfig::default()
-        },
-        client.clone(),
-    );
-    let off = Wallhaven::new(
-        WallhavenConfig {
-            enabled: false,
-            ..WallhavenConfig::default()
-        },
-        client,
-    );
-    assert_eq!(on.name(), "wallhaven");
-    assert!(on.enabled());
-    assert!(!off.enabled());
+    let wallhaven = Wallhaven::new(WallhavenConfig::default(), client);
+    assert_eq!(wallhaven.name(), "wallhaven");
 }
 
 #[test]

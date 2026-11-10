@@ -168,17 +168,7 @@ async fn null_fields_decode_as_empty() {
 }
 
 #[test]
-fn name_and_enabled_come_from_config() {
-    let client = reqwest::Client::new();
-    let off = Apod::new(ApodConfig::default(), client.clone());
-    assert_eq!(off.name(), "apod");
-    assert!(!off.enabled(), "APOD is disabled by default");
-    let on = Apod::new(
-        ApodConfig {
-            enabled: true,
-            ..ApodConfig::default()
-        },
-        client,
-    );
-    assert!(on.enabled());
+fn name_is_apod() {
+    let apod = Apod::new(ApodConfig::default(), reqwest::Client::new());
+    assert_eq!(apod.name(), "apod");
 }

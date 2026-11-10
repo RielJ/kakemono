@@ -4,7 +4,7 @@ kakemono replaces the Go `wallpaperd`. It reads your wallpaperd config and histo
 
 ## What carries over
 
-- **Config.** If `~/.config/kakemono/config.toml` doesn't exist, kakemono reads `~/.config/wallpaperd/config.toml` (under `$XDG_CONFIG_HOME` if set). It never moves, copies, or changes that file. `kakemono config path` prints the file in use and says when it is the wallpaperd one.
+- **Config.** If `~/.config/kakemono/config.toml` doesn't exist, the first daemon start (or the first time the settings window opens) converts `~/.config/wallpaperd/config.toml` (under `$XDG_CONFIG_HOME` if set) and writes the result to `~/.config/kakemono/config.toml`. kakemono never changes the wallpaperd file, so it stays as your backup. See [Sources list (2026-07)](#sources-list-2026-07) for what the conversion does.
 - **History and state.** On the first daemon start, if `~/.config/kakemono/state.json` doesn't exist, kakemono copies `~/.config/wallpaperd/state.json` to it: history, the current wallpaper, and the paused flag. kakemono never changes the wallpaperd file.
 - **Wallpaper folders.** The cache, favorites, and trash folders come from the config (`download_dir`, `favorites.dir`, `trash_dir`), so kakemono uses the same folders as wallpaperd.
 - **Commands.** `next`, `prev`, `set`, `favorite`, `trash`, `pause`, `resume`, `status`, `status --json`, `daemon`, `daemon --foreground`, `open`, `open --folder`, `open --favorites`, `pick`, and `settings` work as before. So do the `--config` and `--socket` flags. Replace `wallpaperd` with `kakemono` in your scripts.
@@ -89,26 +89,78 @@ echo '{"cmd":"status"}' | nc -U ~/.config/kakemono/kakemono.sock
 
 ## Give kakemono its own config
 
-kakemono keeps reading the wallpaperd config until `~/.config/kakemono/config.toml` exists. To move your settings over:
+You don't need to copy anything. When `~/.config/kakemono/config.toml` doesn't exist, the daemon writes it from the wallpaperd config on its first start. The daemon log shows a line like this one:
 
-1. Copy the file:
+```text
+migrated ~/.config/wallpaperd/config.toml to ~/.config/kakemono/config.toml; the old file is left as is
+```
+
+The converted file has no `socket_path` when the wallpaperd file used the wallpaperd default socket, so kakemono uses its own socket. You can delete the `[sketchybar]` section by hand. kakemono ignores it.
+
+To start from the commented default config instead, run `kakemono config init` before the first daemon start. It writes `~/.config/kakemono/config.toml` and refuses to overwrite an existing file. `kakemono config edit` opens the config in `$VISUAL` or `$EDITOR`.
+
+## Sources list (2026-07)
+
+kakemono replaced the per-provider switches and the `[light]` and `[dark]` lists with one list of sources, as in Variety. Each `[[sources]]` row has its own on/off switch, a type, and a location:
+
+```toml
+[[sources]]
+id = "wh-2051"
+enabled = true
+type = "wallhaven"
+location = "landscape"
+```
+
+An older config converts the first time the daemon starts or the settings window opens. kakemono also converts it in memory on every load, so an older file always works, even when it can't be written.
+
+### What the conversion does
+
+- Rows are added in this order: Bing, Wallhaven, Unsplash, Reddit, APOD, then local folders.
+- An enabled provider gives enabled rows. A disabled provider that is listed in `[light].sources` or `[dark].sources` gives disabled rows. A disabled provider that isn't listed gives no rows.
+- Wallhaven and Unsplash give one row per distinct query: the `[light]` queries first, then the `[dark]` queries. With no queries, they give one row with an empty location.
+- Reddit gives one row per subreddit in `[reddit] subreddits`.
+- Each folder in `[local] dirs` becomes a `folder` row. Paths in your home folder are written with `~`.
+- `[light]`, `[dark]`, `[daemon] cache_size`, each provider's `enabled`, `[reddit] subreddits`, and `[local] dirs` and `recursive` are removed. Comments elsewhere in the file are kept.
+
+Behaviour that changes:
+
+- **Folder sources always include subfolders.** If you had `[local] recursive = false`, the log notes this. To use only the top-level images, add the images as an `images` source instead.
+- **Light and dark lists are gone.** All enabled sources are used in both modes. To keep dark images in dark mode, set the brightness filter to `system` ("Match system appearance" in settings):
+
+  ```toml
+  [filters]
+  brightness = "system"
+  ```
+
+- **The download folder is limited by size, not by file count.** `cache_size` is replaced by `download_limit_mb` (500 MB by default). Favorites, the current wallpaper, and files in local sources are never deleted.
+- **Each online source downloads into its own folder**, `download_dir/<source id>/`. A wallpaper change picks from images that are already on disk, so it works offline.
+
+### Where the backup is
+
+- **Converted from wallpaperd.** `~/.config/wallpaperd/config.toml` is the backup. kakemono never writes to it.
+- **Converted in place.** An older `~/.config/kakemono/config.toml` (or a file passed with `--config` or `$KAKEMONO_CONFIG`) is rewritten, and the original bytes are kept next to it as `config.toml.bak`. If a different `config.toml.bak` already exists, the backup is named `config.toml.bak.<unix time>`.
+
+### Restore the old config
+
+1. Stop the daemon:
 
    ```sh
-   mkdir -p ~/.config/kakemono
-   cp ~/.config/wallpaperd/config.toml ~/.config/kakemono/config.toml
+   launchctl bootout "gui/$(id -u)/dev.rielj.kakemono.daemon"
    ```
 
-2. Open the copy and delete the `socket_path` line, or comment it out. In a copied file, kakemono uses `socket_path` as written, so `~/.config/wallpaperd/daemon.sock` would stay in effect.
-
-3. Delete the `[sketchybar]` section. kakemono ignores it.
-
-4. Restart the daemon:
+2. Put the old file back. For an in-place conversion:
 
    ```sh
-   launchctl kickstart -k "gui/$(id -u)/dev.rielj.kakemono.daemon"
+   mv ~/.config/kakemono/config.toml.bak ~/.config/kakemono/config.toml
    ```
 
-To start from the commented default config instead, run `kakemono config init`. It writes `~/.config/kakemono/config.toml` and refuses to overwrite an existing file. `kakemono config edit` opens the config in `$VISUAL` or `$EDITOR`.
+   For a conversion from wallpaperd, delete the new file:
+
+   ```sh
+   rm ~/.config/kakemono/config.toml
+   ```
+
+3. Start an older kakemono build. The current build converts the file again on its next start.
 
 ## Update the sketchybar item
 

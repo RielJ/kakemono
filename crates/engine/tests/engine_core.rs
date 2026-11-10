@@ -1,5 +1,5 @@
 //! Engine core ops (next/prev/set/status) against fakes: `RecordingSetter`, `ManualSignals`,
-//! `StaticProvider` and a local wiremock image server. Ports the relevant Go
+//! `StaticProvider` in a fake `SourceSet` and a local wiremock image server. Ports the relevant Go
 //! `internal/wallpaper/manager_test.go` cases. No network beyond 127.0.0.1, temp dirs only.
 
 // In a module so `cargo test -p kakemono-engine engine_core` (the plan's filter) selects them.
@@ -12,13 +12,15 @@ mod engine_core {
     use async_trait::async_trait;
     use chrono::{DateTime, FixedOffset};
     use kakemono_config::Config;
+    use kakemono_config::schema::{SourceEntry, SourceType};
+    use kakemono_engine::downloader::DownloadEnv;
+    use kakemono_engine::engine::resolve_local_path;
     use kakemono_engine::state::State;
     use kakemono_engine::{Deps, Engine, EngineError, EngineEvent};
     use kakemono_platform::api::{Fit, Platform, Theme};
     use kakemono_platform::fake::{ManualSignals, RecordingSetter};
     use kakemono_sources::fake::StaticProvider;
-    use kakemono_sources::registry::Registry;
-    use kakemono_sources::{Provider, ProviderError, WallpaperResult};
+    use kakemono_sources::{Provider, ProviderError, SourceSet, WallpaperResult};
     use tempfile::TempDir;
     use tokio::sync::Notify;
     use wiremock::matchers::{method, path};
@@ -58,14 +60,32 @@ mod engine_core {
         cfg.favorites.dir = root.join("favorites");
         cfg.daemon.interval = "45m".to_owned();
         cfg.desktop.fit = Fit::Center;
-        cfg.light.sources = vec!["bing".to_owned()];
-        cfg.light.queries = vec!["day".to_owned()];
-        cfg.dark.sources = vec!["apod".to_owned()];
-        cfg.dark.queries = vec!["night".to_owned()];
+        cfg.daemon.internet = true;
+        cfg.daemon.download_limit_mb_enabled = false;
+        cfg.sources = Vec::new();
         cfg
     }
 
-    fn fixture_with(registry: Registry, theme: Theme, edit: impl FnOnce(&mut Config)) -> Fixture {
+    fn row(id: &str, kind: SourceType, location: &str) -> SourceEntry {
+        SourceEntry {
+            id: id.to_owned(),
+            enabled: true,
+            kind,
+            location: location.to_owned(),
+        }
+    }
+
+    /// A one-source set: the online row `bing` backed by `provider`.
+    fn bing_set(provider: Arc<dyn Provider>) -> SourceSet {
+        SourceSet::fake(vec![("bing", provider, "")])
+    }
+
+    /// The config edit that adds the `bing` row [`bing_set`] serves.
+    fn bing_row(c: &mut Config) {
+        c.sources = vec![row("bing", SourceType::Bing, "")];
+    }
+
+    fn fixture_with(sources: SourceSet, theme: Theme, edit: impl FnOnce(&mut Config)) -> Fixture {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
         let mut cfg = config(&root);
@@ -78,7 +98,7 @@ mod engine_core {
         };
         let now: DateTime<FixedOffset> = DateTime::parse_from_rfc3339(NOW).unwrap();
         let deps = Deps::new(platform, kakemono_sources::http::client().unwrap())
-            .with_registry(registry)
+            .with_sources(sources)
             .with_clock(move || now);
         let engine = Engine::new(cfg, State::new(), root.join("state.json"), deps).unwrap();
         Fixture {
@@ -90,8 +110,8 @@ mod engine_core {
         }
     }
 
-    fn fixture(registry: Registry) -> Fixture {
-        fixture_with(registry, Theme::Light, |_| {})
+    fn fixture(sources: SourceSet) -> Fixture {
+        fixture_with(sources, Theme::Light, |_| {})
     }
 
     fn local_result(name: &str, image: &Path) -> WallpaperResult {
@@ -117,7 +137,7 @@ mod engine_core {
 
     #[tokio::test]
     async fn new_creates_download_trash_and_favorites_dirs() {
-        let f = fixture(Registry::new());
+        let f = fixture(SourceSet::default());
         for d in ["downloads", "trash", "favorites"] {
             assert!(f.root.join(d).is_dir(), "{d} not created");
         }
@@ -134,7 +154,7 @@ mod engine_core {
             setter: Arc::new(RecordingSetter::new()),
             signals: Arc::new(ManualSignals::new(Theme::Light)),
         };
-        let deps = Deps::new(platform, reqwest::Client::new()).with_registry(Registry::new());
+        let deps = Deps::new(platform, reqwest::Client::new()).with_sources(SourceSet::default());
         let err = Engine::new(cfg, State::new(), dir.path().join("s.json"), deps).unwrap_err();
         assert!(matches!(err, EngineError::CreateDir { .. }), "{err:?}");
         assert!(err.to_string().starts_with("manager: create dir "), "{err}");
@@ -143,28 +163,26 @@ mod engine_core {
     // ─── next ─────────────────────────────────────────────────────────────────────────────────
 
     #[tokio::test]
-    async fn next_downloads_sets_and_pushes_history() {
+    async fn next_on_an_empty_pool_downloads_sets_and_pushes_history() {
         let server = image_server("photo.jpg").await;
         let url = format!("{}/img/photo.jpg", server.uri());
         let bing = Arc::new(StaticProvider::new(
             "bing",
             vec![StaticProvider::result("bing", &url)],
         ));
-        let f = fixture(Registry::new().with(bing.clone()));
+        let f = fixture_with(bing_set(bing.clone()), Theme::Light, bing_row);
         let mut events = f.engine.subscribe();
 
         let info = f.engine.next().await.unwrap();
 
-        let expected_path = f.download_dir().join("photo.jpg");
+        let expected_path = f.download_dir().join("bing").join("photo.jpg");
         assert_eq!(info.path, expected_path.to_str().unwrap());
         assert_eq!(std::fs::read(&expected_path).unwrap().len(), 12 * 1024);
         assert_eq!(info.source, "bing");
-        assert_eq!(info.image_url, url);
-        assert_eq!(info.source_url, "https://example.test/bing");
-        assert_eq!(info.title, "bing wallpaper");
+        assert_eq!(info.title, "photo.jpg");
         assert_eq!(info.set_at, "2026-03-04T05:06:07+08:00");
         assert_eq!((info.width, info.height), (0, 0));
-        assert_eq!(bing.queries(), vec!["day"]);
+        assert_eq!(bing.queries(), vec![""]);
         assert_eq!(f.setter.calls(), vec![(expected_path, Fit::Center)]);
 
         let status = f.engine.status();
@@ -185,26 +203,24 @@ mod engine_core {
     }
 
     #[tokio::test]
-    async fn next_uses_local_absolute_path_without_download() {
+    async fn resolve_local_path_uses_an_absolute_path_without_download() {
         let dir = tempfile::tempdir().unwrap();
         let img = dir.path().join("local.png");
         std::fs::write(&img, b"png").unwrap();
-        let local = Arc::new(StaticProvider::new(
-            "local",
-            vec![local_result("local", &img)],
-        ));
-        let f = fixture_with(Registry::new().with(local), Theme::Light, |c| {
-            c.light.sources = vec!["local".to_owned()];
-        });
-
-        let info = f.engine.next().await.unwrap();
-        assert_eq!(info.path, img.to_str().unwrap());
-        assert_eq!(f.setter.last().unwrap().0, img);
-        assert_eq!(std::fs::read_dir(f.download_dir()).unwrap().count(), 0);
+        let downloads = dir.path().join("downloads");
+        let path = resolve_local_path(
+            &reqwest::Client::new(),
+            &local_result("local", &img),
+            &downloads,
+        )
+        .await
+        .unwrap();
+        assert_eq!(path, img);
+        assert!(!downloads.exists());
     }
 
     #[tokio::test]
-    async fn next_accepts_file_url() {
+    async fn resolve_local_path_accepts_file_urls() {
         let dir = tempfile::tempdir().unwrap();
         let img = dir.path().join("with space.png");
         std::fs::write(&img, b"png").unwrap();
@@ -213,153 +229,33 @@ mod engine_core {
             format!("file://{}", img.display()),
             reqwest::Url::from_file_path(&img).unwrap().to_string(),
         ] {
-            let p = Arc::new(StaticProvider::new(
-                "local",
-                vec![StaticProvider::result("local", &url)],
-            ));
-            let f = fixture_with(Registry::new().with(p), Theme::Light, |c| {
-                c.light.sources = vec!["local".to_owned()];
-            });
-            let info = f.engine.next().await.unwrap();
-            assert_eq!(Path::new(&info.path), img, "url {url}");
+            let result = StaticProvider::result("local", &url);
+            let path = resolve_local_path(&reqwest::Client::new(), &result, dir.path())
+                .await
+                .unwrap();
+            assert_eq!(path, img, "url {url}");
         }
     }
 
     #[tokio::test]
-    async fn next_with_missing_local_file_fails_with_go_message() {
-        let p = Arc::new(StaticProvider::new(
-            "local",
-            vec![StaticProvider::result(
-                "local",
-                "/nonexistent/kakemono-x.png",
-            )],
-        ));
-        let f = fixture_with(Registry::new().with(p), Theme::Light, |c| {
-            c.light.sources = vec!["local".to_owned()];
-        });
-        let err = f.engine.next().await.unwrap_err().to_string();
+    async fn resolve_local_path_reports_a_missing_file_with_go_message() {
+        let result = StaticProvider::result("local", "/nonexistent/kakemono-x.png");
+        let err = resolve_local_path(&reqwest::Client::new(), &result, Path::new("/tmp"))
+            .await
+            .unwrap_err();
         assert_eq!(
             err,
-            "manager: local file not found \"/nonexistent/kakemono-x.png\": \
+            "local file not found \"/nonexistent/kakemono-x.png\": \
          stat /nonexistent/kakemono-x.png: no such file or directory"
         );
-        assert!(f.setter.calls().is_empty());
-        assert_eq!(f.engine.status().history_count, 0);
-    }
-
-    #[tokio::test]
-    async fn next_uses_dark_sources_and_queries_for_dark_theme() {
-        let dir = tempfile::tempdir().unwrap();
-        let day = dir.path().join("day.png");
-        let night = dir.path().join("night.png");
-        std::fs::write(&day, b"d").unwrap();
-        std::fs::write(&night, b"n").unwrap();
-        let bing = Arc::new(StaticProvider::new(
-            "bing",
-            vec![local_result("bing", &day)],
-        ));
-        let apod = Arc::new(StaticProvider::new(
-            "apod",
-            vec![local_result("apod", &night)],
-        ));
-        let f = fixture_with(
-            Registry::new().with(bing.clone()).with(apod.clone()),
-            Theme::Dark,
-            |_| {},
-        );
-
-        let info = f.engine.next().await.unwrap();
-        assert_eq!(info.source, "apod");
-        assert_eq!(apod.queries(), vec!["night"]);
-        assert_eq!(bing.calls(), 0);
-
-        f.signals.set_theme(Theme::Light);
-        let info = f.engine.next().await.unwrap();
-        assert_eq!(info.source, "bing");
-        assert_eq!(bing.queries(), vec!["day"]);
-    }
-
-    #[tokio::test]
-    async fn next_falls_back_to_another_source_when_one_fails() {
-        let dir = tempfile::tempdir().unwrap();
-        let img = dir.path().join("ok.png");
-        std::fs::write(&img, b"ok").unwrap();
-        // Candidate order is random; run enough times that both orders occur (p(miss) = 2^-20).
-        for _ in 0..20 {
-            let bad = Arc::new(StaticProvider::failing("bing", "bing: boom"));
-            let good = Arc::new(StaticProvider::new(
-                "apod",
-                vec![local_result("apod", &img)],
-            ));
-            let f = fixture_with(
-                Registry::new().with(bad.clone()).with(good.clone()),
-                Theme::Light,
-                |c| c.light.sources = vec!["bing".to_owned(), "apod".to_owned()],
-            );
-            let info = f.engine.next().await.unwrap();
-            assert_eq!(info.source, "apod");
-            assert_eq!(good.calls(), 1);
-            assert!(bad.calls() <= 1);
-        }
-    }
-
-    #[tokio::test]
-    async fn next_falls_back_on_empty_results_and_reports_all_failures() {
-        let empty = Arc::new(StaticProvider::new("bing", vec![]));
-        let bad = Arc::new(StaticProvider::failing("apod", "apod: boom"));
-        let f = fixture_with(
-            Registry::new().with(empty.clone()).with(bad.clone()),
-            Theme::Light,
-            |c| c.light.sources = vec!["bing".to_owned(), "apod".to_owned()],
-        );
-        let err = f.engine.next().await.unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.starts_with("manager: "), "{msg}");
-        assert!(
-            msg.contains("provider bing returned no results for query \"day\""),
-            "{msg}"
-        );
-        assert!(msg.contains("provider apod fetch: apod: boom"), "{msg}");
-        assert_eq!((empty.calls(), bad.calls()), (1, 1));
-        assert!(f.setter.calls().is_empty());
-        assert_eq!(f.engine.status().history_index, -1);
     }
 
     #[tokio::test]
     async fn single_failing_source_keeps_go_message() {
         let bad = Arc::new(StaticProvider::failing("bing", "bing: boom"));
-        let f = fixture(Registry::new().with(bad));
+        let f = fixture_with(bing_set(bad), Theme::Light, bing_row);
         let err = f.engine.next().await.unwrap_err();
         assert_eq!(err.to_string(), "manager: provider bing fetch: bing: boom");
-    }
-
-    #[tokio::test]
-    async fn named_sources_do_not_fall_back_to_unlisted_providers() {
-        let dir = tempfile::tempdir().unwrap();
-        let img = dir.path().join("ok.png");
-        std::fs::write(&img, b"ok").unwrap();
-        let bad = Arc::new(StaticProvider::failing("bing", "bing: boom"));
-        let other = Arc::new(StaticProvider::new(
-            "apod",
-            vec![local_result("apod", &img)],
-        ));
-        let f = fixture(Registry::new().with(bad).with(other.clone()));
-        assert!(f.engine.next().await.is_err());
-        assert_eq!(other.calls(), 0);
-    }
-
-    #[tokio::test]
-    async fn next_without_enabled_provider_fails_with_go_message() {
-        let off = Arc::new(StaticProvider::new("bing", vec![]).with_enabled(false));
-        let f = fixture_with(Registry::new().with(off), Theme::Dark, |c| {
-            c.dark.sources = vec!["bing".to_owned(), "nope".to_owned()];
-        });
-        let err = f.engine.next().await.unwrap_err();
-        assert!(matches!(err, EngineError::NoProvider { .. }));
-        assert_eq!(
-            err.to_string(),
-            "manager: no enabled provider available (theme: dark, sources: [bing nope])"
-        );
     }
 
     #[tokio::test]
@@ -373,7 +269,7 @@ mod engine_core {
             "bing",
             vec![StaticProvider::result("bing", &url)],
         ));
-        let f = fixture(Registry::new().with(p));
+        let f = fixture_with(bing_set(p), Theme::Light, bing_row);
         let msg = f.engine.next().await.unwrap_err().to_string();
         assert!(msg.starts_with("manager: download image: "), "{msg}");
         assert!(msg.contains("404"), "{msg}");
@@ -386,7 +282,7 @@ mod engine_core {
 
     #[tokio::test]
     async fn setter_failure_leaves_history_unchanged() {
-        let f = fixture(Registry::new());
+        let f = fixture(SourceSet::default());
         let img = f.image("a.png");
         f.setter.fail_next(1);
         let err = f.engine.set_file(&img).await.unwrap_err();
@@ -400,7 +296,7 @@ mod engine_core {
     /// Go TestManagerPrev_EmptyHistory.
     #[tokio::test]
     async fn prev_on_empty_history_errors() {
-        let f = fixture(Registry::new());
+        let f = fixture(SourceSet::default());
         let err = f.engine.prev().await.unwrap_err();
         assert_eq!(
             err.to_string(),
@@ -411,14 +307,11 @@ mod engine_core {
 
     #[tokio::test]
     async fn prev_then_next_walks_history_without_fetching() {
-        let dir = tempfile::tempdir().unwrap();
-        let fetched = dir.path().join("fetched.png");
+        let bing = Arc::new(StaticProvider::new("bing", vec![]));
+        let f = fixture_with(bing_set(bing.clone()), Theme::Light, bing_row);
+        let fetched = f.download_dir().join("bing").join("fetched.png");
+        std::fs::create_dir_all(fetched.parent().unwrap()).unwrap();
         std::fs::write(&fetched, b"f").unwrap();
-        let bing = Arc::new(StaticProvider::new(
-            "bing",
-            vec![local_result("bing", &fetched)],
-        ));
-        let f = fixture(Registry::new().with(bing.clone()));
         let a = f.engine.set_file(&f.image("a.png")).await.unwrap();
         let b = f.engine.set_file(&f.image("b.png")).await.unwrap();
         let c = f.engine.set_file(&f.image("c.png")).await.unwrap();
@@ -435,13 +328,17 @@ mod engine_core {
 
         assert_eq!(f.engine.next().await.unwrap(), b);
         assert_eq!(f.engine.next().await.unwrap(), c);
-        assert_eq!(bing.calls(), 0, "future history must not fetch");
         assert_eq!(f.engine.status().history_index, 2);
 
-        // At the end of history, next fetches.
+        // At the end of history, next picks from disk.
         let d = f.engine.next().await.unwrap();
         assert_eq!(d.source, "bing");
-        assert_eq!(bing.calls(), 1);
+        assert_eq!(Path::new(&d.path), fetched);
+        assert_eq!(
+            bing.calls(),
+            0,
+            "nothing is fetched while the pool has images"
+        );
         assert_eq!(f.engine.status().history_count, 4);
 
         let set_paths: Vec<_> = f.setter.calls().into_iter().map(|(p, _)| p).collect();
@@ -457,7 +354,7 @@ mod engine_core {
 
     #[tokio::test]
     async fn set_after_prev_truncates_forward_history() {
-        let f = fixture(Registry::new());
+        let f = fixture(SourceSet::default());
         f.engine.set_file(&f.image("a.png")).await.unwrap();
         f.engine.set_file(&f.image("b.png")).await.unwrap();
         f.engine.prev().await.unwrap();
@@ -470,7 +367,7 @@ mod engine_core {
 
     #[tokio::test]
     async fn failed_prev_set_keeps_position() {
-        let f = fixture(Registry::new());
+        let f = fixture(SourceSet::default());
         f.engine.set_file(&f.image("a.png")).await.unwrap();
         let b = f.engine.set_file(&f.image("b.png")).await.unwrap();
         f.setter.fail_next(1);
@@ -483,12 +380,13 @@ mod engine_core {
 
     #[tokio::test]
     async fn set_file_pushes_local_entry() {
-        let f = fixture(Registry::new());
+        let f = fixture(SourceSet::default());
         let img = f.image("Mount Fuji.jpg");
         let mut events = f.engine.subscribe();
         let info = f.engine.set_file(&img).await.unwrap();
         assert_eq!(info.path, img.to_str().unwrap());
         assert_eq!(info.source, "local");
+        assert_eq!(info.source_id, "", "no [[sources]] row");
         assert_eq!(info.title, "Mount Fuji.jpg");
         assert_eq!(info.set_at, "2026-03-04T05:06:07+08:00");
         assert_eq!(
@@ -509,7 +407,7 @@ mod engine_core {
 
     #[tokio::test]
     async fn set_file_missing_has_go_stat_message() {
-        let f = fixture(Registry::new());
+        let f = fixture(SourceSet::default());
         let err = f
             .engine
             .set_file(Path::new("/nonexistent/wallpaperd-golden.png"))
@@ -528,7 +426,7 @@ mod engine_core {
     /// Go TestManagerStatus.
     #[tokio::test]
     async fn status_of_fresh_engine() {
-        let f = fixture_with(Registry::new(), Theme::Dark, |_| {});
+        let f = fixture_with(SourceSet::default(), Theme::Dark, |_| {});
         let st = f.engine.status();
         assert_eq!(st.current, None);
         assert!(!st.paused);
@@ -543,7 +441,7 @@ mod engine_core {
     /// Go TestManagerPauseResume, plus persistence and events.
     #[tokio::test]
     async fn pause_resume_persist_and_emit_on_change() {
-        let f = fixture(Registry::new());
+        let f = fixture(SourceSet::default());
         let mut events = f.engine.subscribe();
         f.engine.pause();
         assert!(f.engine.is_paused() && f.engine.status().paused);
@@ -559,7 +457,7 @@ mod engine_core {
 
     #[tokio::test]
     async fn engine_starts_from_loaded_state() {
-        let f = fixture(Registry::new());
+        let f = fixture(SourceSet::default());
         let a = f.engine.set_file(&f.image("a.png")).await.unwrap();
         f.engine.pause();
         let loaded = State::load(&f.state_path()).unwrap();
@@ -567,7 +465,7 @@ mod engine_core {
             setter: Arc::new(RecordingSetter::new()),
             signals: Arc::new(ManualSignals::new(Theme::Light)),
         };
-        let deps = Deps::new(platform, reqwest::Client::new()).with_registry(Registry::new());
+        let deps = Deps::new(platform, reqwest::Client::new()).with_sources(SourceSet::default());
         let again = Engine::new(config(&f.root), loaded, f.state_path(), deps).unwrap();
         let st = again.status();
         assert_eq!(st.current, Some(a));
@@ -576,10 +474,11 @@ mod engine_core {
     }
 
     #[tokio::test]
-    async fn reload_replaces_config_and_rebuilds_registry() {
+    async fn reload_replaces_config_and_rebuilds_sources() {
         let dir = tempfile::tempdir().unwrap();
-        let img = dir.path().join("x.png");
-        std::fs::write(&img, b"x").unwrap();
+        let pics = dir.path().join("pics");
+        std::fs::create_dir(&pics).unwrap();
+        std::fs::write(pics.join("x.png"), b"x").unwrap();
         let builds = Arc::new(AtomicUsize::new(0));
         let f = {
             let root = dir.path().join("root");
@@ -590,24 +489,27 @@ mod engine_core {
                 setter: Arc::new(setter.clone()),
                 signals: Arc::new(signals.clone()),
             };
-            let img = img.clone();
             let builds = builds.clone();
-            // The registry follows the config: only providers named in light.sources exist.
-            let deps = Deps::new(platform, reqwest::Client::new()).with_registry_factory(
-                move |cfg: &Config, _: &reqwest::Client| {
+            // The sources follow the config: one fake per online row.
+            let deps = Deps::new(platform, reqwest::Client::new()).with_sources_factory(
+                move |cfg: &Config, _: reqwest::Client| {
                     builds.fetch_add(1, Ordering::SeqCst);
-                    let mut r = Registry::new();
-                    if cfg.light.sources.iter().any(|s| s == "local") {
-                        r.register(Arc::new(StaticProvider::new(
-                            "local",
-                            vec![local_result("local", &img)],
-                        )));
-                    }
-                    r
+                    SourceSet::fake(
+                        cfg.sources
+                            .iter()
+                            .filter(|e| e.kind.is_online())
+                            .map(|e| {
+                                let p: Arc<dyn Provider> =
+                                    Arc::new(StaticProvider::new("bing", vec![]));
+                                (e.id.as_str(), p, "")
+                            })
+                            .collect(),
+                    )
                 },
             );
-            let engine =
-                Engine::new(config(&root), State::new(), root.join("s.json"), deps).unwrap();
+            let mut cfg = config(&root);
+            cfg.daemon.internet = false;
+            let engine = Engine::new(cfg, State::new(), root.join("s.json"), deps).unwrap();
             Fixture {
                 _dir: tempfile::tempdir().unwrap(),
                 root,
@@ -618,19 +520,25 @@ mod engine_core {
         };
         assert!(matches!(
             f.engine.next().await.unwrap_err(),
-            EngineError::NoProvider { .. }
+            EngineError::NoImages
         ));
+        assert!(f.engine.sources().is_empty());
 
         let mut cfg = config(&f.root);
+        cfg.daemon.internet = false;
         cfg.daemon.interval = "2h".to_owned();
-        cfg.light.sources = vec!["local".to_owned()];
+        cfg.sources = vec![
+            row("pics", SourceType::Folder, pics.to_str().unwrap()),
+            row("bing", SourceType::Bing, ""),
+        ];
         cfg.favorites.dir = f.root.join("new-favs");
         f.engine.reload(cfg).await.unwrap();
 
         assert_eq!(builds.load(Ordering::SeqCst), 2);
+        assert!(f.engine.sources().get("bing").is_some());
         assert_eq!(f.engine.status().interval, "2h");
         assert!(f.root.join("new-favs").is_dir());
-        assert_eq!(f.engine.next().await.unwrap().source, "local");
+        assert_eq!(f.engine.next().await.unwrap().source, "folder");
         assert_eq!(f.engine.config().daemon.interval, "2h");
     }
 
@@ -638,7 +546,7 @@ mod engine_core {
 
     #[tokio::test]
     async fn favorite_and_trash_need_a_current_wallpaper() {
-        let f = fixture(Registry::new());
+        let f = fixture(SourceSet::default());
         assert_eq!(
             f.engine.favorite().await.unwrap_err().to_string(),
             "manager: no current wallpaper"
@@ -655,7 +563,7 @@ mod engine_core {
     struct GatedProvider {
         entered: Arc<Notify>,
         release: Arc<Notify>,
-        image: PathBuf,
+        url: String,
     }
 
     #[async_trait]
@@ -664,14 +572,10 @@ mod engine_core {
             "bing"
         }
 
-        fn enabled(&self) -> bool {
-            true
-        }
-
         async fn fetch(&self, _query: &str) -> Result<Vec<WallpaperResult>, ProviderError> {
             self.entered.notify_one();
             self.release.notified().await;
-            Ok(vec![local_result("bing", &self.image)])
+            Ok(vec![StaticProvider::result("bing", &self.url)])
         }
     }
 
@@ -679,15 +583,14 @@ mod engine_core {
     async fn status_does_not_block_while_next_awaits_a_slow_provider() {
         let entered = Arc::new(Notify::new());
         let release = Arc::new(Notify::new());
-        let dir = tempfile::tempdir().unwrap();
-        let image = dir.path().join("slow.png");
-        std::fs::write(&image, b"s").unwrap();
+        let server = image_server("slow.jpg").await;
         let slow = Arc::new(GatedProvider {
             entered: entered.clone(),
             release: release.clone(),
-            image,
+            url: format!("{}/img/slow.jpg", server.uri()),
         });
-        let f = fixture(Registry::new().with(slow));
+        // An empty pool: `next` downloads on demand through the gated provider.
+        let f = fixture_with(bing_set(slow), Theme::Light, bing_row);
         let a = f.engine.set_file(&f.image("a.png")).await.unwrap();
 
         let engine = f.engine.clone();

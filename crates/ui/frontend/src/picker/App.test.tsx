@@ -18,6 +18,7 @@ vi.mock('../shared/api', async (importOriginal) => {
     getStatus: vi.fn(),
     hidePicker: vi.fn(),
     resetPickerPosition: vi.fn(),
+    fetchDroppedUrl: vi.fn(),
   }
 })
 
@@ -35,10 +36,14 @@ const THUMBS: Thumbnail[] = [
   { path: '/w/c.jpg', source: 'wallhaven', title: '', isCurrent: false, imageUrl: '' },
 ]
 
-function mockApi(position = 'bottom') {
-  vi.mocked(api.getConfig).mockResolvedValue({ picker: { position } } as unknown as Awaited<
+function mockConfig(position: string, orientation?: string) {
+  vi.mocked(api.getConfig).mockResolvedValue({ picker: { position, orientation } } as unknown as Awaited<
     ReturnType<typeof api.getConfig>
   >)
+}
+
+function mockApi(position = 'bottom', orientation?: string) {
+  mockConfig(position, orientation)
   vi.mocked(api.getAppInfo).mockResolvedValue({ os: 'macos', config_path: '', legacy_config: false, version: '0' })
   vi.mocked(api.listThumbnails).mockResolvedValue(THUMBS.map((t) => ({ ...t })))
   vi.mocked(api.setFile).mockResolvedValue(undefined)
@@ -104,6 +109,34 @@ describe('picker listbox', () => {
     await vi.waitFor(() => expect(list.getAttribute('aria-orientation')).toBe('vertical'))
     await user.keyboard('{ArrowUp}')
     expect(activeLabel(list)).toBe('Alps — unsplash')
+  })
+
+  it('runs vertically at the bottom when [picker] orientation is vertical', async () => {
+    mockApi('bottom', 'vertical')
+    const list = await renderPicker()
+    await vi.waitFor(() => expect(list.getAttribute('aria-orientation')).toBe('vertical'))
+    expect(document.querySelector('main.app-vertical')).not.toBeNull()
+  })
+
+  it('runs horizontally on the right when [picker] orientation is horizontal', async () => {
+    mockApi('right', 'horizontal')
+    const list = await renderPicker()
+    // Let the config resolve before asserting the (default) horizontal layout stuck.
+    await act(async () => {
+      await vi.mocked(api.getConfig).mock.results[0]?.value
+    })
+    expect(list.getAttribute('aria-orientation')).toBe('horizontal')
+    expect(document.querySelector('main.app-horizontal')).not.toBeNull()
+  })
+
+  it('re-reads the orientation each time the reused window is shown', async () => {
+    const list = await renderPicker()
+    expect(list.getAttribute('aria-orientation')).toBe('horizontal')
+    mockConfig('bottom', 'vertical')
+    act(() => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    await vi.waitFor(() => expect(list.getAttribute('aria-orientation')).toBe('vertical'))
   })
 
   it('Enter sets the active wallpaper and moves the selection', async () => {
@@ -280,6 +313,40 @@ describe('live updates', () => {
     expect(api.listThumbnails).toHaveBeenCalledTimes(3)
     await act(async () => live.handlers.onConnection?.({ state: 'not_running' }))
     expect(api.listThumbnails).toHaveBeenCalledTimes(3)
+  })
+})
+
+/** A drag event carrying a URL, dispatched on the window (jsdom has no DataTransfer). */
+function dragUrl(type: string, url: string) {
+  const event = new Event(type, { bubbles: true, cancelable: true })
+  const data: Record<string, string> = { 'text/uri-list': url }
+  Object.defineProperty(event, 'dataTransfer', {
+    value: { types: Object.keys(data), files: [], getData: (t: string) => data[t] ?? '', dropEffect: 'none' },
+  })
+  act(() => {
+    document.body.dispatchEvent(event)
+  })
+}
+
+describe('picker image drop', () => {
+  it('shows the overlay while dragging and reports the result in the toast', async () => {
+    vi.mocked(api.fetchDroppedUrl).mockResolvedValue({ ...WALLPAPER, path: '/m/a.jpg' })
+    await renderPicker()
+
+    dragUrl('dragenter', 'https://x.example/a.jpg')
+    expect(screen.getByText('Drop an image to set it')).toBeTruthy()
+    dragUrl('drop', 'https://x.example/a.jpg')
+    expect(screen.queryByText('Drop an image to set it')).toBeNull()
+
+    expect(api.fetchDroppedUrl).toHaveBeenCalledWith('https://x.example/a.jpg')
+    expect(await within(screen.getByRole('status')).findByText('Set from a.jpg')).toBeTruthy()
+  })
+
+  it('shows a failed drop in the toast', async () => {
+    vi.mocked(api.fetchDroppedUrl).mockRejectedValue({ kind: 'daemon', message: 'not an image' })
+    await renderPicker()
+    dragUrl('drop', 'https://x.example/page')
+    expect(await within(screen.getByRole('status')).findByText('not an image')).toBeTruthy()
   })
 })
 

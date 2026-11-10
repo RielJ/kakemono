@@ -1,7 +1,8 @@
 /**
  * Frontend API surface. Every call goes to the Tauri backend (`crates/ui/src-tauri`) with
  * `invoke`, or to a Tauri plugin (dialog, opener). Command names and argument shapes match
- * `src-tauri/src/commands.rs`, `commands_desktop.rs`, `picker.rs` and `lifecycle.rs`; see
+ * `src-tauri/src/commands.rs`, `commands_desktop.rs`, `commands_sources.rs`, `picker.rs` and
+ * `lifecycle.rs`; see
  * `.pi/contracts/ui.md`.
  *
  * Config and status types are generated from Rust by ts-rs (`./bindings`); do not redeclare
@@ -13,10 +14,14 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { openPath } from '@tauri-apps/plugin-opener'
 
+import type { CheckSourceData } from './bindings/CheckSourceData'
 import type { Config } from './bindings/Config'
+import type { DownloadNowData } from './bindings/DownloadNowData'
+import type { SourceType } from './bindings/SourceType'
 import type { StatusData } from './bindings/StatusData'
+import type { WallpaperInfo } from './bindings/WallpaperInfo'
 
-export type { Config, StatusData }
+export type { CheckSourceData, Config, DownloadNowData, SourceType, StatusData, WallpaperInfo }
 
 /** One picker entry, in the Go picker's shape (the `thumbnails` command returns these). */
 export interface Thumbnail {
@@ -61,12 +66,19 @@ export interface AppInfo {
 
 /**
  * How a backend command fails: `CommandError` in `commands.rs`, plus the `LifecycleError`
- * kinds from `lifecycle.rs` (`cli_*`, `autostart`). For `cli_failed` the message carries the
- * CLI's stderr.
+ * kinds from `lifecycle.rs` (`cli_*`, `autostart`), plus `daemon_unreachable` from
+ * `commands_sources.rs`. For `cli_failed` the message carries the CLI's stderr.
+ *
+ * The source commands (`checkSource`, `downloadNow`, `fetchDroppedUrl`, `importDroppedFile`)
+ * reject with `{ kind: 'daemon_unreachable', message }` when the daemon isn't running and
+ * can't be started, or the connection fails or times out (test with `isDaemonUnreachable`).
+ * When the daemon answers but refuses (for example a source with no images), the kind is
+ * `daemon` and the message is the daemon's text. Bad input is `invalid`.
  */
 export interface CommandError {
   kind:
     | 'daemon_not_running'
+    | 'daemon_unreachable'
     | 'daemon'
     | 'config'
     | 'invalid'
@@ -94,6 +106,14 @@ function isCommandError(err: unknown): err is CommandError {
 /** True when a command failed because nothing listens on the daemon socket. */
 export function isDaemonNotRunning(err: unknown): boolean {
   return isCommandError(err) && err.kind === 'daemon_not_running'
+}
+
+/**
+ * True when a source command couldn't reach the daemon at all (kind `daemon_unreachable`), as
+ * opposed to the daemon answering with an error. "Add anyway" is offered only for this.
+ */
+export function isDaemonUnreachable(err: unknown): boolean {
+  return isCommandError(err) && err.kind === 'daemon_unreachable'
 }
 
 /** Human-readable text for any rejection from this module. */
@@ -159,7 +179,10 @@ export function setFile(path: string): Promise<void> {
   return invoke<void>('set_file', { path })
 }
 
-/** History and cache entries for the picker strip. */
+/**
+ * Picker strip entries: history (newest first), then images from the folders of enabled
+ * sources (online downloads, then `manual`, then local sources), then favorites.
+ */
 export function listThumbnails(): Promise<Thumbnail[]> {
   return invoke<Thumbnail[]>('thumbnails')
 }
@@ -167,6 +190,58 @@ export function listThumbnails(): Promise<Thumbnail[]> {
 /** The daemon's diagnostics report (IPC `doctor` data). */
 export function doctor(): Promise<unknown> {
   return invoke<unknown>('doctor')
+}
+
+// ── Sources and dropped images (`commands_sources.rs`) ───────────────────────
+
+/**
+ * Asks the daemon how many images a source row would give (IPC `check_source`), starting the
+ * daemon first when it doesn't answer. Rejects `daemon` with the daemon's text (for example
+ * `no images found`) when the source gives none, and `daemon_unreachable` when the daemon
+ * can't be reached.
+ */
+export function checkSource(kind: SourceType, location: string): Promise<CheckSourceData> {
+  return invoke<CheckSourceData>('check_source', { kind, location })
+}
+
+/**
+ * Downloads one image now for source `id` (IPC `download_now`). Without `id`, one image for
+ * every enabled online source that has none yet; `path` is then `null` when none needed one.
+ */
+export function downloadNow(id?: string): Promise<DownloadNowData> {
+  return invoke<DownloadNowData>('download_now', { id: id ?? null })
+}
+
+/**
+ * Deletes the downloads of source `id` (`download_dir/<id>`). Never touches `manual`,
+ * favorites, trash or a local source's folder; rejects `invalid` for such an id.
+ */
+export function deleteSourceFiles(id: string): Promise<void> {
+  return invoke<void>('delete_source_files', { id })
+}
+
+/** Opens the folder of source `id` in the file manager (an online source's download folder is created first). */
+export function openSourceFolder(id: string): Promise<void> {
+  return invoke<void>('open_source_folder', { id })
+}
+
+/**
+ * Sets a dropped image URL as the wallpaper (IPC `fetch`): an http(s) URL, a `file://` URL or
+ * an absolute path. The daemon saves a copy in `manual_dir`. Resolves to the new wallpaper.
+ */
+export function fetchDroppedUrl(url: string): Promise<WallpaperInfo> {
+  return invoke<WallpaperInfo>('fetch_dropped_url', { url })
+}
+
+/**
+ * Saves a dropped file's bytes as a new file in `manual_dir` and sets it as the wallpaper.
+ * The bytes go as the raw request body; the name goes percent-encoded in the `x-file-name`
+ * header. Only JPEG, PNG and WebP up to 64 MB; anything else rejects `invalid`.
+ */
+export function importDroppedFile(name: string, bytes: ArrayBuffer | Uint8Array): Promise<WallpaperInfo> {
+  return invoke<WallpaperInfo>('import_dropped_file', bytes, {
+    headers: { 'x-file-name': encodeURIComponent(name) },
+  })
 }
 
 // ── Desktop backend (`commands_desktop.rs`) ─────────────────────────────────
@@ -277,6 +352,21 @@ export async function selectFile(): Promise<string> {
     filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp', 'heic'] }],
   })
   return picked ?? ''
+}
+
+/**
+ * Multi-select image file picker for an Images source. Resolves to `[]` when the user cancels.
+ * The plugin types the result as `string[] | null`; a lone string is accepted too.
+ */
+export async function selectFiles(): Promise<string[]> {
+  const picked: unknown = await openDialog({
+    directory: false,
+    multiple: true,
+    filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp', 'heic'] }],
+  })
+  if (typeof picked === 'string') return [picked]
+  if (Array.isArray(picked)) return picked.filter((p): p is string => typeof p === 'string')
+  return []
 }
 
 /** Opens a folder in the file manager (opener plugin, scoped to `$HOME/**`). */

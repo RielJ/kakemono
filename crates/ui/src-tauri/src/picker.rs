@@ -4,7 +4,9 @@
 //! where the user dragged it. Placement comes in two tiers:
 //!
 //! 1. **macOS, Windows, X11:** the app puts the strip on `[picker] position` of the monitor
-//!    under the cursor, or at the saved `custom` spot ([`TauriPlacer`]).
+//!    under the cursor, or at the saved `custom` spot ([`TauriPlacer`]). `[picker]
+//!    orientation` picks the strip's direction; off-axis it is a panel centred on the edge
+//!    ([`edge_rect`]), and the window size follows it in both tiers.
 //! 2. **Wayland:** the app can't position itself. It only sets an orientation-dependent size;
 //!    the compositor (and the user's window rules) decide where it goes. Hyprland and sway
 //!    can still restore and read a dragged position through their IPC ([`HyprPlacer`],
@@ -195,6 +197,9 @@ pub fn create<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWindow<R>>
             .skip_taskbar(true)
             .visible_on_all_workspaces(true)
             .visible(false)
+            // Image drops are HTML5 events in the page (`useImageDrop`); the native handler
+            // would swallow them. `data-tauri-drag-region` is unaffected.
+            .disable_drag_drop_handler()
             .build()?;
 
     let handle = app.clone();
@@ -292,7 +297,7 @@ pub fn show<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWindow<R>> {
     if state.kind().positions_itself() {
         place_tier1(app, &window, &config, custom.as_ref())?;
     } else {
-        let (w, h) = floating_size(config.position);
+        let (w, h) = floating_size(config.position, config.orientation);
         window.set_size(LogicalSize::new(w, h))?;
     }
 
@@ -351,7 +356,12 @@ fn place_tier1<R: Runtime>(
         area.size.width,
         area.size.height,
     );
-    let edge = edge_rect(config.position, work_area, monitor.scale_factor());
+    let edge = edge_rect(
+        config.position,
+        config.orientation,
+        work_area,
+        monitor.scale_factor(),
+    );
     window.set_size(PhysicalSize::new(edge.w, edge.h))?;
 
     let state = app.state::<PickerState>();

@@ -1,5 +1,5 @@
 //! Engine events and `[hooks] on_change` against fakes: `RecordingRunner`, `RecordingSetter`,
-//! `ManualSignals`, `StaticProvider`. Temp dirs only; no process is ever spawned.
+//! `ManualSignals` and a local folder source. Temp dirs only; no process is ever spawned.
 
 // In a module so `cargo test -p kakemono-engine hooks` (the plan's filter) selects them.
 mod hooks {
@@ -8,6 +8,7 @@ mod hooks {
     use std::sync::Arc;
     use std::time::Duration;
 
+    use kakemono_config::schema::{SourceEntry, SourceType};
     use kakemono_config::{CommandSpec, Config};
     use kakemono_engine::hooks::{self, HOOK_TIMEOUT, MAX_CONCURRENT_HOOKS, PASS_THROUGH_ENV};
     use kakemono_engine::state::State;
@@ -16,8 +17,6 @@ mod hooks {
     use kakemono_platform::exec::{Invocation, Output, RecordingRunner};
     use kakemono_platform::fake::{ManualSignals, RecordingSetter};
     use kakemono_protocol::types::{Event, WallpaperInfo};
-    use kakemono_sources::fake::StaticProvider;
-    use kakemono_sources::registry::Registry;
     use tempfile::TempDir;
 
     struct Fixture {
@@ -41,23 +40,27 @@ mod hooks {
         v.iter().map(|t| (*t).to_owned()).collect()
     }
 
-    /// An engine whose `local` source returns `local.png`, with `on_change = hook` (if any).
+    /// An engine whose only source is the folder `pics` holding `local.png`, with
+    /// `on_change = hook` (if any).
     fn fixture(hook: Option<&[&str]>) -> Fixture {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
-        let img = root.join("local.png");
-        std::fs::write(&img, b"png").unwrap();
-        let local = Arc::new(StaticProvider::new(
-            "local",
-            vec![StaticProvider::result("local", img.to_str().unwrap())],
-        ));
+        let pics = root.join("pics");
+        std::fs::create_dir(&pics).unwrap();
+        std::fs::write(pics.join("local.png"), b"png").unwrap();
 
         let mut cfg = Config::default();
         cfg.daemon.download_dir = root.join("downloads");
         cfg.daemon.trash_dir = root.join("trash");
         cfg.favorites.dir = root.join("favorites");
         cfg.desktop.fit = Fit::Center;
-        cfg.light.sources = vec!["local".to_owned()];
+        cfg.daemon.internet = false;
+        cfg.sources = vec![SourceEntry {
+            id: "pics".to_owned(),
+            enabled: true,
+            kind: SourceType::Folder,
+            location: pics.to_string_lossy().into_owned(),
+        }];
         cfg.hooks.on_change = hook.map(|h| CommandSpec::new(argv(h)).unwrap());
 
         let runner = RecordingRunner::new();
@@ -67,7 +70,7 @@ mod hooks {
             signals: Arc::new(ManualSignals::new(Theme::Light)),
         };
         let deps = Deps::new(platform, reqwest::Client::new())
-            .with_registry(Registry::new().with(local))
+            .with_sources(kakemono_sources::SourceSet::default())
             .with_runner(Arc::new(runner.clone()));
         let engine = Engine::new(cfg, State::new(), root.join("state.json"), deps).unwrap();
         Fixture {
@@ -319,7 +322,7 @@ mod hooks {
 
         let env = env_map(inv);
         assert_eq!(env["KAKEMONO_PATH"], wp.path);
-        assert_eq!(env["KAKEMONO_SOURCE"], "local");
+        assert_eq!(env["KAKEMONO_SOURCE"], "folder");
         assert_eq!(env["KAKEMONO_TITLE"], wp.title);
         assert_eq!(env["KAKEMONO_THEME"], "light");
         // HOME comes from the test process (passed through); nothing else does.

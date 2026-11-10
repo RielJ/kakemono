@@ -31,8 +31,9 @@ dark-light.workspace = true
 objc2.workspace = true
 objc2-foundation.workspace = true
 # NSCell: `NSImageScaling` for the desktop-image options. NSGraphicsContext: the dummy event that
-# wakes `NSApplication::run` after `stop:`.
-objc2-app-kit = { workspace = true, features = ["NSCell", "NSGraphicsContext"] }
+# wakes `NSApplication::run` after `stop:`. objc2-core-foundation: `NSScreen::backingScaleFactor`
+# (`screen_size`); already in the lockfile, pure Rust bindings.
+objc2-app-kit = { workspace = true, features = ["NSCell", "NSGraphicsContext", "objc2-core-foundation"] }
 dispatch2.workspace = true
 block2.workspace = true
 auto-launch.workspace = true

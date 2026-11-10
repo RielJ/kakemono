@@ -1,0 +1,19 @@
+# My kakemono config
+
+[daemon]
+# Rotate every quarter hour
+interval = "15m"
+cache_size = 20 # keep this small
+# Where downloads go
+download_dir = "~/Pictures/Wallpapers/cache"
+
+[bing]
+enabled = true # the daily image
+market = "en-GB"
+
+[light]
+sources = ["bing"]
+
+# Favorites live here
+[favorites]
+dir = "~/Pictures/Wallpapers/favorites"

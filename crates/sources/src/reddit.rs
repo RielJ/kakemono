@@ -1,11 +1,9 @@
-//! Reddit provider: image posts from the hot listing of one random configured subreddit.
+//! Reddit provider: image posts from the hot listing of one subreddit (one `[[sources]]` row).
 //!
 //! Port of Go `internal/providers/reddit/reddit.go`. Go read the post `url` only (no
 //! `preview` images), so there is nothing to HTML-unescape.
 
 use async_trait::async_trait;
-use kakemono_config::schema::RedditConfig;
-use rand::seq::IndexedRandom;
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Deserializer};
 
@@ -27,21 +25,26 @@ const LIMIT: &str = "100";
 /// The Reddit provider.
 #[derive(Debug, Clone)]
 pub struct Reddit {
-    cfg: RedditConfig,
+    subreddit: String,
     client: Client,
     base_url: String,
 }
 
 impl Reddit {
-    /// Provider against [`BASE_URL`].
-    pub fn new(cfg: RedditConfig, client: Client) -> Self {
-        Self::with_base_url(cfg, client, BASE_URL)
+    /// Provider for one subreddit (`name`, without `r/`), against [`BASE_URL`].
+    pub fn for_subreddit(name: impl Into<String>, client: Client) -> Self {
+        Self::for_subreddit_with_base_url(name, client, BASE_URL)
     }
 
-    /// Provider against another origin (`scheme://host`, no trailing slash), for tests.
-    pub fn with_base_url(cfg: RedditConfig, client: Client, base_url: impl Into<String>) -> Self {
+    /// [`Reddit::for_subreddit`] against another origin (`scheme://host`, no trailing slash), for
+    /// tests.
+    pub fn for_subreddit_with_base_url(
+        name: impl Into<String>,
+        client: Client,
+        base_url: impl Into<String>,
+    ) -> Self {
         Self {
-            cfg,
+            subreddit: name.into(),
             client,
             base_url: base_url.into(),
         }
@@ -61,21 +64,17 @@ impl Provider for Reddit {
         "reddit"
     }
 
-    /// Enabled and at least one subreddit configured (as in Go).
-    fn enabled(&self) -> bool {
-        self.cfg.enabled && !self.cfg.subreddits.is_empty()
-    }
-
-    /// Fetches the hot listing of a random configured subreddit; `query` is ignored.
+    /// Fetches the hot listing of the subreddit; `query` is ignored. An empty subreddit name is
+    /// an error and sends no request.
     async fn fetch(&self, _query: &str) -> Result<Vec<WallpaperResult>, ProviderError> {
-        let subreddit = self
-            .cfg
-            .subreddits
-            .choose(&mut rand::rng())
-            .ok_or_else(|| ProviderError::Other("reddit: no subreddits configured".into()))?
-            .clone();
+        let subreddit = self.subreddit.as_str();
+        if subreddit.is_empty() {
+            return Err(ProviderError::Other(
+                "reddit: no subreddit configured".into(),
+            ));
+        }
 
-        let url = self.feed_url(&subreddit)?;
+        let url = self.feed_url(subreddit)?;
         let response = http::get_with_retry(&self.client, url)
             .await
             .map_err(|e| ProviderError::request("reddit: HTTP error", e))?;
@@ -83,7 +82,7 @@ impl Provider for Reddit {
             return Err(ProviderError::status("reddit", response.status()));
         }
         let listing: Listing = http::read_json(response, "reddit").await?;
-        Ok(filter_image_posts(listing, &subreddit))
+        Ok(filter_image_posts(listing, subreddit))
     }
 }
 

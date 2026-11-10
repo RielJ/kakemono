@@ -29,6 +29,8 @@ fn export_all(dir: &Path) {
     kakemono_protocol::types::Event::export_all(&cfg).expect("export Event");
     kakemono_protocol::types::Response::export_all(&cfg).expect("export Response");
     kakemono_protocol::types::Command::export_all(&cfg).expect("export Command");
+    kakemono_protocol::types::CheckSourceData::export_all(&cfg).expect("export CheckSourceData");
+    kakemono_protocol::types::DownloadNowData::export_all(&cfg).expect("export DownloadNowData");
 }
 
 /// `relative path -> contents` for every `.ts` file under `dir` (ts-rs puts some

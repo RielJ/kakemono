@@ -101,6 +101,7 @@ mod tests {
         WallpaperInfo {
             path: "/p/a.jpg".into(),
             source: "bing".into(),
+            source_id: "bing".into(),
             source_url: "https://example.test/a".into(),
             image_url: "https://example.test/a.jpg".into(),
             title: "A".into(),

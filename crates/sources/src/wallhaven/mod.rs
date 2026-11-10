@@ -39,10 +39,21 @@ pub const API_KEY_PARAM: &str = "apikey";
 
 pub use crate::http::{REDACTED, redact_url};
 
+/// Per-instance search options that replace the `[wallhaven]` values, taken from a pasted
+/// `wallhaven.cc` URL. `None` (or an empty string) keeps the config value.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WallhavenOverrides {
+    /// `categories`, e.g. `"100"` (general only).
+    pub categories: Option<String>,
+    /// `purity`, e.g. `"110"`.
+    pub purity: Option<String>,
+    /// `sorting`, e.g. `"toplist"`.
+    pub sorting: Option<String>,
+}
+
 /// The Wallhaven provider. `Debug` shows `api_key` as [`REDACTED`] when it is set.
 #[derive(Clone)]
 pub struct Wallhaven {
-    enabled: bool,
     api_key: String,
     purity: String,
     sorting: String,
@@ -76,7 +87,6 @@ impl Wallhaven {
             }
         };
         Self {
-            enabled: cfg.enabled,
             api_key: cfg.api_key,
             purity: or_default(cfg.purity, DEFAULT_PURITY),
             sorting: or_default(cfg.sorting, DEFAULT_SORTING),
@@ -85,6 +95,30 @@ impl Wallhaven {
             scrape_delay: DEFAULT_SCRAPE_DELAY,
             client,
         }
+    }
+
+    /// Provider against [`DEFAULT_BASE_URL`] whose `categories`, `purity` and `sorting` come from
+    /// `overrides` where set, and from `cfg` otherwise. Used for one `[[sources]]` row.
+    pub fn with_overrides(
+        cfg: WallhavenConfig,
+        client: Client,
+        overrides: &WallhavenOverrides,
+    ) -> Self {
+        Self::new(cfg, client).apply_overrides(overrides)
+    }
+
+    /// Replaces `categories`, `purity` and `sorting` with the non-empty values in `overrides`.
+    #[must_use]
+    pub fn apply_overrides(mut self, overrides: &WallhavenOverrides) -> Self {
+        let pick = |slot: &mut String, value: &Option<String>| {
+            if let Some(v) = value.as_deref().filter(|v| !v.is_empty()) {
+                v.clone_into(slot);
+            }
+        };
+        pick(&mut self.categories, &overrides.categories);
+        pick(&mut self.purity, &overrides.purity);
+        pick(&mut self.sorting, &overrides.sorting);
+        self
     }
 
     /// Sets the base wait before each wallpaper-page fetch in scrape mode. `Duration::ZERO`
@@ -142,7 +176,6 @@ impl std::fmt::Debug for Wallhaven {
             REDACTED
         };
         f.debug_struct("Wallhaven")
-            .field("enabled", &self.enabled)
             .field("api_key", &api_key)
             .field("purity", &self.purity)
             .field("sorting", &self.sorting)
@@ -157,10 +190,6 @@ impl std::fmt::Debug for Wallhaven {
 impl Provider for Wallhaven {
     fn name(&self) -> &'static str {
         "wallhaven"
-    }
-
-    fn enabled(&self) -> bool {
-        self.enabled
     }
 
     async fn fetch(&self, query: &str) -> Result<Vec<WallpaperResult>, ProviderError> {

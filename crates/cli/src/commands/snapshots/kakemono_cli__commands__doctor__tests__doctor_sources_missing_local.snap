@@ -1,0 +1,14 @@
+---
+source: crates/cli/src/commands/doctor.rs
+expression: "report(&cfg, Some(0))"
+---
+
+Sources
+  enabled:    6 of 7 (4 folder, 1 images, 1 album-name)
+  internet:   on
+  downloads:  0.0 MB of 500 MB in /dl
+  warning:    source "dir-gone": /gone/pics does not exist
+  warning:    source "img-gone": /gone/a.jpg does not exist
+  warning:    source "dir-blank" has no location
+  info:       source "favorites": favorites folder not created yet (made on first favorite)
+  warning:    source "dir-tilde": ~/gone does not exist

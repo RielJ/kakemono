@@ -260,6 +260,37 @@ body {
   opacity: 0.6;
 }
 
+/* ── Drop overlay ────────────────────────────────────────────────────────── */
+/* Above the strip, under the toast; it never takes the drag events itself. */
+.drop-overlay {
+  position: absolute;
+  inset: 4px;
+  z-index: 4;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  color: var(--text);
+  font-weight: 600;
+  pointer-events: none;
+  animation: drop-in var(--duration-fast) var(--ease-out);
+}
+
+@keyframes drop-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.drop-overlay svg {
+  width: 18px;
+  height: 18px;
+  color: var(--accent);
+}
+
 /* ── Toast ───────────────────────────────────────────────────────────────── */
 .toast-region {
   position: absolute;

@@ -68,20 +68,20 @@ export default function ArgvEditor({
 
   const describedBy = [hintId, error ? errorId : undefined].filter(Boolean).join(' ') || undefined
   const iconButton =
-    'inline-flex items-center justify-center w-7 h-7 rounded-md text-gray-500 dark:text-gray-400 ' +
-    'hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed ' +
+    'inline-flex items-center justify-center w-7 h-7 rounded-md text-muted ' +
+    'hover:bg-pressed disabled:opacity-30 disabled:cursor-not-allowed ' +
     'focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent'
 
   return (
     <div className="space-y-2">
       {tokens.length === 0 ? (
-        <p className="text-xs text-gray-500 dark:text-gray-400">{emptyText}</p>
+        <p className="text-xs text-muted">{emptyText}</p>
       ) : (
         <ol id={listId} aria-label={label} className="space-y-1.5">
           {tokens.map((token, i) => (
             // Index keys: rows are interchangeable inputs, and focus is moved explicitly above.
             <li key={i} className="flex items-center gap-1.5">
-              <span aria-hidden="true" className="w-5 text-right text-xs tabular-nums text-gray-400 dark:text-gray-500">
+              <span aria-hidden="true" className="w-5 text-right text-xs tabular-nums text-faint">
                 {i + 1}
               </span>
               <input
@@ -96,7 +96,7 @@ export default function ArgvEditor({
                 spellCheck={false}
                 autoComplete="off"
                 autoCapitalize="off"
-                className={`form-input flex-1 min-w-0 text-xs py-1 font-mono ${error && token === '' ? 'border-red-500!' : ''}`}
+                className={`field flex-1 min-w-0 font-mono ${error && token === '' ? 'border-danger!' : ''}`}
               />
               <button
                 ref={ref(i, 'up')}
@@ -126,12 +126,12 @@ export default function ArgvEditor({
         </ol>
       )}
       {error && (
-        <p id={errorId} role="alert" className="text-xs text-red-600 dark:text-red-400">
+        <p id={errorId} role="alert" className="text-xs text-danger">
           {error}
         </p>
       )}
       <div className="flex flex-wrap items-center gap-1.5">
-        <button ref={ref(-1, 'add')} type="button" onClick={() => add('')} className="btn-secondary text-xs py-1 px-2 gap-1">
+        <button ref={ref(-1, 'add')} type="button" onClick={() => add('')} className="btn gap-1">
           <Icon name="plus" className="w-3.5 h-3.5" />
           Add token
         </button>
@@ -141,7 +141,7 @@ export default function ArgvEditor({
             type="button"
             onClick={() => add(`{${name}}`)}
             aria-label={`Add {${name}} token`}
-            className="btn-secondary text-xs py-1 px-2 font-mono"
+            className="btn font-mono"
           >
             {`{${name}}`}
           </button>

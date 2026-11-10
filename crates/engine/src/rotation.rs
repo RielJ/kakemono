@@ -16,6 +16,15 @@
 //! daemon that starts after an overdue tick rotates at once. With no `last_changed` the first
 //! tick comes one interval after start, as in Go.
 //!
+//! With `[daemon] change_on_start`, `run` rotates once before the loop (reason `"start"`,
+//! skipped while paused) and the anchor moves to now.
+//!
+//! # Downloader
+//!
+//! `run` also spawns the background downloader ([`crate::downloader::Downloader`]) under a
+//! child of the same `CancellationToken`, woken by `reload`. On shutdown it stops the
+//! downloader, waits for it, then saves the facts cache.
+//!
 //! Due times are wall-clock based and recomputed on every loop turn, so a sleeping machine
 //! (whose monotonic clock may stop) catches up on the next wake-up, and `reload` applies a
 //! new interval at once. The anchor never lies in the future: a wall clock that went back
@@ -46,6 +55,7 @@ use kakemono_platform::api::{Signal, Theme};
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 
+use crate::downloader::Downloader;
 use crate::engine::Engine;
 use crate::events::EngineEvent;
 
@@ -53,10 +63,27 @@ use crate::events::EngineEvent;
 pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(30 * 60);
 
 impl Engine {
-    /// Runs the rotation timer and the signal reactions until `shutdown` is cancelled. An op in
-    /// flight when `shutdown` fires is dropped. Run one loop per engine: the reset notify wakes a
-    /// single waiter.
+    /// Runs the rotation timer, the signal reactions and the background downloader until
+    /// `shutdown` is cancelled, then saves the facts cache. An op in flight when `shutdown` fires
+    /// is dropped. Run one loop per engine: the reset and wake notifies wake a single waiter.
     pub async fn run(&self, shutdown: CancellationToken) {
+        let stop_downloader = shutdown.child_token();
+        let downloader = {
+            let engine = self.clone();
+            let (token, wake) = (stop_downloader.clone(), self.downloader_wake());
+            tokio::spawn(async move { Downloader::new().run(&engine, token, wake).await })
+        };
+        self.rotation_loop(&shutdown).await;
+        stop_downloader.cancel();
+        if let Err(e) = downloader.await {
+            tracing::warn!(error = %e, "the downloader task failed");
+        }
+        self.save_facts().await;
+    }
+
+    /// The rotation timer and the signal reactions (see the module docs).
+    async fn rotation_loop(&self, shutdown: &CancellationToken) {
+        let shutdown = shutdown.clone();
         let mut signals = self.platform().signals.subscribe();
         let mut events = self.subscribe();
         let mut signals_open = true;
@@ -66,6 +93,15 @@ impl Engine {
             interval = ?rot.interval(&self.config()),
             "rotation loop started"
         );
+        if self.config().daemon.change_on_start {
+            if self.is_paused() {
+                tracing::info!("auto-rotation paused; not changing the wallpaper on start");
+            } else if !self.rotate("start", &shutdown).await {
+                tracing::info!("rotation loop stopped");
+                return;
+            }
+            rot.anchor = self.now();
+        }
 
         loop {
             let wait = rot.wait(self);

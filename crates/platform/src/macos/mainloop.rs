@@ -71,8 +71,15 @@ where
     };
     let app = NSApplication::sharedApplication(mtm);
     // A background agent: no Dock icon, no menu bar, never becomes active.
-    if !app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited) {
-        tracing::warn!("NSApplication refused the Prohibited activation policy");
+    // An unbundled binary already starts background-only, and AppKit then
+    // returns NO; only warn if the policy really is something else.
+    if !app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited)
+        && app.activationPolicy() != NSApplicationActivationPolicy::Prohibited
+    {
+        tracing::warn!(
+            policy = ?app.activationPolicy(),
+            "NSApplication refused the Prohibited activation policy"
+        );
     }
 
     let result = std::thread::scope(|scope| {

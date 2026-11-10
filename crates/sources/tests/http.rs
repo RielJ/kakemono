@@ -403,9 +403,6 @@ impl Provider for EchoProvider {
     fn name(&self) -> &'static str {
         "echo"
     }
-    fn enabled(&self) -> bool {
-        true
-    }
     async fn fetch(&self, query: &str) -> Result<Vec<WallpaperResult>, ProviderError> {
         let url = http::url_with_query(
             &format!("{}/api/v1/search", self.base),
@@ -525,7 +522,12 @@ async fn http_case_replay_helper_loads_go_fixtures() {
             match provider {
                 "apod" => drop(case.config::<cfg::ApodConfig>()),
                 "bing" => drop(case.config::<cfg::BingConfig>()),
-                "reddit" => drop(case.config::<cfg::RedditConfig>()),
+                // Reddit has no config section: a row names one subreddit.
+                "reddit" => assert!(
+                    case.config::<serde_json::Value>()["subreddits"].is_array(),
+                    "{}",
+                    case.id
+                ),
                 "unsplash" => drop(case.config::<cfg::UnsplashConfig>()),
                 _ => drop(case.config::<cfg::WallhavenConfig>()),
             }

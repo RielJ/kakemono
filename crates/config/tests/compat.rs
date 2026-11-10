@@ -32,6 +32,11 @@ fn defaults_match_go_defaults() {
         Some(Path::new("/home/golden/.config/wallpaperd/daemon.sock"))
     );
     ours.daemon.socket_path.clone_from(&go.daemon.socket_path);
+    // Go's defaults are a legacy config: loading migrates them to one enabled Bing row.
+    assert_eq!(go.sources.len(), 1);
+    assert_eq!(go.sources[0].kind, kakemono_config::SourceType::Bing);
+    assert!(go.sources[0].enabled);
+    ours.sources.clone_from(&go.sources);
     assert_eq!(ours, go);
 }
 
@@ -44,14 +49,19 @@ fn default_values_spelled_out() {
         d.daemon.interval_duration(),
         Ok(std::time::Duration::from_secs(1800))
     );
-    assert_eq!(d.daemon.cache_size, 50);
+    assert_eq!(d.daemon.download_limit_mb, 500);
+    assert!(d.daemon.download_limit_mb_enabled);
     assert_eq!(
         d.daemon.download_dir,
         Path::new("/home/golden/Pictures/Wallpapers/cache")
     );
     assert!(d.daemon.rotate_on_theme_change);
     assert!(!d.daemon.reapply_on_space_change);
-    assert!(d.bing.enabled);
+    assert!(
+        d.sources
+            .iter()
+            .any(|s| s.kind == kakemono_config::SourceType::Bing && s.enabled)
+    );
     assert_eq!(d.bing.market, "en-US");
     assert_eq!(d.apod.api_key, "DEMO_KEY");
     assert_eq!(d.picker.position, PickerPosition::Bottom);
@@ -73,18 +83,15 @@ fn go_template_loads_like_go() {
     let go = load_with_home(&fixture("go_template_loaded.toml"), home()).expect("go loaded");
     assert_eq!(ours, go);
 
-    // The template differs from Defaults() in a few lists; spell them out.
+    // The template is a legacy config: loading migrates it, removing `[light]`, `[dark]`,
+    // `reddit.subreddits` and the `enabled` flags (so those fall back to defaults) and leaving one
+    // Bing row, the only enabled provider.
     let mut expected = defaults_for_home(home());
     expected.daemon.socket_path =
         Some(PathBuf::from("/home/golden/.config/wallpaperd/daemon.sock"));
-    expected.reddit.subreddits = vec!["EarthPorn".into(), "wallpapers".into(), "spaceporn".into()];
-    expected.light.queries = vec!["landscape".into(), "nature".into(), "cityscape".into()];
-    expected.dark.queries = vec![
-        "space".into(),
-        "night".into(),
-        "dark minimal".into(),
-        "galaxy".into(),
-    ];
+    assert_eq!(ours.sources.len(), 1);
+    assert_eq!(ours.sources[0].kind, kakemono_config::SourceType::Bing);
+    expected.sources.clone_from(&ours.sources);
     assert_eq!(ours, expected);
 }
 
@@ -96,17 +103,16 @@ fn empty_file_is_defaults() {
 #[test]
 fn missing_keys_in_present_section_keep_section_defaults() {
     let cfg = parse_str(
-        "[light]\nsources = [\"wallhaven\"]\n[dark]\nqueries = [\"stars\"]\n[daemon]\ninterval = \"1h\"\n",
+        "[wallhaven]\npurity = \"110\"\n[daemon]\ninterval = \"1h\"\n",
         home(),
     )
     .unwrap();
     let d = defaults_for_home(home());
-    assert_eq!(cfg.light.sources, vec!["wallhaven".to_owned()]);
-    assert_eq!(cfg.light.queries, d.light.queries);
-    assert_eq!(cfg.dark.sources, d.dark.sources);
-    assert_eq!(cfg.dark.queries, vec!["stars".to_owned()]);
+    assert_eq!(cfg.wallhaven.purity, "110");
+    assert_eq!(cfg.wallhaven.sorting, d.wallhaven.sorting);
+    assert_eq!(cfg.wallhaven.categories, d.wallhaven.categories);
     assert_eq!(cfg.daemon.interval, "1h");
-    assert_eq!(cfg.daemon.cache_size, 50);
+    assert_eq!(cfg.daemon.download_limit_mb, 500);
     assert_eq!(cfg.daemon.download_dir, d.daemon.download_dir);
 }
 
@@ -130,8 +136,18 @@ trash_dir = "~/trash"
 socket_path = "~/s.sock"
 [favorites]
 dir = "~/fav"
-[local]
-dirs = ["~/a", "/abs", "~"]
+[[sources]]
+id = "dir-a"
+type = "folder"
+location = "~/a"
+[[sources]]
+id = "dir-abs"
+type = "folder"
+location = "/abs"
+[[sources]]
+id = "dir-home"
+type = "folder"
+location = "~"
 "#,
         home(),
     )
@@ -143,14 +159,8 @@ dirs = ["~/a", "/abs", "~"]
         Some(Path::new("/home/golden/s.sock"))
     );
     assert_eq!(cfg.favorites.dir, Path::new("/home/golden/fav"));
-    assert_eq!(
-        cfg.local.dirs,
-        vec![
-            PathBuf::from("/home/golden/a"),
-            PathBuf::from("/abs"),
-            PathBuf::from("/home/golden"),
-        ]
-    );
+    let locations: Vec<_> = cfg.sources.iter().map(|s| s.location.as_str()).collect();
+    assert_eq!(locations, ["/home/golden/a", "/abs", "/home/golden"]);
 }
 
 #[test]
@@ -234,7 +244,7 @@ fn bad_values_are_errors() {
         "[desktop]\nset_command = \"echo 'unterminated\"\n",
         "[desktop]\nbackend = \"nope\"\n",
         "[picker]\nposition = \"middle\"\n",
-        "[daemon]\ncache_size = -1\n",
+        "[daemon]\ndownload_limit_mb = -1\n",
         "not toml",
     ] {
         assert!(parse_str(text, home()).is_err(), "{text}");

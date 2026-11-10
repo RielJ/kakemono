@@ -89,10 +89,6 @@ impl Provider for Bing {
         "bing"
     }
 
-    fn enabled(&self) -> bool {
-        self.cfg.enabled
-    }
-
     async fn fetch(&self, _query: &str) -> Result<Vec<WallpaperResult>, ProviderError> {
         let base = format!("{}{API_PATH}", self.base_url);
         let url = http::url_with_query(

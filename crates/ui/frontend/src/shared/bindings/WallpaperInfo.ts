@@ -4,7 +4,18 @@
  * Wallpaper metadata. Every field is always serialised (Go has no `omitempty` here) and
  * every field defaults when missing.
  */
-export type WallpaperInfo = { path: string, source: string, source_url: string, image_url: string, title: string, author: string, width: number, height: number, 
+export type WallpaperInfo = { path: string, 
+/**
+ * The source row's type (`"wallhaven"`, `"folder"`, `"album-name"`, ...), `"manual"` for
+ * the manual folder or `"local"` for `set`. Go wrote the provider name here.
+ */
+source: string, 
+/**
+ * New: the `[[sources]]` row id the image came from, `"manual"` for the manual folder
+ * (including `fetch`), `""` for `set` and for entries written by older versions. Not
+ * written when empty, so the Go wire bytes are unchanged.
+ */
+source_id?: string, source_url: string, image_url: string, title: string, author: string, width: number, height: number, 
 /**
  * RFC 3339 with whole seconds in the daemon's local offset
  * (Go `time.Now().Format(time.RFC3339)`), or `""` when unknown.

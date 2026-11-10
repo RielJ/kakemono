@@ -5,6 +5,11 @@
 //! with its reasons, a rendered argv, and picker window rules for the compositor. On macOS and
 //! Windows they show the native backend.
 //!
+//! The Sources section reads `[[sources]]` from the config: enabled rows by type, the Internet
+//! access switch, and the download folder's size against `download_limit_mb` (measured the way
+//! the downloader's trim counts it). It warns when nothing is enabled, when Internet access is off
+//! and every enabled source is online, and when an enabled local source's location is missing.
+//!
 //! Then the daemon's own report (IPC `doctor`): its backend, theme, and on Linux its env. Shell
 //! variables the daemon lacks get a warning, since a systemd user unit often starts without them.
 //!
@@ -13,10 +18,11 @@
 //! its `setter.pid`.
 
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::bail;
-use kakemono_config::{Config, ConfigError};
+use kakemono_config::{Config, ConfigError, SourceType, expand_tilde};
+use kakemono_engine::files::{Protect, counted_bytes};
 use kakemono_platform::api::Theme;
 use kakemono_platform::linux::detect::env::{BINARIES, DBUS_NAMES, ENV_VARS, PROCESSES};
 use kakemono_platform::linux::detect::{self, Env, Resolution, Session};
@@ -74,6 +80,12 @@ pub async fn run(
             writeln!(out, "  detail:     {}", native.detail)?;
         }
     }
+    let download_bytes = measure_downloads(&cfg).await;
+    let home = kakemono_config::defaults::home_dir();
+    write_sources(
+        out,
+        &sources_report(&cfg, &home, &|p| p.exists(), download_bytes),
+    )?;
     write_daemon(out, &daemon, env.as_ref())?;
 
     match &daemon {
@@ -317,6 +329,119 @@ fn window_rules(session: &Session) -> Option<Vec<&'static str>> {
     })
 }
 
+/// The download folder's size as the downloader's trim counts it, off the async workers.
+/// `None` when it doesn't exist yet or can't be read.
+async fn measure_downloads(cfg: &Config) -> Option<u64> {
+    let dir = cfg.daemon.download_dir.clone();
+    let protect = Protect::new().config(cfg);
+    tokio::task::spawn_blocking(move || counted_bytes(&dir, &protect))
+        .await
+        .ok()
+        .flatten()
+}
+
+/// One mebibyte: `download_limit_mb` is enforced in units of 1024 × 1024 bytes.
+const MB: u64 = 1024 * 1024;
+
+/// The Sources section as lines, without the heading. `home` expands a leading `~` in local
+/// locations and `favorites.dir`; `exists` checks a local location; `download_bytes` is
+/// [`measure_downloads`].
+///
+/// A missing local location is a warning, except the favorites folder: it is made on the first
+/// favorite, so a fresh install lacks it and that gets an info line.
+fn sources_report(
+    cfg: &Config,
+    home: &Path,
+    exists: &dyn Fn(&Path) -> bool,
+    download_bytes: Option<u64>,
+) -> Vec<String> {
+    let enabled: Vec<_> = cfg.sources.iter().filter(|s| s.enabled).collect();
+    let mut by_type: Vec<(SourceType, usize)> = Vec::new();
+    for row in &enabled {
+        match by_type.iter_mut().find(|(kind, _)| *kind == row.kind) {
+            Some((_, n)) => *n += 1,
+            None => by_type.push((row.kind, 1)),
+        }
+    }
+    let counts = by_type
+        .iter()
+        .map(|(kind, n)| format!("{n} {kind}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut lines = vec![if enabled.is_empty() {
+        format!("enabled:    0 of {}", cfg.sources.len())
+    } else {
+        format!(
+            "enabled:    {} of {} ({counts})",
+            enabled.len(),
+            cfg.sources.len()
+        )
+    }];
+    let internet = cfg.daemon.internet;
+    lines.push(format!(
+        "internet:   {}",
+        if internet { "on" } else { "off" }
+    ));
+    let dir = cfg.daemon.download_dir.display();
+    let size = match download_bytes {
+        #[allow(clippy::cast_precision_loss)] // A display value; MB precision is plenty.
+        Some(bytes) => format!("{:.1} MB", bytes as f64 / MB as f64),
+        None => "none yet".to_owned(),
+    };
+    lines.push(if cfg.daemon.download_limit_mb_enabled {
+        format!(
+            "downloads:  {size} of {} MB in {dir}",
+            cfg.daemon.download_limit_mb
+        )
+    } else {
+        format!("downloads:  {size} in {dir} (no limit)")
+    });
+
+    if enabled.is_empty() {
+        lines.push("warning:    no enabled sources; nothing to pick from".to_owned());
+    } else if !internet && enabled.iter().all(|s| s.kind.is_online()) {
+        lines.push(
+            "warning:    Internet access is off and every enabled source is online: nothing new \
+             is downloaded, so changes only use images already on disk"
+                .to_owned(),
+        );
+    }
+    let expand = |p: &Path| expand_tilde(p, home).unwrap_or_else(|| p.to_owned());
+    let favorites: PathBuf = expand(&cfg.favorites.dir);
+    for row in enabled.iter().filter(|s| s.kind.is_local()) {
+        let location = row.location.trim();
+        if location.is_empty() {
+            lines.push(format!("warning:    source {:?} has no location", row.id));
+            continue;
+        }
+        let path = expand(Path::new(location));
+        if exists(&path) {
+            continue;
+        }
+        if path == favorites {
+            lines.push(format!(
+                "info:       source {:?}: favorites folder not created yet (made on first favorite)",
+                row.id
+            ));
+        } else {
+            lines.push(format!(
+                "warning:    source {:?}: {location} does not exist",
+                row.id
+            ));
+        }
+    }
+    lines
+}
+
+fn write_sources(out: &mut dyn Write, lines: &[String]) -> anyhow::Result<()> {
+    writeln!(out)?;
+    writeln!(out, "Sources")?;
+    for line in lines {
+        writeln!(out, "  {line}")?;
+    }
+    Ok(())
+}
+
 fn write_daemon(
     out: &mut dyn Write,
     daemon: &DaemonReport,
@@ -430,6 +555,136 @@ mod tests {
         assert_eq!(
             shell_join(&argv),
             r"swaymsg output '*' bg '/a b/it'\''s.jpg' fill"
+        );
+    }
+
+    fn row(
+        id: &str,
+        kind: SourceType,
+        location: &str,
+        enabled: bool,
+    ) -> kakemono_config::SourceEntry {
+        kakemono_config::SourceEntry {
+            id: id.to_owned(),
+            enabled,
+            kind,
+            location: location.to_owned(),
+        }
+    }
+
+    /// A config with download_dir `/dl`, the given rows and Internet access.
+    fn sources_cfg(rows: Vec<kakemono_config::SourceEntry>, internet: bool) -> Config {
+        let mut cfg = Config::default();
+        cfg.daemon.download_dir = "/dl".into();
+        cfg.daemon.internet = internet;
+        cfg.sources = rows;
+        cfg
+    }
+
+    const TEST_HOME: &str = "/home/u";
+
+    fn report(cfg: &Config, download_bytes: Option<u64>) -> String {
+        let exists = |p: &Path| p.starts_with("/exists");
+        let mut out = Vec::new();
+        write_sources(
+            &mut out,
+            &sources_report(cfg, Path::new(TEST_HOME), &exists, download_bytes),
+        )
+        .unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn sources_counts_enabled_rows_by_type_and_measures_downloads() {
+        let cfg = sources_cfg(
+            vec![
+                row("bing", SourceType::Bing, "", true),
+                row("wh-1", SourceType::Wallhaven, "nature", true),
+                row("wh-2", SourceType::Wallhaven, "space", true),
+                row("us-1", SourceType::Unsplash, "sea", false),
+                row("favorites", SourceType::Folder, "/exists/favorites", true),
+            ],
+            true,
+        );
+        insta::assert_snapshot!("doctor_sources_ok", report(&cfg, Some(150 * MB / 2)));
+    }
+
+    #[test]
+    fn sources_download_limit_off_and_no_folder_yet() {
+        let mut cfg = sources_cfg(vec![row("bing", SourceType::Bing, "", true)], true);
+        cfg.daemon.download_limit_mb_enabled = false;
+        insta::assert_snapshot!("doctor_sources_no_limit", report(&cfg, None));
+    }
+
+    #[test]
+    fn sources_warns_when_nothing_is_enabled() {
+        let cfg = sources_cfg(vec![row("bing", SourceType::Bing, "", false)], true);
+        insta::assert_snapshot!("doctor_sources_none_enabled", report(&cfg, Some(0)));
+        let empty = sources_cfg(Vec::new(), true);
+        assert!(report(&empty, Some(0)).contains("no enabled sources; nothing to pick from"));
+    }
+
+    #[test]
+    fn sources_warns_when_offline_and_every_enabled_source_is_online() {
+        let online = sources_cfg(
+            vec![
+                row("bing", SourceType::Bing, "", true),
+                row("dir-1", SourceType::Folder, "/exists/pics", false),
+            ],
+            false,
+        );
+        insta::assert_snapshot!("doctor_sources_offline", report(&online, Some(MB)));
+        // A local source still gives new images: no warning.
+        let mixed = sources_cfg(
+            vec![
+                row("bing", SourceType::Bing, "", true),
+                row("dir-1", SourceType::Folder, "/exists/pics", true),
+            ],
+            false,
+        );
+        assert!(!report(&mixed, Some(MB)).contains("warning"));
+    }
+
+    #[test]
+    fn sources_warns_about_missing_local_locations_by_row_id() {
+        let cfg = sources_cfg(
+            vec![
+                row("dir-gone", SourceType::Folder, "/gone/pics", true),
+                row("img-gone", SourceType::Images, "/gone/a.jpg", true),
+                row("alb-ok", SourceType::AlbumName, "/exists/album", true),
+                row("dir-blank", SourceType::Folder, "  ", true),
+                row("dir-off", SourceType::Folder, "/gone/off", false),
+                // favorites.dir is `~/fav`: equal after tilde expansion, so info, not a warning.
+                row("favorites", SourceType::Folder, "/home/u/fav/", true),
+                row("dir-tilde", SourceType::Folder, "~/gone", true),
+            ],
+            true,
+        );
+        let mut cfg = cfg;
+        cfg.favorites.dir = "~/fav".into();
+        insta::assert_snapshot!("doctor_sources_missing_local", report(&cfg, Some(0)));
+    }
+
+    #[test]
+    fn sources_fresh_config_init_has_no_warnings() {
+        // What `kakemono config init` writes, before anything is downloaded or favorited.
+        let cfg =
+            kakemono_config::parse_str(kakemono_config::paths::TEMPLATE, Path::new(TEST_HOME))
+                .unwrap();
+        let nothing_exists = |_: &Path| false;
+        let mut out = Vec::new();
+        write_sources(
+            &mut out,
+            &sources_report(&cfg, Path::new(TEST_HOME), &nothing_exists, None),
+        )
+        .unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(!text.contains("warning"), "{text}");
+        assert!(
+            text.contains(
+                "info:       source \"favorites\": favorites folder not created yet (made on first favorite)"
+            ),
+            "{text}"
         );
     }
 

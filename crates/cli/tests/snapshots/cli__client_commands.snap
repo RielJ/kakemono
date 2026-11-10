@@ -4,10 +4,9 @@ expression: d.redact(&transcript)
 ---
 $ kakemono next
 [exit 0]
-Title:   local wallpaper
-Source:  local
-Page:    https://example.test/local
-File:    [ROOT]/one.jpg
+Title:   one.jpg
+Source:  folder
+File:    [ROOT]/pics/one.jpg
 Set at:  2026-03-04T05:06:07+08:00
 $ kakemono set two.jpg
 [exit 0]
@@ -17,10 +16,9 @@ File:    [ROOT]/two.jpg
 Set at:  2026-03-04T05:06:07+08:00
 $ kakemono prev
 [exit 0]
-Title:   local wallpaper
-Source:  local
-Page:    https://example.test/local
-File:    [ROOT]/one.jpg
+Title:   one.jpg
+Source:  folder
+File:    [ROOT]/pics/one.jpg
 Set at:  2026-03-04T05:06:07+08:00
 $ kakemono favorite
 [exit 0]

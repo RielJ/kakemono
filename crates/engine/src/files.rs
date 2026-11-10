@@ -1,16 +1,15 @@
-//! Favorites, trash and download-cache trimming (plan §D). Port of Go `Manager.Favorite`,
-//! `Manager.Trash`, `trimCache` and `copyFile` (`internal/wallpaper/manager.go`).
+//! Favorites, trash and download-folder trimming (plan §D). Port of Go `Manager.Favorite`,
+//! `Manager.Trash` and `copyFile` (`internal/wallpaper/manager.go`).
 //!
 //! Differences from Go:
 //! - `trash` never overwrites a file already in the trash. It uses the same collision name as
 //!   `favorite` (`<stem>_<unix nanos>.<ext>`). Go's `os.Rename` replaced the older file.
 //! - A copy that fails halfway removes the partial destination file. Go left it behind.
-//! - `trim_cache` also keeps the image of the previous history entry, not only the current one.
-//!   GNOME's dark-mode key can still point at it (plan Task 20).
 //! - An empty favorites or trash dir is an error. Go would have written into the working dir.
-//! - `trim_cache` never deletes anything inside the favorites or trash dir, comparing
-//!   canonical paths. If either dir is the download dir (or contains it), it deletes nothing and
-//!   logs a warning. Go deleted favorites saved into the download dir.
+//!
+//! [`safe_delete`] and [`trim_to_mb`] (with [`Protect`]) replace Go's count-based `trimCache`
+//! for the per-source download layout (`docs/plans/variety-sources-impl.md` Task 11): every
+//! delete is checked against the download dir and the protected dirs and files.
 //!
 //! The file work runs on tokio's blocking pool (`spawn_blocking`) with `std::fs`.
 
@@ -20,13 +19,12 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use kakemono_config::Config;
+use kakemono_config::schema::SourceType;
 use kakemono_sources::is_image_file;
 
 use crate::engine::EngineError;
 use crate::state::State;
-
-/// How many history entries (newest first) `trim_cache` never deletes, besides `current`.
-const PROTECTED_HISTORY: usize = 2;
 
 /// How many collision names `create_unique` tries before it gives up.
 const MAX_NAME_ATTEMPTS: u32 = 1000;
@@ -44,33 +42,352 @@ pub(crate) async fn trash(src: &Path, trash_dir: &Path) -> Result<PathBuf, Engin
     blocking(move || trash_blocking(&src, &dir, |from, to| fs::rename(from, to))).await
 }
 
-/// Deletes the oldest images in `download_dir` beyond `cache_size` (0 = unlimited). `state` is
-/// the state after the new image was pushed (its `current` and history are protected). Nothing
-/// inside `favorites_dir` or `trash_dir` is deleted. Failures are logged, never returned.
-pub(crate) async fn trim_cache(
-    download_dir: &Path,
-    favorites_dir: &Path,
-    trash_dir: &Path,
-    cache_size: u32,
-    state: &State,
-) {
-    if cache_size == 0 || download_dir.as_os_str().is_empty() {
-        return;
+/// File name of the per-source seen ledger the downloader keeps in `downloads/<id>/`.
+/// [`trim_to_mb`] neither counts nor deletes it.
+pub const SEEN_LEDGER: &str = ".kakemono-seen";
+
+/// Paths no delete may touch: protected dirs (manual dir, favorites, trash, local-source dirs)
+/// and protected files (the current wallpaper and history entries). Paths are stored as given
+/// and compared both as given and canonicalised when a delete is checked.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Protect {
+    dirs: Vec<PathBuf>,
+    files: HashSet<PathBuf>,
+}
+
+impl Protect {
+    /// Protects nothing.
+    pub fn new() -> Self {
+        Self::default()
     }
-    let dir = download_dir.to_path_buf();
-    let keep_out = vec![
-        (FAVORITES_SETTING, favorites_dir.to_path_buf()),
-        (TRASH_SETTING, trash_dir.to_path_buf()),
-    ];
-    let protected = protected_paths(state);
-    let joined =
-        tokio::task::spawn_blocking(move || trim_blocking(&dir, cache_size, &protected, &keep_out));
-    match joined.await {
-        Ok(deleted) if !deleted.is_empty() => {
-            tracing::debug!(count = deleted.len(), "trimmed the download cache");
+
+    /// Protects everything under `dir`. An empty path (an unset setting) is ignored.
+    #[must_use]
+    pub fn dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        let dir = dir.into();
+        if !dir.as_os_str().is_empty() {
+            self.dirs.push(dir);
         }
-        Ok(_) => {}
-        Err(err) => tracing::warn!("trim cache: {err}"),
+        self
+    }
+
+    /// Protects the file `file`. An empty path is ignored.
+    #[must_use]
+    pub fn file(mut self, file: impl Into<PathBuf>) -> Self {
+        let file = file.into();
+        if !file.as_os_str().is_empty() {
+            self.files.insert(file);
+        }
+        self
+    }
+
+    /// Protects the dirs and files `cfg` names that downloads must never touch: `manual_dir`,
+    /// the favorites and trash dirs, and every local source's location (an `images` row's
+    /// location is a file), enabled or not.
+    #[must_use]
+    pub fn config(self, cfg: &Config) -> Self {
+        let protect = self
+            .dir(cfg.daemon.manual_dir_resolved())
+            .dir(&cfg.favorites.dir)
+            .dir(&cfg.daemon.trash_dir);
+        cfg.sources
+            .iter()
+            .filter(|e| e.kind.is_local())
+            .fold(protect, |protect, entry| match entry.kind {
+                SourceType::Images => protect.file(&entry.location),
+                _ => protect.dir(&entry.location),
+            })
+    }
+
+    /// Protects the current wallpaper and every history entry of `state`.
+    #[must_use]
+    pub fn state(self, state: &State) -> Self {
+        state
+            .current()
+            .into_iter()
+            .chain(state.history())
+            .fold(self, |protect, info| protect.file(&info.path))
+    }
+}
+
+/// A [`Protect`] resolved against one download dir: every path as given plus its canonical
+/// form, so one trim canonicalises the protected paths once.
+struct Guard {
+    /// The canonical download dir.
+    root: PathBuf,
+    dirs: Vec<PathBuf>,
+    files: HashSet<PathBuf>,
+}
+
+/// Marks a refused delete inside its `io::Error`, so the trim can tell refusals from failures.
+#[derive(Debug)]
+struct Refused(String);
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Refused {}
+
+fn refused(path: &Path, reason: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        Refused(format!("refusing to delete {}: {reason}", path.display())),
+    )
+}
+
+fn is_refusal(err: &io::Error) -> bool {
+    err.get_ref().is_some_and(|inner| inner.is::<Refused>())
+}
+
+/// `path` as given, then canonicalised when it resolves.
+fn with_canonical(path: &Path) -> impl Iterator<Item = PathBuf> {
+    std::iter::once(path.to_path_buf()).chain(fs::canonicalize(path).ok())
+}
+
+impl Guard {
+    fn new(download_dir: &Path, protect: &Protect) -> io::Result<Self> {
+        if download_dir.as_os_str().is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "download dir is not configured",
+            ));
+        }
+        Ok(Self {
+            root: fs::canonicalize(download_dir)?,
+            dirs: protect
+                .dirs
+                .iter()
+                .flat_map(|d| with_canonical(d))
+                .collect(),
+            files: protect
+                .files
+                .iter()
+                .flat_map(|f| with_canonical(f))
+                .collect(),
+        })
+    }
+
+    /// The protected dir that contains the download dir, if any (then nothing is deletable).
+    fn dir_containing_root(&self) -> Option<&Path> {
+        self.dirs
+            .iter()
+            .find(|d| self.root.starts_with(d))
+            .map(PathBuf::as_path)
+    }
+
+    /// Whether the walk must not enter `dir`: it is under a protected dir, or can't be resolved.
+    fn skips_dir(&self, dir: &Path) -> bool {
+        let Ok(real) = fs::canonicalize(dir) else {
+            return true;
+        };
+        [dir, real.as_path()]
+            .iter()
+            .any(|p| self.dirs.iter().any(|d| p.starts_with(d)))
+    }
+
+    /// Refuses `path` unless every spelling of it is a deletable download: the path as given,
+    /// the entry itself (parent resolved) and the file it resolves to (symlinks followed).
+    fn check(&self, path: &Path) -> io::Result<()> {
+        if fs::symlink_metadata(path)?.is_dir() {
+            return Err(refused(path, "is a directory"));
+        }
+        let name = path
+            .file_name()
+            .ok_or_else(|| refused(path, "not a file path"))?;
+        let parent = match path.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p,
+            _ => Path::new("."),
+        };
+        let entry = fs::canonicalize(parent)?.join(name);
+        let target = fs::canonicalize(path)?;
+        for resolved in [&entry, &target] {
+            if !resolved.starts_with(&self.root) || *resolved == self.root {
+                return Err(refused(path, "outside the download dir"));
+            }
+        }
+        for spelling in [path, &entry, &target] {
+            if let Some(dir) = self.dirs.iter().find(|d| spelling.starts_with(d)) {
+                return Err(refused(
+                    path,
+                    &format!("inside protected dir {}", dir.display()),
+                ));
+            }
+            if self.files.contains(spelling) {
+                return Err(refused(path, "protected file"));
+            }
+        }
+        Ok(())
+    }
+
+    fn delete(&self, path: &Path) -> io::Result<()> {
+        self.check(path)?;
+        fs::remove_file(path)
+    }
+}
+
+/// Deletes the file `path`, refusing (`ErrorKind::PermissionDenied`, file kept) when:
+/// - it isn't inside `download_dir`, as given or with symlinks resolved (`../` escapes and
+///   symlinks pointing outside are refused);
+/// - it is, or resolves to a path, under a protected dir of `protect`;
+/// - it is, or resolves to, a protected file of `protect`;
+/// - it is a directory.
+///
+/// Every delete of downloaded files goes through this.
+pub fn safe_delete(path: &Path, download_dir: &Path, protect: &Protect) -> io::Result<()> {
+    Guard::new(download_dir, protect)?.delete(path)
+}
+
+/// Deletes the oldest image files (by modification time) under `download_dir`, recursively and
+/// including legacy flat files at its root, until their total size is at or under
+/// `limit_bytes`. Deletes only through [`safe_delete`]. Protected dirs are not walked or
+/// counted. Protected files count but are skipped. [`SEEN_LEDGER`] files, hidden files
+/// (including partial downloads) and symlinks are neither counted nor deleted. Returns the
+/// deleted paths. Failures are logged, never returned.
+pub async fn trim_to_mb(download_dir: &Path, limit_bytes: u64, protect: &Protect) -> Vec<PathBuf> {
+    let (dir, protect) = (download_dir.to_path_buf(), protect.clone());
+    let joined =
+        tokio::task::spawn_blocking(move || trim_to_mb_blocking(&dir, limit_bytes, &protect));
+    match joined.await {
+        Ok(deleted) => {
+            if !deleted.is_empty() {
+                tracing::debug!(count = deleted.len(), "trimmed the download folder");
+            }
+            deleted
+        }
+        Err(err) => {
+            tracing::warn!("trim download folder: {err}");
+            Vec::new()
+        }
+    }
+}
+
+/// Total size in bytes of the files [`trim_to_mb`] counts against the limit under
+/// `download_dir` (same walk: protected dirs, hidden files, ledgers and symlinks are left out).
+/// `None` when `download_dir` is unset or can't be resolved (for example, it doesn't exist yet).
+/// Blocking.
+pub fn counted_bytes(download_dir: &Path, protect: &Protect) -> Option<u64> {
+    let guard = Guard::new(download_dir, protect).ok()?;
+    let mut files = Vec::new();
+    collect_cached(download_dir, &guard, &mut files);
+    Some(files.iter().map(|f| f.size).sum())
+}
+
+/// One file [`trim_to_mb`] counts.
+struct CachedFile {
+    modified: SystemTime,
+    size: u64,
+    path: PathBuf,
+}
+
+fn trim_to_mb_blocking(download_dir: &Path, limit_bytes: u64, protect: &Protect) -> Vec<PathBuf> {
+    if download_dir.as_os_str().is_empty() {
+        return Vec::new();
+    }
+    let guard = match Guard::new(download_dir, protect) {
+        Ok(guard) => guard,
+        Err(err) => {
+            if err.kind() != io::ErrorKind::NotFound {
+                tracing::warn!(
+                    "trim download folder: {}: {}",
+                    download_dir.display(),
+                    go_reason(&err)
+                );
+            }
+            return Vec::new();
+        }
+    };
+    if let Some(dir) = guard.dir_containing_root() {
+        tracing::warn!(
+            "trim download folder: protected dir {} contains the download dir {}; \
+             not deleting anything",
+            dir.display(),
+            download_dir.display()
+        );
+        return Vec::new();
+    }
+    let mut files = Vec::new();
+    collect_cached(download_dir, &guard, &mut files);
+    let mut total: u64 = files.iter().map(|f| f.size).sum();
+    if total <= limit_bytes {
+        return Vec::new();
+    }
+    files.sort_by(|a, b| (a.modified, &a.path).cmp(&(b.modified, &b.path)));
+    let mut deleted = Vec::new();
+    for file in files {
+        if total <= limit_bytes {
+            break;
+        }
+        match guard.delete(&file.path) {
+            Ok(()) => {
+                total = total.saturating_sub(file.size);
+                deleted.push(file.path);
+            }
+            Err(err) if is_refusal(&err) => tracing::debug!("trim download folder: {err}"),
+            Err(err) => tracing::warn!(
+                "trim download folder: remove {}: {}",
+                file.path.display(),
+                go_reason(&err)
+            ),
+        }
+    }
+    if total > limit_bytes {
+        tracing::info!(
+            total,
+            limit_bytes,
+            "download folder is still over its limit; the rest is protected"
+        );
+    }
+    deleted
+}
+
+/// Whether the trim counts and may delete the file `path`: a visible image, not a ledger.
+fn is_cached_image(path: &Path) -> bool {
+    let visible = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n != SEEN_LEDGER && !n.starts_with('.'));
+    visible && is_image_file(path)
+}
+
+/// Collects the trim's files under `dir`, recursively. Symlinks are not followed or counted,
+/// and protected dirs are not entered.
+fn collect_cached(dir: &Path, guard: &Guard, out: &mut Vec<CachedFile>) {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) => {
+            tracing::warn!(
+                "trim download folder: read {}: {}",
+                dir.display(),
+                go_reason(&err)
+            );
+            return;
+        }
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_dir() {
+            if !guard.skips_dir(&path) {
+                collect_cached(&path, guard, out);
+            }
+        } else if kind.is_file() && is_cached_image(&path) {
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            let Ok(modified) = meta.modified() else {
+                continue;
+            };
+            out.push(CachedFile {
+                modified,
+                size: meta.len(),
+                path,
+            });
+        }
     }
 }
 
@@ -227,145 +544,6 @@ fn unix_nanos() -> u128 {
         .unwrap_or_default()
 }
 
-/// The paths `trim_cache` must keep: `current` and the newest `PROTECTED_HISTORY` history
-/// entries, each as given and canonicalised.
-fn protected_paths(state: &State) -> HashSet<PathBuf> {
-    let history = state.history();
-    let recent = &history[history.len().saturating_sub(PROTECTED_HISTORY)..];
-    state
-        .current()
-        .into_iter()
-        .chain(recent)
-        .map(|info| PathBuf::from(&info.path))
-        .filter(|p| !p.as_os_str().is_empty())
-        .flat_map(|p| {
-            let canonical = fs::canonicalize(&p).ok();
-            std::iter::once(p).chain(canonical)
-        })
-        .collect()
-}
-
-/// The config settings `trim_cache` keeps out of, as named in warnings.
-const FAVORITES_SETTING: &str = "[favorites] dir";
-const TRASH_SETTING: &str = "[daemon] trash_dir";
-
-/// Canonicalises the dirs `trim_cache` must not delete from. Empty settings and dirs that don't
-/// exist are dropped (nothing can be inside them).
-fn canonical_keep_out(keep_out: &[(&'static str, PathBuf)]) -> Vec<(&'static str, PathBuf)> {
-    keep_out
-        .iter()
-        .filter(|(_, dir)| !dir.as_os_str().is_empty())
-        .filter_map(|(setting, dir)| Some((*setting, fs::canonicalize(dir).ok()?)))
-        .collect()
-}
-
-/// The settings whose dir is the download dir or one of its parents: every download is then
-/// inside it, so the trim must delete nothing.
-fn overlapping_settings(
-    canonical_download_dir: &Path,
-    keep_out: &[(&'static str, PathBuf)],
-) -> Vec<&'static str> {
-    keep_out
-        .iter()
-        .filter(|(_, dir)| canonical_download_dir.starts_with(dir))
-        .map(|(setting, _)| *setting)
-        .collect()
-}
-
-/// The single warning a trim logs when [`overlapping_settings`] is not empty.
-fn overlap_warning(download_dir: &Path, settings: &[&str]) -> String {
-    format!(
-        "trim cache: {} contains the download dir {}; not deleting anything \
-         (set cache_size = 0 or use separate dirs)",
-        settings.join(" and "),
-        download_dir.display()
-    )
-}
-
-/// Go `trimCache`: lists the images directly in `dir` (no subdirs, no other files), oldest
-/// modification time first, and deletes the oldest until `cache_size` remain. Protected files
-/// and files whose canonical path is inside a `keep_out` dir are skipped and the next oldest is
-/// deleted instead. If a `keep_out` dir is `dir` or a parent of it, deletes nothing and logs
-/// one warning. Returns the paths it removed.
-fn trim_blocking(
-    dir: &Path,
-    cache_size: u32,
-    protected: &HashSet<PathBuf>,
-    keep_out: &[(&'static str, PathBuf)],
-) -> Vec<PathBuf> {
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(err) => {
-            if err.kind() != io::ErrorKind::NotFound {
-                tracing::warn!("trim cache: read {}: {}", dir.display(), go_reason(&err));
-            }
-            return Vec::new();
-        }
-    };
-    let Ok(canonical_dir) = fs::canonicalize(dir) else {
-        // Can't tell whether the download dir overlaps favorites or trash: delete nothing.
-        return Vec::new();
-    };
-    let keep_out = canonical_keep_out(keep_out);
-    let overlapping = overlapping_settings(&canonical_dir, &keep_out);
-    if !overlapping.is_empty() {
-        tracing::warn!("{}", overlap_warning(dir, &overlapping));
-        return Vec::new();
-    }
-    let mut files: Vec<(SystemTime, PathBuf)> = entries
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let meta = entry.metadata().ok()?;
-            let path = entry.path();
-            if meta.is_dir() || !is_image_file(&path) {
-                return None;
-            }
-            Some((meta.modified().ok()?, path))
-        })
-        .collect();
-
-    let keep = usize::try_from(cache_size).unwrap_or(usize::MAX);
-    if files.len() <= keep {
-        return Vec::new();
-    }
-    files.sort();
-
-    let is_protected = |path: &Path| {
-        if protected.contains(path)
-            || path
-                .file_name()
-                .is_some_and(|name| protected.contains(&canonical_dir.join(name)))
-        {
-            return true;
-        }
-        // A symlink into favorites or trash counts as inside it. If the path can't be
-        // resolved, keep the file.
-        fs::canonicalize(path).map_or(true, |real| {
-            protected.contains(&real) || keep_out.iter().any(|(_, d)| real.starts_with(d))
-        })
-    };
-    let excess = files.len() - keep;
-    let mut deleted = Vec::new();
-    let mut attempts = 0;
-    for (_, path) in files {
-        if attempts >= excess {
-            break;
-        }
-        if is_protected(&path) {
-            continue;
-        }
-        // Go counted a failed remove too, so a stuck file doesn't take a newer one with it.
-        attempts += 1;
-        match fs::remove_file(&path) {
-            Ok(()) => deleted.push(path),
-            Err(err) => {
-                tracing::warn!("trim cache: remove {}: {}", path.display(), go_reason(&err))
-            }
-        }
-    }
-    deleted
-}
-
 /// Go `*PathError` text: `<op> <path>: <reason>`.
 fn go_path_error(op: &str, path: &Path, err: &io::Error) -> String {
     format!("{op} {}: {}", path.display(), go_reason(err))
@@ -481,70 +659,424 @@ mod tests {
         assert!(!dst.exists(), "no partial file in the trash");
     }
 
-    #[test]
-    fn trim_ignores_a_missing_dir() {
-        let dir = tempfile::tempdir().unwrap();
-        let gone = dir.path().join("nope");
-        assert!(trim_blocking(&gone, 1, &HashSet::new(), &[]).is_empty());
+    // ---- safe_delete and trim_to_mb ----
+
+    const KB: usize = 1000;
+    const MB: u64 = 1_000_000;
+
+    /// A tempdir holding `downloads/` (created) and room for dirs outside it.
+    struct Tree {
+        root: tempfile::TempDir,
     }
 
-    #[test]
-    fn overlap_is_the_download_dir_or_a_parent_of_it() {
-        let d = Path::new("/c/downloads");
-        let keep_out = vec![
-            (FAVORITES_SETTING, PathBuf::from("/c/downloads")),
-            (TRASH_SETTING, PathBuf::from("/c")),
-        ];
-        assert_eq!(
-            overlapping_settings(d, &keep_out),
-            vec![FAVORITES_SETTING, TRASH_SETTING]
-        );
-        let nested = vec![
-            (FAVORITES_SETTING, PathBuf::from("/c/downloads/favs")),
-            (TRASH_SETTING, PathBuf::from("/c/downloads-trash")),
-        ];
-        assert!(overlapping_settings(d, &nested).is_empty());
-    }
-
-    #[test]
-    fn overlap_warning_names_the_setting() {
-        assert_eq!(
-            overlap_warning(Path::new("/c/d"), &[FAVORITES_SETTING]),
-            "trim cache: [favorites] dir contains the download dir /c/d; not deleting anything \
-             (set cache_size = 0 or use separate dirs)"
-        );
-        assert!(
-            overlap_warning(Path::new("/c/d"), &[FAVORITES_SETTING, TRASH_SETTING])
-                .starts_with("trim cache: [favorites] dir and [daemon] trash_dir contains")
-        );
-    }
-
-    #[test]
-    fn trim_with_an_overlapping_dir_deletes_nothing() {
-        let dir = tempfile::tempdir().unwrap();
-        for name in ["a.jpg", "b.jpg", "c.jpg"] {
-            write(&dir.path().join(name), b"x");
+    impl Tree {
+        fn new() -> Self {
+            let tree = Self {
+                root: tempfile::tempdir().unwrap(),
+            };
+            fs::create_dir_all(tree.downloads()).unwrap();
+            tree
         }
-        let keep_out = vec![(FAVORITES_SETTING, dir.path().to_path_buf())];
-        assert!(trim_blocking(dir.path(), 1, &HashSet::new(), &keep_out).is_empty());
-        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 3);
+
+        fn downloads(&self) -> PathBuf {
+            self.root.path().join("downloads")
+        }
+
+        /// Writes `size` bytes at `rel` (under the tempdir root) with mtime `UNIX_EPOCH + age_s`.
+        fn file(&self, rel: &str, size: usize, age_s: u64) -> PathBuf {
+            let path = self.root.path().join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, vec![0_u8; size]).unwrap();
+            let mtime = UNIX_EPOCH + std::time::Duration::from_secs(1_000_000 + age_s);
+            File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(mtime)
+                .unwrap();
+            path
+        }
+    }
+
+    /// Asserts `safe_delete` refused `path` and left it in place.
+    fn assert_refused(result: io::Result<()>, path: &Path, reason: &str) {
+        let err = result.expect_err("safe_delete must refuse");
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{err}");
+        assert!(is_refusal(&err), "{err}");
+        let msg = err.to_string();
+        assert!(
+            msg.starts_with("refusing to delete ") && msg.contains(reason),
+            "{msg}"
+        );
+        assert!(path.exists(), "{} must survive", path.display());
+    }
+
+    #[test]
+    fn safe_delete_deletes_a_download() {
+        let t = Tree::new();
+        let p = t.file("downloads/bing/a.jpg", 1, 0);
+        let legacy = t.file("downloads/legacy.jpg", 1, 0);
+        safe_delete(&p, &t.downloads(), &Protect::new()).unwrap();
+        safe_delete(&legacy, &t.downloads(), &Protect::new()).unwrap();
+        assert!(!p.exists());
+        assert!(!legacy.exists());
+    }
+
+    #[test]
+    fn safe_delete_refuses_a_dotdot_escape() {
+        let t = Tree::new();
+        let outside = t.file("outside.jpg", 1, 0);
+        let sneaky = t.downloads().join("..").join("outside.jpg");
+        assert_refused(
+            safe_delete(&sneaky, &t.downloads(), &Protect::new()),
+            &outside,
+            "outside the download dir",
+        );
+    }
+
+    #[test]
+    fn safe_delete_refuses_a_file_outside_the_download_dir() {
+        let t = Tree::new();
+        let outside = t.file("elsewhere/a.jpg", 1, 0);
+        assert_refused(
+            safe_delete(&outside, &t.downloads(), &Protect::new()),
+            &outside,
+            "outside the download dir",
+        );
     }
 
     #[cfg(unix)]
     #[test]
-    fn trim_keeps_a_symlink_into_favorites() {
-        let root = tempfile::tempdir().unwrap();
-        let downloads = root.path().join("downloads");
-        let favorites = root.path().join("favorites");
-        fs::create_dir_all(&downloads).unwrap();
-        fs::create_dir_all(&favorites).unwrap();
-        write(&favorites.join("fav.jpg"), b"f");
-        std::os::unix::fs::symlink(favorites.join("fav.jpg"), downloads.join("link.jpg")).unwrap();
-        write(&downloads.join("plain.jpg"), b"p");
-        let keep_out = vec![(FAVORITES_SETTING, favorites.clone())];
-        // 2 images, keep 1: the symlink is skipped, so plain.jpg goes whatever its age.
-        let deleted = trim_blocking(&downloads, 1, &HashSet::new(), &keep_out);
-        assert_eq!(deleted, vec![downloads.join("plain.jpg")]);
-        assert!(downloads.join("link.jpg").exists());
+    fn safe_delete_refuses_a_symlink_pointing_outside() {
+        let t = Tree::new();
+        let outside = t.file("elsewhere/a.jpg", 1, 0);
+        let link = t.downloads().join("link.jpg");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        assert_refused(
+            safe_delete(&link, &t.downloads(), &Protect::new()),
+            &link,
+            "outside the download dir",
+        );
+        assert!(outside.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn safe_delete_refuses_a_path_through_a_symlinked_dir_pointing_outside() {
+        let t = Tree::new();
+        let outside = t.file("elsewhere/a.jpg", 1, 0);
+        std::os::unix::fs::symlink(outside.parent().unwrap(), t.downloads().join("dir")).unwrap();
+        let through = t.downloads().join("dir").join("a.jpg");
+        assert_refused(
+            safe_delete(&through, &t.downloads(), &Protect::new()),
+            &outside,
+            "outside the download dir",
+        );
+    }
+
+    #[test]
+    fn safe_delete_refuses_the_manual_dir() {
+        let t = Tree::new();
+        let p = t.file("downloads/manual/a.jpg", 1, 0);
+        let protect = Protect::new().dir(t.downloads().join("manual"));
+        assert_refused(
+            safe_delete(&p, &t.downloads(), &protect),
+            &p,
+            "inside protected dir",
+        );
+    }
+
+    #[test]
+    fn safe_delete_refuses_a_favorites_dir_nested_in_downloads() {
+        let t = Tree::new();
+        let p = t.file("downloads/favorites/a.jpg", 1, 0);
+        let protect = Protect::new().dir(t.downloads().join("favorites"));
+        assert_refused(
+            safe_delete(&p, &t.downloads(), &protect),
+            &p,
+            "inside protected dir",
+        );
+    }
+
+    #[test]
+    fn safe_delete_refuses_the_trash_dir() {
+        let t = Tree::new();
+        let p = t.file("downloads/.trash/a.jpg", 1, 0);
+        let protect = Protect::new().dir(t.downloads().join(".trash"));
+        assert_refused(
+            safe_delete(&p, &t.downloads(), &protect),
+            &p,
+            "inside protected dir",
+        );
+    }
+
+    #[test]
+    fn safe_delete_refuses_a_local_source_dir_nested_in_downloads() {
+        let t = Tree::new();
+        let p = t.file("downloads/mine/deep/a.jpg", 1, 0);
+        let protect = Protect::new().dir(t.downloads().join("mine"));
+        assert_refused(
+            safe_delete(&p, &t.downloads(), &protect),
+            &p,
+            "inside protected dir",
+        );
+    }
+
+    #[test]
+    fn safe_delete_refuses_everything_when_a_protected_dir_contains_downloads() {
+        let t = Tree::new();
+        let p = t.file("downloads/bing/a.jpg", 1, 0);
+        let protect = Protect::new().dir(t.root.path());
+        assert_refused(
+            safe_delete(&p, &t.downloads(), &protect),
+            &p,
+            "inside protected dir",
+        );
+    }
+
+    #[test]
+    fn safe_delete_refuses_the_current_wallpaper() {
+        let t = Tree::new();
+        let p = t.file("downloads/bing/current.jpg", 1, 0);
+        let mut state = State::new();
+        state.push(info(&p), chrono::Utc::now());
+        let protect = Protect::new().state(&state);
+        assert_refused(
+            safe_delete(&p, &t.downloads(), &protect),
+            &p,
+            "protected file",
+        );
+    }
+
+    #[test]
+    fn safe_delete_refuses_a_history_entry() {
+        let t = Tree::new();
+        let old = t.file("downloads/bing/old.jpg", 1, 0);
+        let newer = t.file("downloads/bing/newer.jpg", 1, 0);
+        let mut state = State::new();
+        state.push(info(&old), chrono::Utc::now());
+        state.push(info(&newer), chrono::Utc::now());
+        assert_ne!(state.current().map(|i| i.path.as_str()), old.to_str());
+        let protect = Protect::new().state(&state);
+        assert_refused(
+            safe_delete(&old, &t.downloads(), &protect),
+            &old,
+            "protected file",
+        );
+    }
+
+    #[test]
+    fn safe_delete_refuses_a_protected_file_given_by_another_spelling() {
+        let t = Tree::new();
+        let p = t.file("downloads/bing/a.jpg", 1, 0);
+        let spelled = t
+            .downloads()
+            .join("bing")
+            .join(".")
+            .join("..")
+            .join("bing")
+            .join("a.jpg");
+        let protect = Protect::new().file(&p);
+        assert_refused(
+            safe_delete(&spelled, &t.downloads(), &protect),
+            &p,
+            "protected file",
+        );
+    }
+
+    #[test]
+    fn safe_delete_refuses_a_directory() {
+        let t = Tree::new();
+        let dir = t.downloads().join("bing");
+        fs::create_dir_all(&dir).unwrap();
+        assert_refused(
+            safe_delete(&dir, &t.downloads(), &Protect::new()),
+            &dir,
+            "is a directory",
+        );
+    }
+
+    #[test]
+    fn protect_ignores_empty_paths() {
+        assert_eq!(Protect::new().dir("").file(""), Protect::new());
+    }
+
+    fn info(path: &Path) -> kakemono_protocol::types::WallpaperInfo {
+        kakemono_protocol::types::WallpaperInfo {
+            path: path.to_string_lossy().into_owned(),
+            ..Default::default()
+        }
+    }
+
+    fn sorted(mut paths: Vec<PathBuf>) -> Vec<PathBuf> {
+        paths.sort();
+        paths
+    }
+
+    #[tokio::test]
+    async fn trim_to_mb_deletes_the_oldest_and_spares_manual_current_and_history() {
+        let t = Tree::new();
+        let manual = t.file("downloads/manual/m.jpg", 1_000 * KB, 0); // oldest of all
+        let legacy = t.file("downloads/legacy.jpg", 400 * KB, 1);
+        let a1 = t.file("downloads/a/1.jpg", 400 * KB, 2); // history
+        let a2 = t.file("downloads/a/2.jpg", 400 * KB, 3);
+        let a3 = t.file("downloads/a/3.jpg", 400 * KB, 4); // current
+        let mut state = State::new();
+        state.push(info(&a1), chrono::Utc::now());
+        state.push(info(&a3), chrono::Utc::now());
+        let protect = Protect::new()
+            .dir(t.downloads().join("manual"))
+            .state(&state);
+
+        // Counted: 1.6 MB (manual/ is not). Delete legacy (1.2 MB), skip a1, delete a2 (0.8 MB).
+        let deleted = trim_to_mb(&t.downloads(), MB, &protect).await;
+        assert_eq!(sorted(deleted), sorted(vec![legacy.clone(), a2.clone()]));
+        assert!(!legacy.exists() && !a2.exists());
+        assert!(manual.exists() && a1.exists() && a3.exists());
+    }
+
+    #[tokio::test]
+    async fn trim_to_mb_spares_a_favorites_dir_nested_in_downloads() {
+        let t = Tree::new();
+        let fav = t.file("downloads/favorites/f.jpg", 400 * KB, 0);
+        let a1 = t.file("downloads/a/1.jpg", 400 * KB, 1);
+        let a2 = t.file("downloads/a/2.jpg", 400 * KB, 2);
+        let protect = Protect::new().dir(t.downloads().join("favorites"));
+        let deleted = trim_to_mb(&t.downloads(), 0, &protect).await;
+        assert_eq!(sorted(deleted), sorted(vec![a1, a2]));
+        assert!(fav.exists());
+    }
+
+    #[test]
+    fn counted_bytes_counts_what_the_trim_counts() {
+        let t = Tree::new();
+        t.file("downloads/a/1.jpg", 300 * KB, 0);
+        t.file("downloads/legacy.png", 200 * KB, 0);
+        t.file("downloads/favorites/f.jpg", 400 * KB, 0);
+        t.file("downloads/a/.partial.jpg", 50 * KB, 0);
+        t.file("downloads/a/notes.txt", 10 * KB, 0);
+        t.file(&format!("downloads/a/{SEEN_LEDGER}"), 5 * KB, 0);
+        let protect = Protect::new().dir(t.downloads().join("favorites"));
+        assert_eq!(
+            counted_bytes(&t.downloads(), &protect),
+            Some(500 * KB as u64)
+        );
+        assert_eq!(counted_bytes(&t.root.path().join("nope"), &protect), None);
+        assert_eq!(counted_bytes(Path::new(""), &protect), None);
+    }
+
+    #[test]
+    fn protect_config_covers_manual_favorites_trash_and_local_rows() {
+        let mut cfg = Config::default();
+        cfg.daemon.download_dir = "/d".into();
+        cfg.daemon.manual_dir = None;
+        cfg.favorites.dir = "/fav".into();
+        cfg.daemon.trash_dir = "/trash".into();
+        let row = |kind, location: &str, enabled| kakemono_config::SourceEntry {
+            id: "x".into(),
+            enabled,
+            kind,
+            location: location.into(),
+        };
+        cfg.sources = vec![
+            row(SourceType::Folder, "/pics", false),
+            row(SourceType::Images, "/one.jpg", true),
+            row(SourceType::Bing, "", true),
+        ];
+        let p = Protect::new().config(&cfg);
+        assert_eq!(
+            p.dirs,
+            ["/d/manual", "/fav", "/trash", "/pics"].map(PathBuf::from)
+        );
+        assert_eq!(p.files, HashSet::from([PathBuf::from("/one.jpg")]));
+    }
+
+    #[tokio::test]
+    async fn trim_to_mb_neither_counts_nor_deletes_seen_ledgers() {
+        let t = Tree::new();
+        let ledger = t.file("downloads/a/.kakemono-seen", 2_000 * KB, 0);
+        let root_ledger = t.file("downloads/.kakemono-seen", 2_000 * KB, 0);
+        let a1 = t.file("downloads/a/1.jpg", 400 * KB, 1);
+        // Under the limit without the ledgers: nothing to do.
+        assert!(
+            trim_to_mb(&t.downloads(), MB, &Protect::new())
+                .await
+                .is_empty()
+        );
+        // Over a zero limit: the image goes, the ledgers stay.
+        assert_eq!(
+            trim_to_mb(&t.downloads(), 0, &Protect::new()).await,
+            vec![a1]
+        );
+        assert!(ledger.exists() && root_ledger.exists());
+    }
+
+    #[tokio::test]
+    async fn trim_to_mb_does_nothing_under_the_limit() {
+        let t = Tree::new();
+        let a1 = t.file("downloads/a/1.jpg", 400 * KB, 0);
+        let a2 = t.file("downloads/b/2.jpg", 400 * KB, 1);
+        assert!(
+            trim_to_mb(&t.downloads(), MB, &Protect::new())
+                .await
+                .is_empty()
+        );
+        // Exactly at the limit is fine too.
+        assert!(
+            trim_to_mb(&t.downloads(), 800_000, &Protect::new())
+                .await
+                .is_empty()
+        );
+        assert!(a1.exists() && a2.exists());
+    }
+
+    #[tokio::test]
+    async fn trim_to_mb_skips_hidden_and_partial_files() {
+        let t = Tree::new();
+        let part = t.file("downloads/a/.x.jpg.123-4.part", 400 * KB, 0);
+        let hidden = t.file("downloads/a/.hidden.jpg", 400 * KB, 0);
+        let txt = t.file("downloads/a/notes.txt", 400 * KB, 0);
+        assert!(
+            trim_to_mb(&t.downloads(), 0, &Protect::new())
+                .await
+                .is_empty()
+        );
+        assert!(part.exists() && hidden.exists() && txt.exists());
+    }
+
+    #[tokio::test]
+    async fn trim_to_mb_deletes_nothing_when_a_protected_dir_contains_downloads() {
+        let t = Tree::new();
+        let a1 = t.file("downloads/a/1.jpg", 400 * KB, 0);
+        let protect = Protect::new().dir(t.root.path());
+        assert!(trim_to_mb(&t.downloads(), 0, &protect).await.is_empty());
+        assert!(a1.exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn trim_to_mb_does_not_follow_symlinks_out_of_downloads() {
+        let t = Tree::new();
+        let outside = t.file("elsewhere/a.jpg", 400 * KB, 0);
+        std::os::unix::fs::symlink(outside.parent().unwrap(), t.downloads().join("dir")).unwrap();
+        std::os::unix::fs::symlink(&outside, t.downloads().join("link.jpg")).unwrap();
+        assert!(
+            trim_to_mb(&t.downloads(), 0, &Protect::new())
+                .await
+                .is_empty()
+        );
+        assert!(outside.exists());
+    }
+
+    #[tokio::test]
+    async fn trim_to_mb_ignores_a_missing_or_unset_dir() {
+        let t = Tree::new();
+        let gone = t.root.path().join("nope");
+        assert!(trim_to_mb(&gone, 0, &Protect::new()).await.is_empty());
+        assert!(
+            trim_to_mb(Path::new(""), 0, &Protect::new())
+                .await
+                .is_empty()
+        );
     }
 }

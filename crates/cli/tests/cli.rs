@@ -11,13 +11,13 @@ use chrono::{DateTime, FixedOffset};
 use kakemono_cli::daemon::lock::{self, LockGuard};
 use kakemono_cli::daemon::server::{self, Server};
 use kakemono_config::Config;
+use kakemono_config::schema::{SourceEntry, SourceType};
 use kakemono_engine::state::State;
 use kakemono_engine::{Deps, Engine};
 use kakemono_platform::api::{Platform, Theme};
 use kakemono_platform::fake::{ManualSignals, RecordingSetter};
 use kakemono_protocol::endpoint::Endpoint;
-use kakemono_sources::fake::StaticProvider;
-use kakemono_sources::registry::Registry;
+use kakemono_sources::SourceSet;
 use tempfile::TempDir;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -94,21 +94,27 @@ fn config(root: &Path, interval: &str) -> Config {
     cfg.daemon.trash_dir = root.join("trash");
     cfg.favorites.dir = root.join("favorites");
     cfg.daemon.interval = interval.to_owned();
-    cfg.light.sources = vec!["local".to_owned()];
-    cfg.dark.sources = vec!["local".to_owned()];
+    cfg.daemon.internet = false;
+    cfg.sources = vec![pics_row(root)];
     cfg
 }
 
-/// A daemon on `<tmp>/run/k.sock` whose `next` always returns `<tmp>/one.jpg`.
+/// The folder source `<tmp>/pics`, the only pool `next` picks from.
+fn pics_row(root: &Path) -> SourceEntry {
+    SourceEntry {
+        id: "pics".to_owned(),
+        enabled: true,
+        kind: SourceType::Folder,
+        location: root.join("pics").to_string_lossy().into_owned(),
+    }
+}
+
+/// A daemon on `<tmp>/run/k.sock` whose `next` always returns `<tmp>/pics/one.jpg`.
 async fn start_with(state: State, theme: Theme, interval: &str) -> Daemon {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
-    let image = root.join("one.jpg");
-    std::fs::write(&image, b"fake image data").unwrap();
-    let registry = Registry::new().with(Arc::new(StaticProvider::new(
-        "local",
-        vec![StaticProvider::result("local", image.to_str().unwrap())],
-    )));
+    std::fs::create_dir(root.join("pics")).unwrap();
+    std::fs::write(root.join("pics").join("one.jpg"), b"fake image data").unwrap();
     let setter = RecordingSetter::new();
     let platform = Platform {
         setter: Arc::new(setter.clone()),
@@ -116,7 +122,7 @@ async fn start_with(state: State, theme: Theme, interval: &str) -> Daemon {
     };
     let now: DateTime<FixedOffset> = DateTime::parse_from_rfc3339(NOW).unwrap();
     let deps = Deps::new(platform, kakemono_sources::http::client().unwrap())
-        .with_registry(registry)
+        .with_sources(SourceSet::default())
         .with_clock(move || now);
     let cfg = config(&root, interval);
     let engine = Engine::new(cfg.clone(), state, root.join("state.json"), deps).unwrap();

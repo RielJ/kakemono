@@ -1,0 +1,21 @@
+[bing]
+enabled = false
+market = "de-DE"
+
+[unsplash]
+enabled = false
+access_key = "abc"
+
+[apod]
+enabled = false
+api_key = "DEMO_KEY"
+
+[wallhaven]
+enabled = false
+
+[light]
+sources = ["unsplash"]
+queries = ["mountains"]
+
+[dark]
+sources = ["apod", "bing"]

@@ -230,7 +230,16 @@ fn file_name_for(url: &url::Url, ext: &str) -> String {
         .path_segments()
         .and_then(|mut s| s.next_back())
         .unwrap_or_default();
-    let mut name = sanitize_filename(last);
+    // Some hosts (Bing's `/th?id=OHR.x_UHD.jpg`) serve every image from one
+    // path and name it in the query; prefer that so files don't collide.
+    let from_query = (!is_image_file(last))
+        .then(|| {
+            url.query_pairs()
+                .map(|(_, v)| sanitize_filename(&v))
+                .find(|v| is_image_file(v))
+        })
+        .flatten();
+    let mut name = from_query.unwrap_or_else(|| sanitize_filename(last));
     if name.is_empty() || name == "." || name == ".." {
         name = format!("wallpaper-{}", unix_nanos());
     }
@@ -364,5 +373,32 @@ mod tests {
         assert_eq!(file_name_for(&u("https://x/a%3Fb.png"), "png"), "a%3Fb.png");
         assert!(file_name_for(&u("https://x/"), "png").starts_with("wallpaper-"));
         assert!(file_name_for(&u("https://x/"), "png").ends_with(".png"));
+    }
+
+    /// Bing serves every image from `/th?id=<name>.jpg`; naming files after the
+    /// path segment saved them all as `th`, each download overwriting the last.
+    #[test]
+    fn file_name_from_image_query_value() {
+        let u = |s| url::Url::parse(s).unwrap();
+        let a = file_name_for(
+            &u("https://www.bing.com/th?id=OHR.SpringIceland_EN-US6846318257_UHD.jpg"),
+            "jpg",
+        );
+        let b = file_name_for(
+            &u("https://www.bing.com/th?id=OHR.PeachBloom_EN-US6957157989_UHD.jpg&rf=x"),
+            "jpg",
+        );
+        assert_eq!(a, "OHR.SpringIceland_EN-US6846318257_UHD.jpg");
+        assert_eq!(b, "OHR.PeachBloom_EN-US6957157989_UHD.jpg");
+        // A query value that isn't an image name doesn't win over the path.
+        assert_eq!(
+            file_name_for(&u("https://x/photo-123?id=abc"), "jpg"),
+            "photo-123.jpg"
+        );
+        // Query values can't escape the directory.
+        assert_eq!(
+            file_name_for(&u("https://x/th?id=../../etc/x.jpg"), "jpg"),
+            ".._.._etc_x.jpg"
+        );
     }
 }

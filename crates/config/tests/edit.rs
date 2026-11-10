@@ -51,8 +51,16 @@ fn comments_survive_json_patch() {
     let cfg = load_with_home(&p, dir.path()).unwrap();
     assert_eq!(cfg.daemon.interval, "1h");
     assert!(!cfg.daemon.rotate_on_theme_change);
-    assert_eq!(cfg.reddit.subreddits, ["EarthPorn"]);
     assert_eq!(cfg.bing.market, "de-DE");
+    // COMMENTED is a legacy config, so loading migrates `reddit.subreddits` away; check the file.
+    let doc: toml_edit::DocumentMut = out.parse().unwrap();
+    let subs: Vec<_> = doc["reddit"]["subreddits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert_eq!(subs, ["EarthPorn"]);
 }
 
 #[test]
@@ -103,8 +111,9 @@ fn patch_creates_missing_file() {
 fn invalid_patch_leaves_file_untouched() {
     let dir = tempfile::tempdir().unwrap();
     let p = write(dir.path(), COMMENTED);
-    // cache_size must be an integer; the result would not load.
-    let err = apply_patch(&p, &json!({ "daemon": { "cache_size": "lots" } })).unwrap_err();
+    // download_limit_mb must be an integer; the result would not load. (Not cache_size: COMMENTED
+    // is a legacy config and loading migrates cache_size away.)
+    let err = apply_patch(&p, &json!({ "daemon": { "download_limit_mb": "lots" } })).unwrap_err();
     assert!(matches!(err, ConfigError::InvalidPatch { .. }), "{err:?}");
     assert_eq!(std::fs::read_to_string(&p).unwrap(), COMMENTED);
 

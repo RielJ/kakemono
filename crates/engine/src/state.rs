@@ -9,10 +9,15 @@
 //! - `last_changed` is a Go `time.Time`: RFC 3339 with up to nine fractional digits (trailing
 //!   zeros trimmed), `Z` for a zero offset, and `"0001-01-01T00:00:00Z"` for "never".
 //!
+//! - `album_cursors` (kakemono only, after `last_changed`) maps an album source id to the last
+//!   album image shown. It is written only when non-empty, so a state without cursors keeps the
+//!   Go bytes, and a file without the key (Go's, or an older kakemono's) loads with no cursors.
+//!
 //! Unlike Go, [`State::save`] is atomic (temp file in the same directory, then rename), and
 //! [`State::load_or_migrate`] copies the Go app's `~/.config/wallpaperd/state.json` once into
 //! the new location without touching the old file.
 
+use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -79,6 +84,7 @@ pub struct State {
     history_index: Option<usize>,
     paused: bool,
     last_changed: Option<DateTime<FixedOffset>>,
+    album_cursors: BTreeMap<String, PathBuf>,
 }
 
 impl State {
@@ -272,6 +278,22 @@ impl State {
         self.last_changed
     }
 
+    /// The last image shown from the album source `id`, if any.
+    pub fn album_cursor(&self, id: &str) -> Option<&Path> {
+        self.album_cursors.get(id).map(PathBuf::as_path)
+    }
+
+    /// Records `path` as the last image shown from the album source `id`. Callers persist with
+    /// [`save`](Self::save).
+    pub fn set_album_cursor(&mut self, id: impl Into<String>, path: impl Into<PathBuf>) {
+        self.album_cursors.insert(id.into(), path.into());
+    }
+
+    /// Every album cursor, by source id.
+    pub fn album_cursors(&self) -> &BTreeMap<String, PathBuf> {
+        &self.album_cursors
+    }
+
     fn move_to(&mut self, i: usize) -> Option<&WallpaperInfo> {
         let item = self.history.get(i)?.clone();
         self.history_index = Some(i);
@@ -292,6 +314,8 @@ struct ReprRef<'a> {
     paused: bool,
     #[serde(serialize_with = "ser_go_time")]
     last_changed: Option<DateTime<FixedOffset>>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    album_cursors: &'a BTreeMap<String, PathBuf>,
 }
 
 #[derive(Deserialize, Default)]
@@ -305,6 +329,8 @@ struct Repr {
     paused: bool,
     #[serde(deserialize_with = "de_go_time")]
     last_changed: Option<DateTime<FixedOffset>>,
+    /// Missing in Go's file and in older kakemono files.
+    album_cursors: BTreeMap<String, PathBuf>,
 }
 
 impl Serialize for State {
@@ -317,6 +343,7 @@ impl Serialize for State {
                 .map_or(-1, |i| i64::try_from(i).unwrap_or(i64::MAX)),
             paused: self.paused,
             last_changed: self.last_changed,
+            album_cursors: &self.album_cursors,
         }
         .serialize(serializer)
     }
@@ -356,6 +383,7 @@ impl State {
             history_index,
             paused: r.paused,
             last_changed: r.last_changed,
+            album_cursors: r.album_cursors,
         }
     }
 }
@@ -469,4 +497,59 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), StateError> {
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `state.json` written before album cursors existed (the Go daemon's shape).
+    const OLD_STATE: &str = r#"{
+  "current": {"path": "/w/a.jpg", "source": "local", "source_url": "", "image_url": "", "title": "", "author": "", "width": 0, "height": 0, "set_at": ""},
+  "history": [{"path": "/w/a.jpg", "source": "local", "source_url": "", "image_url": "", "title": "", "author": "", "width": 0, "height": 0, "set_at": ""}],
+  "history_index": 0,
+  "paused": true,
+  "last_changed": "0001-01-01T00:00:00Z"
+}"#;
+
+    #[test]
+    fn state_album_cursors_round_trip() {
+        let mut s = State::new();
+        assert_eq!(s.album_cursor("aln-1"), None);
+        s.set_album_cursor("aln-1", "/albums/one/02.jpg");
+        s.set_album_cursor("ald-2", "/albums/two/b.png");
+        s.set_album_cursor("aln-1", "/albums/one/03.jpg");
+        assert_eq!(
+            s.album_cursor("aln-1"),
+            Some(Path::new("/albums/one/03.jpg"))
+        );
+
+        let bytes = s.to_json_bytes().unwrap();
+        let back = State::from_json_slice(&bytes).unwrap();
+        assert_eq!(back, s);
+        assert_eq!(
+            back.album_cursor("ald-2"),
+            Some(Path::new("/albums/two/b.png"))
+        );
+        assert_eq!(back.album_cursors().len(), 2);
+    }
+
+    #[test]
+    fn state_without_album_cursors_still_loads() {
+        let s = State::from_json_slice(OLD_STATE.as_bytes()).unwrap();
+        assert!(s.paused());
+        assert_eq!(s.current().unwrap().path, "/w/a.jpg");
+        assert!(s.album_cursors().is_empty());
+    }
+
+    #[test]
+    fn state_without_album_cursors_keeps_the_go_shape() {
+        // No cursors: the bytes stay byte-compatible with the Go daemon (no extra key).
+        let json = String::from_utf8(State::new().to_json_bytes().unwrap()).unwrap();
+        assert!(!json.contains("album_cursors"), "{json}");
+        assert!(
+            json.ends_with("\"last_changed\": \"0001-01-01T00:00:00Z\"\n}"),
+            "{json}"
+        );
+    }
 }

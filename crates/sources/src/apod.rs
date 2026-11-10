@@ -30,7 +30,6 @@ const RATE_LIMITED: &str =
 /// The APOD provider.
 #[derive(Debug, Clone)]
 pub struct Apod {
-    enabled: bool,
     api_key: String,
     client: Client,
     base_url: String,
@@ -55,7 +54,6 @@ impl Apod {
             cfg.api_key
         };
         Self {
-            enabled: cfg.enabled,
             api_key,
             client,
             base_url,
@@ -67,10 +65,6 @@ impl Apod {
 impl Provider for Apod {
     fn name(&self) -> &'static str {
         "apod"
-    }
-
-    fn enabled(&self) -> bool {
-        self.enabled
     }
 
     async fn fetch(&self, _query: &str) -> Result<Vec<WallpaperResult>, ProviderError> {
@@ -169,7 +163,6 @@ mod tests {
     #[test]
     fn empty_api_key_uses_demo_key() {
         let cfg = ApodConfig {
-            enabled: true,
             api_key: String::new(),
         };
         let apod = Apod::new(cfg, Client::new());

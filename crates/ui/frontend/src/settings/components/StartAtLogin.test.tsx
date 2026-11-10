@@ -68,3 +68,27 @@ describe('StartAtLogin', () => {
     expect(screen.getByRole('alert').textContent).toBe('cannot find kakemono')
   })
 })
+
+describe('StartAtLogin line variant', () => {
+  const box = () => screen.getByRole('checkbox', { name: 'Start at login' })
+
+  it('renders a real checkbox that the sentence text toggles', async () => {
+    vi.mocked(api.getStartAtLogin).mockResolvedValue(items(false, false))
+    vi.mocked(api.setStartAtLogin).mockResolvedValue(items(true, true))
+    render(<StartAtLogin variant="line" />)
+    await act(async () => {})
+    expect(screen.queryByRole('switch')).toBeNull()
+    expect(box()).toHaveProperty('checked', false)
+    await userEvent.click(screen.getByText('Start at login'))
+    expect(api.setStartAtLogin).toHaveBeenCalledWith(true)
+    expect(box()).toHaveProperty('checked', true)
+  })
+
+  it('is disabled with the reason when the state cannot be read', async () => {
+    vi.mocked(api.getStartAtLogin).mockRejectedValue({ kind: 'cli_not_found', message: 'cannot find kakemono' })
+    render(<StartAtLogin variant="line" />)
+    await act(async () => {})
+    expect(box()).toHaveProperty('disabled', true)
+    expect(screen.getByRole('alert').textContent).toBe('cannot find kakemono')
+  })
+})

@@ -25,18 +25,17 @@ export default function Toggle({ enabled, onChange, label, labelledBy, described
       disabled={disabled}
       onClick={() => onChange(!enabled)}
       className={[
-        'relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent',
-        'transition-colors duration-150 ease-out motion-reduce:transition-none',
-        'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
-        enabled ? 'bg-accent dark:bg-accent-dark' : 'bg-gray-300 dark:bg-gray-600',
-        disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
+        'relative inline-flex h-[22px] w-[38px] shrink-0 rounded-full p-0.5',
+        'transition-colors duration-150 ease-out',
+        enabled ? 'bg-accent' : 'bg-line-strong',
+        disabled ? 'opacity-45' : '',
       ].join(' ')}
     >
       <span
         aria-hidden="true"
         className={[
-          'pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm',
-          'transition-transform duration-150 ease-out motion-reduce:transition-none',
+          'pointer-events-none inline-block h-[18px] w-[18px] rounded-full bg-white',
+          'shadow-[0_1px_2px_rgba(0,0,0,0.25)] transition-transform duration-150 ease-out',
           enabled ? 'translate-x-4' : 'translate-x-0',
         ].join(' ')}
       />

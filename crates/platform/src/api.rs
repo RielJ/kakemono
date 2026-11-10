@@ -187,6 +187,15 @@ pub trait WallpaperSetter: Send + Sync + 'static {
 pub trait SystemSignals: Send + Sync + 'static {
     fn theme(&self) -> Theme;
     fn subscribe(&self) -> tokio::sync::broadcast::Receiver<Signal>;
+
+    /// The largest display's size in physical pixels (`(width, height)`), or `None` when the
+    /// platform cannot tell. Cheap and non-blocking: implementations return a cached value and
+    /// refresh it before emitting [`Signal::DisplaysChanged`].
+    ///
+    /// macOS reports it; Linux and Windows use this default (`None`) for now.
+    fn screen_size(&self) -> Option<(u32, u32)> {
+        None
+    }
 }
 
 /// What `host()` hands to the daemon.
@@ -324,6 +333,12 @@ mod tests {
             stderr: String::new(),
         };
         assert_eq!(err.to_string(), "feh: timed out after 15s");
+    }
+
+    #[test]
+    fn screen_size_defaults_to_none() {
+        let signals: Arc<dyn SystemSignals> = Arc::new(StaticSignals::new(Theme::Light));
+        assert_eq!(signals.screen_size(), None);
     }
 
     #[tokio::test]

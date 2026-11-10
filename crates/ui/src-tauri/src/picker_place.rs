@@ -11,7 +11,7 @@
 
 use std::process::Command;
 
-use kakemono_config::schema::{PickerCustom, PickerPosition};
+use kakemono_config::schema::{PickerCustom, PickerOrientation, PickerPosition};
 use serde::Deserialize;
 
 /// Window title of the picker. Hyprland/sway rules and the placers match on it.
@@ -73,38 +73,68 @@ pub struct Monitor {
     pub rect: Rect,
 }
 
-/// `left` and `right` strips are vertical.
-pub fn is_vertical(position: PickerPosition) -> bool {
-    matches!(position, PickerPosition::Left | PickerPosition::Right)
-}
-
-/// Tier 1 (macOS, Windows, X11): the strip along `position` of `work_area`, in physical px.
-/// It spans the whole edge, as the Go picker did.
-pub fn edge_rect(position: PickerPosition, work_area: Rect, scale: f64) -> Rect {
-    let thickness = |logical: f64, max: u32| {
-        // Saturating float → int; a strip never exceeds its monitor.
+/// Tier 1 (macOS, Windows, X11): where the picker goes on `position` of `work_area`, in
+/// physical px. The strip runs vertically when `orientation.is_vertical(position)`.
+///
+/// When the orientation runs along the edge (`auto`, horizontal on top/bottom, vertical on
+/// left/right) the strip spans the whole edge, as the Go picker did. Off-axis (vertical on
+/// top/bottom, horizontal on left/right) it is a [`FLOATING_VERTICAL`] /
+/// [`FLOATING_HORIZONTAL`] panel docked to the edge and centred along it, clamped to the work
+/// area.
+pub fn edge_rect(
+    position: PickerPosition,
+    orientation: PickerOrientation,
+    work_area: Rect,
+    scale: f64,
+) -> Rect {
+    let px = |logical: f64, max: u32| {
+        // Saturating float → int; the picker never exceeds its monitor.
         let px = (logical * scale).round() as u32;
         px.clamp(1, max.max(1))
     };
+    // Offset that puts a `size` span at the end of / centred in a `total` span.
+    let end = |total: u32, size: u32| total.saturating_sub(size) as i32;
+    let centre = |total: u32, size: u32| (total.saturating_sub(size) / 2) as i32;
     let Rect { x, y, w, h } = work_area;
-    match position {
-        PickerPosition::Bottom => {
-            let t = thickness(STRIP_HEIGHT, h);
-            Rect::new(x, y + (h - t) as i32, w, t)
+    let vertical = orientation.is_vertical(position);
+    match (position, vertical) {
+        // Along the edge: the full-edge strip.
+        (PickerPosition::Bottom, false) => {
+            let t = px(STRIP_HEIGHT, h);
+            Rect::new(x, y + end(h, t), w, t)
         }
-        PickerPosition::Top => Rect::new(x, y, w, thickness(STRIP_HEIGHT, h)),
-        PickerPosition::Left => Rect::new(x, y, thickness(STRIP_WIDTH, w), h),
-        PickerPosition::Right => {
-            let t = thickness(STRIP_WIDTH, w);
-            Rect::new(x + (w - t) as i32, y, t, h)
+        (PickerPosition::Top, false) => Rect::new(x, y, w, px(STRIP_HEIGHT, h)),
+        (PickerPosition::Left, true) => Rect::new(x, y, px(STRIP_WIDTH, w), h),
+        (PickerPosition::Right, true) => {
+            let t = px(STRIP_WIDTH, w);
+            Rect::new(x + end(w, t), y, t, h)
+        }
+        // Off-axis: a panel docked to the edge, centred along it.
+        (PickerPosition::Top | PickerPosition::Bottom, true) => {
+            let (pw, ph) = (px(FLOATING_VERTICAL.0, w), px(FLOATING_VERTICAL.1, h));
+            let dy = if position == PickerPosition::Bottom {
+                end(h, ph)
+            } else {
+                0
+            };
+            Rect::new(x + centre(w, pw), y + dy, pw, ph)
+        }
+        (PickerPosition::Left | PickerPosition::Right, false) => {
+            let (pw, ph) = (px(FLOATING_HORIZONTAL.0, w), px(FLOATING_HORIZONTAL.1, h));
+            let dx = if position == PickerPosition::Right {
+                end(w, pw)
+            } else {
+                0
+            };
+            Rect::new(x + dx, y + centre(h, ph), pw, ph)
         }
     }
 }
 
-/// Tier 2 (Wayland): the window size (logical px). Only the orientation matters; the
-/// compositor picks the position.
-pub fn floating_size(position: PickerPosition) -> (f64, f64) {
-    if is_vertical(position) {
+/// Tier 2 (Wayland): the window size (logical px). Only the effective orientation matters;
+/// the compositor picks the position.
+pub fn floating_size(position: PickerPosition, orientation: PickerOrientation) -> (f64, f64) {
+    if orientation.is_vertical(position) {
         FLOATING_VERTICAL
     } else {
         FLOATING_HORIZONTAL

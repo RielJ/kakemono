@@ -11,6 +11,7 @@ import {
   type Thumbnail,
 } from '../../shared/api'
 import { useDaemonEvents } from '../../shared/useDaemonEvents'
+import { useImageDrop } from '../../shared/useImageDrop'
 import { keyAction, type KeyAction } from '../keys'
 import { commitTrash, MESSAGES, UNDO_MS } from '../trash'
 import ContextMenu, { type MenuItem } from './ContextMenu'
@@ -61,6 +62,10 @@ export default function ThumbnailStrip({ vertical = false }: StripProps) {
     setNotice({ text, undo })
     if (!undo) noticeTimer.current = setTimeout(() => setNotice(null), UNDO_MS)
   }, [])
+
+  // A dropped image file or URL is set as the wallpaper; the daemon's `changed` event
+  // (below) then reloads the strip with it.
+  const drop = useImageDrop({ onNotice: (n) => say(n.text) })
 
   const load = useCallback(() => {
     listThumbnails()
@@ -322,6 +327,12 @@ export default function ThumbnailStrip({ vertical = false }: StripProps) {
             listRef.current?.focus()
           }}
         />
+      )}
+      {drop.over && (
+        <div className="drop-overlay" aria-hidden="true">
+          <Icon name="image" />
+          <span>Drop an image to set it</span>
+        </div>
       )}
       <div className="toast-region" role="status" aria-live="polite">
         {notice && (

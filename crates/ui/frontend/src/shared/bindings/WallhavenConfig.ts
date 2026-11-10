@@ -3,7 +3,7 @@
 /**
  * `[wallhaven]`.
  */
-export type WallhavenConfig = { enabled: boolean, 
+export type WallhavenConfig = { 
 /**
  * Optional; empty means HTML-scrape mode.
  */

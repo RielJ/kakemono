@@ -14,7 +14,7 @@ mod reload_setter {
     use kakemono_engine::{Deps, Engine, EngineError};
     use kakemono_platform::api::{BackendInfo, Fit, Platform, SetError, Theme, WallpaperSetter};
     use kakemono_platform::fake::{ArgvSetter, ManualSignals};
-    use kakemono_sources::registry::Registry;
+    use kakemono_sources::SourceSet;
     use tempfile::TempDir;
     use tokio::sync::Notify;
 
@@ -54,8 +54,7 @@ mod reload_setter {
             setter,
             signals: Arc::new(ManualSignals::new(Theme::Light)),
         };
-        let deps = Deps::new(platform, reqwest::Client::new())
-            .with_registry_factory(|_, _| Registry::new());
+        let deps = Deps::new(platform, reqwest::Client::new()).with_sources(SourceSet::default());
         Engine::new(cfg, State::new(), root.join("state.json"), deps).unwrap()
     }
 

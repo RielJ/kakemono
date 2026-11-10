@@ -3,7 +3,7 @@
 /**
  * `[unsplash]`.
  */
-export type UnsplashConfig = { enabled: boolean, 
+export type UnsplashConfig = { 
 /**
  * Optional access key; empty means not configured.
  */

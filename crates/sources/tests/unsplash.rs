@@ -88,7 +88,6 @@ async fn nokey_redirect() {
 async fn blank_access_key_is_not_configured() {
     let unsplash = Unsplash::with_base_url(
         UnsplashConfig {
-            enabled: true,
             access_key: "  ".into(),
         },
         reqwest::Client::new(),
@@ -166,13 +165,7 @@ async fn non_array_body_is_a_decode_error() {
 }
 
 #[test]
-fn name_and_enabled() {
-    let cfg = |enabled| UnsplashConfig {
-        enabled,
-        access_key: String::new(),
-    };
-    let on = Unsplash::new(cfg(true), reqwest::Client::new());
-    assert_eq!(on.name(), "unsplash");
-    assert!(on.enabled());
-    assert!(!Unsplash::new(cfg(false), reqwest::Client::new()).enabled());
+fn name_is_unsplash() {
+    let unsplash = Unsplash::new(UnsplashConfig::default(), reqwest::Client::new());
+    assert_eq!(unsplash.name(), "unsplash");
 }

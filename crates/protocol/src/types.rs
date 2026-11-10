@@ -2,6 +2,72 @@
 //! `Response.error`/`data` and `Command.args` are omitted when empty (Go `omitempty`),
 //! every `WallpaperInfo` field is always written, and `StatusData.current` is written as
 //! `null` when unset.
+//!
+//! New fields stay readable both ways: `WallpaperInfo.source_id` defaults to `""` when missing
+//! and is not written when empty, so Go fixtures, old `state.json` files and old clients are
+//! unaffected.
+//!
+//! # Source requests (`docs/plans/variety-sources-impl.md` Task 16)
+//!
+//! Errors use the usual `{"ok":false,"error":"<text>"}` line. A malformed request gets the
+//! [`RequestError`] text; an engine failure gets the engine's text.
+//!
+//! **`check_source`**: validate a source row before adding it. Never writes a file.
+//!
+//! ```text
+//! → {"cmd":"check_source","args":{"type":"wallhaven","location":"forest"}}
+//! ← {"ok":true,"data":{"count":24}}                       // CheckSourceData
+//! ← {"ok":false,"error":"no images found"}
+//! ← {"ok":false,"error":"Internet access is off"}          // online type, [daemon] internet off
+//! ← {"ok":false,"error":"check timed out after 15s"}
+//! ← {"ok":false,"error":"<provider error text>"}          // e.g. "wallhaven: HTTP 401"
+//! ← {"ok":false,"error":"check_source: missing required argument 'type'"}
+//! ← {"ok":false,"error":"check_source: unknown source type \"nope\""}   // daemon-side
+//! ← {"ok":false,"error":"unsupported source type"}         // engine, unreachable via the daemon
+//! ```
+//!
+//! `type` is a `[[sources]] type` string (`SourceType` in `kakemono-config`); `location` is
+//! optional (`""` for `bing`/`apod`). Online types run one provider query (15 s timeout) and
+//! count its results. Local types count the images at `location` (`folder` recursively,
+//! `album-*` the folder itself, `images` 1 when the file is an image).
+//!
+//! **`fetch`**: save an image (dropped URL or file) into `[daemon] manual_dir` and set it.
+//!
+//! ```text
+//! → {"cmd":"fetch","args":{"url":"https://example.com/a.jpg"}}
+//! → {"cmd":"fetch","args":{"url":"/Users/me/Pictures/a.png"}}   // or file:///...
+//! ← {"ok":true,"data":{"path":"<manual_dir>/a.jpg","source":"manual","source_id":"manual",
+//!    "source_url":"","image_url":"https://example.com/a.jpg","title":"a.jpg","author":"",
+//!    "width":0,"height":0,"set_at":"2026-03-04T05:06:07+08:00"}}   // WallpaperInfo
+//! ← {"ok":false,"error":"Internet access is off"}          // URL with [daemon] internet off
+//! ← {"ok":false,"error":"not a JPEG, PNG or WebP image"}
+//! ← {"ok":false,"error":"image is larger than 64 MB"}
+//! ← {"ok":false,"error":"not an http(s) URL or absolute file path: \"a.jpg\""}
+//! ← {"ok":false,"error":"download https://x/a.jpg: HTTP 404"}   // secrets in the URL redacted
+//! ← {"ok":false,"error":"fetch: missing required argument 'url'"}
+//! ```
+//!
+//! The file is named after the URL's last path segment or the file's name, with an extension
+//! matching the detected type, made unique with `-2`, `-3`, ... A file already directly in
+//! `manual_dir` is set in place. `image_url` is the URL, `""` for a local file. Local files
+//! work with Internet access off.
+//!
+//! **`download_now`**: download one image now, ignoring the downloader's backoff.
+//!
+//! ```text
+//! → {"cmd":"download_now","args":{"id":"wh-1"}}   // that enabled online source
+//! → {"cmd":"download_now"}                       // every enabled online source with no image
+//! ← {"ok":true,"data":{"path":"<download_dir>/wh-1/x.jpg"}}   // DownloadNowData
+//! ← {"ok":true,"data":{"path":null}}           // no id, and no source needed an image
+//! ← {"ok":false,"error":"no enabled online source \"wh-1\""}
+//! ← {"ok":false,"error":"Internet access is off"}
+//! ← {"ok":false,"error":"provider wallhaven fetch: ..."}   // failures joined with "; "
+//! ← {"ok":false,"error":"download_now: argument 'id' must be a string"}
+//! ```
+//!
+//! Without `id`, every enabled online source whose download folder has no image downloads one,
+//! in config order; `path` is the first success, and the call fails only when all failed. The
+//! image is not set.
 
 use std::fmt;
 
@@ -81,6 +147,25 @@ pub enum Request {
     Doctor {
         apply: bool,
     },
+    /// New: count the images a source row would give, without saving anything. Wire:
+    /// `args.type` (required, non-empty) and `args.location` (optional, `""` when missing).
+    /// Answer: [`CheckSourceData`]. See the module docs.
+    CheckSource {
+        kind: String,
+        location: String,
+    },
+    /// New: save the image at `url` (http(s) URL, `file://` URL or absolute path) into the
+    /// manual folder and set it. Wire: `args.url` (required, non-empty). Answer:
+    /// [`WallpaperInfo`], as `set` returns.
+    Fetch {
+        url: String,
+    },
+    /// New: download one image now for online source `id`, or with no `id` for every enabled
+    /// online source with no image yet. Wire: `args.id`, omitted when `None`; `null` or `""`
+    /// read as `None`. Answer: [`DownloadNowData`].
+    DownloadNow {
+        id: Option<String>,
+    },
 }
 
 impl Request {
@@ -99,6 +184,9 @@ impl Request {
             Self::Subscribe => "subscribe",
             Self::Version => "version",
             Self::Doctor { .. } => "doctor",
+            Self::CheckSource { .. } => "check_source",
+            Self::Fetch { .. } => "fetch",
+            Self::DownloadNow { .. } => "download_now",
         }
     }
 }
@@ -119,6 +207,18 @@ pub enum RequestError {
     /// `doctor` with an `apply` that is neither a boolean nor `null`.
     #[error("doctor: argument 'apply' must be a boolean")]
     InvalidApply,
+    /// `check_source` with no `type`, a non-string `type`, or `""`.
+    #[error("check_source: missing required argument 'type'")]
+    MissingType,
+    /// `check_source` with a `location` that is neither a string nor `null`.
+    #[error("check_source: argument 'location' must be a string")]
+    InvalidLocation,
+    /// `fetch` with no `url`, a non-string `url`, or `""`.
+    #[error("fetch: missing required argument 'url'")]
+    MissingUrl,
+    /// `download_now` with an `id` that is neither a string nor `null`.
+    #[error("download_now: argument 'id' must be a string")]
+    InvalidId,
 }
 
 impl TryFrom<Command> for Request {
@@ -153,6 +253,29 @@ impl TryFrom<Command> for Request {
                 Some(Value::Bool(apply)) => Self::Doctor { apply: *apply },
                 Some(_) => return Err(RequestError::InvalidApply),
             },
+            "check_source" => {
+                let kind = match cmd.args.get("type") {
+                    Some(Value::String(t)) if !t.is_empty() => t.clone(),
+                    _ => return Err(RequestError::MissingType),
+                };
+                let location = match cmd.args.get("location") {
+                    None | Some(Value::Null) => String::new(),
+                    Some(Value::String(l)) => l.clone(),
+                    Some(_) => return Err(RequestError::InvalidLocation),
+                };
+                Self::CheckSource { kind, location }
+            }
+            "fetch" => match cmd.args.get("url") {
+                Some(Value::String(u)) if !u.is_empty() => Self::Fetch { url: u.clone() },
+                _ => return Err(RequestError::MissingUrl),
+            },
+            "download_now" => match cmd.args.get("id") {
+                None | Some(Value::Null) => Self::DownloadNow { id: None },
+                Some(Value::String(id)) => Self::DownloadNow {
+                    id: (!id.is_empty()).then(|| id.clone()),
+                },
+                Some(_) => return Err(RequestError::InvalidId),
+            },
             _ => return Err(RequestError::UnknownCommand(cmd.cmd)),
         })
     }
@@ -172,6 +295,16 @@ impl From<Request> for Command {
             }
             Request::Doctor { apply: true } => {
                 out.args.insert("apply".into(), Value::Bool(true));
+            }
+            Request::CheckSource { kind, location } => {
+                out.args.insert("type".into(), Value::String(kind));
+                out.args.insert("location".into(), Value::String(location));
+            }
+            Request::Fetch { url } => {
+                out.args.insert("url".into(), Value::String(url));
+            }
+            Request::DownloadNow { id: Some(id) } => {
+                out.args.insert("id".into(), Value::String(id));
             }
             _ => {}
         }
@@ -256,7 +389,15 @@ impl Response {
 #[serde(default)]
 pub struct WallpaperInfo {
     pub path: String,
+    /// The source row's type (`"wallhaven"`, `"folder"`, `"album-name"`, ...), `"manual"` for
+    /// the manual folder or `"local"` for `set`. Go wrote the provider name here.
     pub source: String,
+    /// New: the `[[sources]]` row id the image came from, `"manual"` for the manual folder
+    /// (including `fetch`), `""` for `set` and for entries written by older versions. Not
+    /// written when empty, so the Go wire bytes are unchanged.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    #[ts(optional, as = "Option<String>")]
+    pub source_id: String,
     pub source_url: String,
     pub image_url: String,
     pub title: String,
@@ -266,6 +407,20 @@ pub struct WallpaperInfo {
     /// RFC 3339 with whole seconds in the daemon's local offset
     /// (Go `time.Now().Format(time.RFC3339)`), or `""` when unknown.
     pub set_at: String,
+}
+
+/// Payload of the `check_source` response: `{"count":n}`, the number of images found (always
+/// at least 1; zero is the error `no images found`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct CheckSourceData {
+    pub count: u32,
+}
+
+/// Payload of the `download_now` response: `{"path":"..."}`, the downloaded file, or
+/// `{"path":null}` when no `id` was given and no source needed an image.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct DownloadNowData {
+    pub path: Option<String>,
 }
 
 /// Payload of the `status` response. `current` is serialised as `null` when unset.

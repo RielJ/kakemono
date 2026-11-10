@@ -1,162 +1,344 @@
 @import "tailwindcss";
+@import "@fontsource-variable/inter";
 
-/* Accent colours used by utilities such as `bg-accent` and `dark:text-accent-dark`. */
-@theme {
-  --color-accent: #007aff;
-  --color-accent-dark: #0a84ff;
-}
-
-/* ── macOS design tokens ─────────────────────────────────────────────────── */
+/*
+ * Settings window tokens. Light by default; `<html data-theme="dark">` switches to dark
+ * (App resolves `[ui] appearance = "system"` to one of the two). Inter at macOS sizes, and
+ * colour only for state (accent, warning, error).
+ * Utilities read these through `@theme inline`, e.g. `bg-panel`, `text-muted`, `border-line`.
+ */
 :root {
-  --mac-accent:           #007AFF;
-  --mac-accent-hover:     #0066CC;
-  --mac-bg:               rgba(255, 255, 255, 0.85);
-  --mac-bg-secondary:     rgba(246, 246, 246, 0.85);
-  --mac-bg-tertiary:      rgba(236, 236, 236, 0.85);
-  --mac-text:             #1d1d1f;
-  --mac-text-secondary:   #6e6e73;
-  --mac-border:           rgba(0, 0, 0, 0.12);
-  --mac-separator:        rgba(0, 0, 0, 0.08);
+  --c-window: #ffffff;
+  --c-sidebar: #f6f6f7;
+  --c-panel: #ffffff;
+  --c-raised: #ffffff;
+  --c-field: #ffffff;
+  --c-hover: rgba(0, 0, 0, 0.045);
+  --c-pressed: rgba(0, 0, 0, 0.08);
+  --c-line: rgba(0, 0, 0, 0.09);
+  --c-line-strong: rgba(0, 0, 0, 0.16);
+  --c-text: #1d1d1f;
+  --c-muted: #5c5c61;
+  --c-faint: #8a8a8f;
+  --c-accent: #0068d6;
+  --c-accent-text: #ffffff;
+  --c-accent-soft: rgba(0, 104, 214, 0.1);
+  --c-warn: #9a5b00;
+  --c-warn-soft: rgba(214, 140, 0, 0.12);
+  --c-danger: #c4241a;
+  --c-ok: #1f7a3a;
+  --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.08), 0 1px 1px rgba(0, 0, 0, 0.04);
+  color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --mac-accent:         #0A84FF;
-    --mac-accent-hover:   #409CFF;
-    --mac-bg:             rgba(28, 28, 30, 0.85);
-    --mac-bg-secondary:   rgba(44, 44, 46, 0.85);
-    --mac-bg-tertiary:    rgba(58, 58, 60, 0.85);
-    --mac-text:           #f5f5f7;
-    --mac-text-secondary: #aeaeb2;
-    --mac-border:         rgba(255, 255, 255, 0.12);
-    --mac-separator:      rgba(255, 255, 255, 0.08);
-  }
+:root[data-theme="dark"] {
+  --c-window: #1e1e20;
+  --c-sidebar: #19191b;
+  --c-panel: #2a2a2d;
+  --c-raised: #3a3a3e;
+  --c-field: #232326;
+  --c-hover: rgba(255, 255, 255, 0.06);
+  --c-pressed: rgba(255, 255, 255, 0.1);
+  --c-line: rgba(255, 255, 255, 0.08);
+  --c-line-strong: rgba(255, 255, 255, 0.16);
+  --c-text: #f2f2f4;
+  --c-muted: #a8a8ae;
+  --c-faint: #7b7b82;
+  --c-accent: #3d95ff;
+  --c-accent-text: #ffffff;
+  --c-accent-soft: rgba(61, 149, 255, 0.16);
+  --c-warn: #f0b04a;
+  --c-warn-soft: rgba(240, 176, 74, 0.12);
+  --c-danger: #ff6b61;
+  --c-ok: #5fd07f;
+  --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-window: var(--c-window);
+  --color-sidebar: var(--c-sidebar);
+  --color-panel: var(--c-panel);
+  --color-raised: var(--c-raised);
+  --color-field: var(--c-field);
+  --color-hover: var(--c-hover);
+  --color-pressed: var(--c-pressed);
+  --color-line: var(--c-line);
+  --color-line-strong: var(--c-line-strong);
+  --color-ink: var(--c-text);
+  --color-muted: var(--c-muted);
+  --color-faint: var(--c-faint);
+  --color-accent: var(--c-accent);
+  --color-accent-soft: var(--c-accent-soft);
+  --color-warn: var(--c-warn);
+  --color-warn-soft: var(--c-warn-soft);
+  --color-danger: var(--c-danger);
+  --color-ok: var(--c-ok);
+  --shadow-raised: var(--shadow-raised);
 }
 
 /* ── Base ────────────────────────────────────────────────────────────────── */
+html,
 body {
   margin: 0;
-  padding: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
+  height: 100%;
+  background: var(--c-window);
+}
+
+body {
+  font-family: "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-feature-settings: "cv11", "ss01";
+  letter-spacing: -0.003em;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--c-text);
   -webkit-font-smoothing: antialiased;
-  background: transparent;
-  color: var(--mac-text);
+  /* A preferences window, not a page: text is not selectable unless marked. */
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
 }
 
-/* ── Scrollbars ──────────────────────────────────────────────────────────── */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
-  background-color: var(--mac-border);
-  border-radius: 3px;
+.selectable,
+input,
+textarea,
+pre {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
-/* ── Typography ──────────────────────────────────────────────────────────── */
-.form-label,
-.mac-label {
-  @apply block text-xs font-medium mb-1;
-  color: var(--mac-text-secondary);
+::selection {
+  background: var(--c-accent-soft);
 }
 
-/* ── Form controls ───────────────────────────────────────────────────────── */
-.form-input,
-.mac-input {
-  @apply w-full px-3 py-1.5 text-sm rounded-md transition-colors;
-  background: var(--mac-bg-secondary);
-  border: 1px solid var(--mac-border);
-  color: var(--mac-text);
-  outline: none;
+input,
+select,
+textarea {
+  caret-color: var(--c-accent);
 }
 
-.form-input:focus,
-.mac-input:focus {
-  border-color: var(--mac-accent);
-  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.2);
-}
-
-.form-input::placeholder,
-.mac-input::placeholder {
-  color: var(--mac-text-secondary);
-  opacity: 0.7;
-}
-
-.form-input:disabled,
-.mac-input:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-select.form-input,
-select.mac-input {
-  @apply appearance-none pr-8 bg-no-repeat;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%236e6e73'%3E%3Cpath fill-rule='evenodd' d='M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z' clip-rule='evenodd'/%3E%3C/svg%3E");
-  background-position: right 0.5rem center;
-  background-size: 1.25rem;
-}
-
-/* ── Buttons ─────────────────────────────────────────────────────────────── */
-.btn-primary {
-  @apply inline-flex items-center justify-center px-4 py-1.5 text-sm font-medium rounded-md;
-  @apply text-white transition-opacity;
-  background: var(--mac-accent);
-}
-.btn-primary:hover:not(:disabled)   { opacity: 0.88; }
-.btn-primary:disabled                { opacity: 0.45; cursor: not-allowed; }
-
-.btn-secondary {
-  @apply inline-flex items-center justify-center px-3 py-1.5 text-sm font-medium rounded-md;
-  @apply transition-colors;
-  background: var(--mac-bg-secondary);
-  border: 1px solid var(--mac-border);
-  color: var(--mac-text);
-}
-.btn-secondary:hover:not(:disabled) {
-  background: var(--mac-bg-tertiary);
-}
-.btn-secondary:disabled { opacity: 0.45; cursor: not-allowed; }
-
-.mac-button {
-  @apply inline-flex items-center justify-center px-3 py-1 text-xs font-medium rounded-md;
-  @apply transition-colors;
-  background: var(--mac-bg-secondary);
-  border: 1px solid var(--mac-border);
-  color: var(--mac-text);
-}
-.mac-button:hover:not(:disabled) {
-  background: var(--mac-bg-tertiary);
-}
-.mac-button:disabled { opacity: 0.45; cursor: not-allowed; }
-
-/* ── Chips ───────────────────────────────────────────────────────────────── */
-.mac-chip {
-  @apply inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium;
-  background: rgba(0, 122, 255, 0.1);
-  color: var(--mac-accent);
-}
-
-@media (prefers-color-scheme: dark) {
-  .mac-chip {
-    background: rgba(10, 132, 255, 0.15);
+/* In `base` so `.field { outline: none }` (components) and `outline-none` (utilities) override it. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: 1px;
   }
 }
 
-/* ── Settings row ────────────────────────────────────────────────────────── */
-.settings-row {
-  @apply flex items-center justify-between gap-4 py-3 px-4;
-  border-bottom: 1px solid var(--mac-separator);
-}
-.settings-row:last-child {
-  border-bottom: none;
-}
-
-/* ── Settings group ──────────────────────────────────────────────────────── */
-.settings-group {
-  @apply rounded-lg overflow-hidden;
-  background: var(--mac-bg);
-  border: 1px solid var(--mac-border);
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background-clip: padding-box;
+  background-color: var(--c-line-strong);
+  border: 3px solid transparent;
+  border-radius: 999px;
 }
 
-.settings-group-title {
-  @apply text-xs font-semibold uppercase tracking-wider mb-2;
-  color: var(--mac-text-secondary);
+/*
+ * Component classes sit in Tailwind's `components` layer, which `@import "tailwindcss"` declares
+ * below `utilities` (`@layer theme, base, components, utilities`). A utility on the same element
+ * (`btn w-7 px-0`, `btn-plain h-6 text-[12px]`) therefore wins, as written. Unlayered, these rules
+ * beat every utility and squeezed icon buttons to a few pixels.
+ */
+@layer components {
+  /* ── Fields ──────────────────────────────────────────────────────────────── */
+  .field {
+    @apply h-7 px-2 rounded-md text-[13px] min-w-0;
+    background: var(--c-field);
+    border: 1px solid var(--c-line-strong);
+    color: var(--c-text);
+    outline: none;
+    transition: border-color 120ms ease-out, box-shadow 120ms ease-out;
+  }
+  .field::placeholder { color: var(--c-faint); }
+  .field:focus { border-color: var(--c-accent); box-shadow: 0 0 0 3px var(--c-accent-soft); }
+  .field:disabled { opacity: 0.5; }
+  .field[aria-invalid="true"] { border-color: var(--c-danger); }
+  .field-mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+
+  select.field {
+    @apply appearance-none pr-7 bg-no-repeat;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%238a8a8f' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 6.5 3-3 3 3M5 9.5l3 3 3-3'/%3E%3C/svg%3E");
+    background-position: right 0.4rem center;
+    background-size: 14px;
+  }
+
+  /* ── Buttons ─────────────────────────────────────────────────────────────── */
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 h-7 px-3 rounded-md text-[13px] font-medium whitespace-nowrap;
+    background: var(--c-raised);
+    color: var(--c-text);
+    box-shadow: var(--shadow-raised);
+    transition: background-color 100ms ease-out, opacity 100ms ease-out;
+  }
+  .btn:hover:not(:disabled) { background: color-mix(in srgb, var(--c-raised) 92%, var(--c-text)); }
+  .btn:active:not(:disabled) { background: color-mix(in srgb, var(--c-raised) 86%, var(--c-text)); }
+  .btn:disabled { opacity: 0.45; }
+
+  .btn-accent {
+    background: var(--c-accent);
+    color: var(--c-accent-text);
+  }
+  .btn-accent:hover:not(:disabled) { background: color-mix(in srgb, var(--c-accent) 88%, black); }
+  .btn-accent:active:not(:disabled) { background: color-mix(in srgb, var(--c-accent) 80%, black); }
+
+  .btn-plain {
+    @apply inline-flex items-center justify-center gap-1.5 h-7 px-2 rounded-md text-[13px] font-medium;
+    color: var(--c-accent);
+  }
+  .btn-plain:hover:not(:disabled) { background: var(--c-accent-soft); }
+  .btn-plain:disabled { opacity: 0.45; }
+}
+
+/* Native checkboxes in the accent colour. */
+input[type="checkbox"],
+input[type="range"] {
+  accent-color: var(--c-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0ms !important; animation-duration: 0ms !important; }
+}
+
+/* ── Sources table, Add… menu and source dialogs (General → Images) ─────────── */
+@layer components {
+  /* Clips the sticky header to the group's rounded-xl corners (12px less its 1px border). */
+  .sources-scroll {
+    max-height: 240px;
+    overflow-y: auto;
+    border-radius: 11px 11px 0 0;
+  }
+  .sources-table {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+  .sources-table th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 6px 12px;
+    text-align: left;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--c-muted);
+    background: var(--c-panel);
+    border-bottom: 1px solid var(--c-line);
+  }
+  .sources-table th:first-child,
+  .sources-table td:first-child {
+    text-align: center;
+  }
+  .sources-table td {
+    height: 32px;
+    padding: 0 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* The base focus ring, drawn inside the row so the scroll box doesn't clip it. */
+  .sources-table tbody tr {
+    outline-offset: -2px;
+  }
+  .sources-table tbody tr[aria-selected="true"] {
+    background: var(--c-accent-soft);
+  }
+  .sources-table tbody tr[aria-disabled="true"] td {
+    color: var(--c-faint);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .sources-table tbody tr:not([aria-selected="true"]):hover {
+      background: var(--c-hover);
+    }
+  }
+  .sources-location {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .btn-danger {
+    background: var(--c-danger);
+    color: #ffffff;
+  }
+  .btn-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--c-danger) 88%, black); }
+  .btn-danger:active:not(:disabled) { background: color-mix(in srgb, var(--c-danger) 80%, black); }
+
+  /* Add… menu: drops down from its button and grows from it; one line per description. */
+  .menu-popover {
+    position: absolute;
+    left: 0;
+    top: calc(100% + 4px);
+    z-index: 20;
+    width: min(360px, calc(100vw - 48px));
+    max-height: min(520px, calc(100vh - 32px));
+    overflow-y: auto;
+    padding: 4px;
+    border-radius: 10px;
+    background: var(--c-raised);
+    border: 1px solid var(--c-line);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16), 0 1px 3px rgba(0, 0, 0, 0.08);
+    transform-origin: top left;
+    transition: opacity 150ms cubic-bezier(0.23, 1, 0.32, 1), transform 150ms cubic-bezier(0.23, 1, 0.32, 1);
+    @starting-style {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+  }
+  .menu-item {
+    display: block;
+    width: 100%;
+    padding: 6px 10px;
+    border-radius: 6px;
+    text-align: left;
+    outline: none;
+  }
+  /* Items take focus as the arrow keys move; the fill is the focus cue. */
+  .menu-item:focus {
+    background: var(--c-accent);
+    color: var(--c-accent-text);
+  }
+  .menu-item:focus .menu-desc { color: inherit; opacity: 0.85; }
+  .menu-desc {
+    display: block;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 12px;
+    color: var(--c-muted);
+  }
+  .menu-separator {
+    height: 1px;
+    margin: 4px 6px;
+    background: var(--c-line);
+  }
+
+  /* Modal dialogs: centred over a dimmed window. */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(0, 0, 0, 0.18);
+    transition: opacity 150ms cubic-bezier(0.23, 1, 0.32, 1);
+    @starting-style { opacity: 0; }
+  }
+  :root[data-theme="dark"] .modal-backdrop { background: rgba(0, 0, 0, 0.45); }
+  .modal-panel {
+    width: min(420px, 100%);
+    padding: 18px 18px 16px;
+    border-radius: 12px;
+    background: var(--c-window);
+    border: 1px solid var(--c-line);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2), 0 2px 6px rgba(0, 0, 0, 0.08);
+    transition: opacity 160ms cubic-bezier(0.23, 1, 0.32, 1), transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+    @starting-style {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+  }
 }

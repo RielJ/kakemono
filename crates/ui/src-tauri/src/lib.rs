@@ -9,6 +9,7 @@
 
 pub mod commands;
 pub mod commands_desktop;
+pub mod commands_sources;
 pub mod daemon_link;
 pub mod events;
 pub mod lifecycle;
@@ -74,6 +75,12 @@ pub fn run() -> anyhow::Result<()> {
             commands::thumbnails,
             commands::doctor,
             commands::daemon_running,
+            commands_sources::check_source,
+            commands_sources::download_now,
+            commands_sources::delete_source_files,
+            commands_sources::open_source_folder,
+            commands_sources::fetch_dropped_url,
+            commands_sources::import_dropped_file,
             commands_desktop::desktop_backend,
             commands_desktop::test_desktop,
             commands_desktop::detect_desktop,

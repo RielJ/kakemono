@@ -1,0 +1,12 @@
+# Already on the new format.
+[daemon]
+interval = "30m"
+
+[wallhaven]
+api_key = "secret"
+
+[[sources]]
+id = "wh-nature"
+enabled = true
+type = "wallhaven"
+location = "nature"

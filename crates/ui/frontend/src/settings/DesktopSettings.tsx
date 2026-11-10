@@ -12,21 +12,12 @@ import {
 } from '../shared/api'
 import type { Backend } from '../shared/bindings/Backend'
 import type { DesktopConfig } from '../shared/bindings/DesktopConfig'
-import type { Fit } from '../shared/bindings/Fit'
 import type { ThemeOverride } from '../shared/bindings/ThemeOverride'
 import ArgvEditor from './ArgvEditor'
 import { checkDaemonBackend, normalizeArgv, usesCommand } from './argv'
 import { Group, Row } from './components/Group'
 import Icon from './components/Icon'
 import Toggle from './components/Toggle'
-
-const FITS: readonly { value: Fit; label: string }[] = [
-  { value: 'fill', label: 'Fill' },
-  { value: 'fit', label: 'Fit' },
-  { value: 'center', label: 'Center' },
-  { value: 'stretch', label: 'Stretch' },
-  { value: 'tile', label: 'Tile' },
-]
 
 const THEMES: readonly { value: ThemeOverride; label: string }[] = [
   { value: 'auto', label: 'Automatic' },
@@ -69,7 +60,7 @@ type Job<T> = { kind: 'idle' } | { kind: 'running' } | { kind: 'done'; value: T 
 
 const pre =
   'text-[11px] leading-relaxed font-mono whitespace-pre-wrap break-words rounded-md px-3 py-2 ' +
-  'bg-gray-50 dark:bg-gray-900/60 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200'
+  'bg-window border border-line text-ink'
 
 const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
@@ -92,12 +83,12 @@ function useDaemonBackend(savedDesktop: DesktopConfig) {
 
 /** What the daemon is using right now, and whether that is what the saved config selects. */
 function InUse({ view, savedDesktop, os }: { view: DaemonView; savedDesktop: DesktopConfig; os: string }) {
-  if (view.kind === 'loading') return <p className="text-xs text-gray-500 dark:text-gray-400">Asking the daemon…</p>
+  if (view.kind === 'loading') return <p className="text-xs text-muted">Asking the daemon…</p>
   if (view.kind === 'not_running')
-    return <p className="text-xs text-gray-500 dark:text-gray-400">The daemon is not running. Start it to see its backend.</p>
+    return <p className="text-xs text-muted">The daemon is not running. Start it to see its backend.</p>
   if (view.kind === 'error')
     return (
-      <p role="alert" className="text-xs text-red-600 dark:text-red-400 break-words">
+      <p role="alert" className="text-xs text-danger break-words">
         {view.message}
       </p>
     )
@@ -105,14 +96,14 @@ function InUse({ view, savedDesktop, os }: { view: DaemonView; savedDesktop: Des
   const check = checkDaemonBackend({ saved: savedDesktop, os, daemon: backend })
   return (
     <div className="space-y-2">
-      <p className="text-sm">
+      <p className="text-[13px]">
         <span className="font-medium">{backend.name}</span>
       </p>
       {backend.detail && <p className={pre}>{backend.detail}</p>}
       {check.kind === 'stale' && (
         // A reload rebuilds the daemon's setter (Task 37b), so this shows only when the daemon has not
         // loaded the saved [desktop] (its reload failed, or `detect --write` wrote it) or it re-detected.
-        <p role="status" className="text-xs text-amber-700 dark:text-amber-300 flex gap-1.5">
+        <p role="status" className="text-xs text-warn flex gap-1.5">
           <Icon name="alert" className="w-3.5 h-3.5 shrink-0 mt-px" />
           <span>
             The saved settings select <span className="font-mono">{check.expected}</span>, but the daemon is still using
@@ -126,21 +117,25 @@ function InUse({ view, savedDesktop, os }: { view: DaemonView; savedDesktop: Des
 }
 
 function ApplyResult({ apply }: { apply: ApplyReport | null }) {
-  if (!apply) return <p className="text-xs text-gray-600 dark:text-gray-300">The daemon reported no result.</p>
+  if (!apply) return <p className="text-xs text-muted">The daemon reported no result.</p>
   if (apply.ok)
     return (
-      <p role="status" className="text-xs text-gray-600 dark:text-gray-300 flex gap-1.5 min-w-0">
+      <p role="status" className="text-xs text-muted flex gap-1.5 min-w-0">
         <Icon name="check" className="w-3.5 h-3.5 shrink-0 mt-px" />
         <span className="break-all">Wallpaper set{apply.path ? `: ${apply.path}` : '.'}</span>
       </p>
     )
   return (
-    <p role="alert" className="text-xs text-red-600 dark:text-red-400 break-words">
+    <p role="alert" className="text-xs text-danger break-words">
       {apply.error ?? 'The daemon could not set the wallpaper.'}
     </p>
   )
 }
 
+/**
+ * The Desktop section of the Advanced tab: the backend in use and how it is chosen. Display mode
+ * (`desktop.fit`) lives in the tab's Wallpaper group.
+ */
 export default function DesktopSettings({
   config,
   savedConfig,
@@ -223,39 +218,29 @@ export default function DesktopSettings({
     }
   }
 
-  const fitRow = (
-    <Row label="Fit" hint="How the image fills the screen.">
-      {({ labelId, hintId }) => (
-        <select
-          value={desktop.fit}
-          onChange={(e) => {
-            const fit = FITS.find((f) => f.value === e.target.value)
-            if (fit) set('fit', fit.value)
-          }}
-          aria-labelledby={labelId}
-          aria-describedby={hintId}
-          className="form-input w-32 text-xs py-1"
-        >
-          {FITS.map((f) => (
-            <option key={f.value} value={f.value}>
-              {f.label}
-            </option>
-          ))}
-        </select>
-      )}
-    </Row>
-  )
-
   if (!linux) {
     return (
-      <div className="space-y-6 max-w-2xl">
-        <Group title="Backend">
-          <div className="px-4 py-3">
-            <InUse view={view} savedDesktop={saved} os={os} />
-          </div>
-        </Group>
-        <Group title="Display">{fitRow}</Group>
-      </div>
+      <Group title="Desktop">
+        <div className="px-4 py-3 space-y-1">
+          <p className="font-medium">Backend</p>
+          <InUse view={view} savedDesktop={saved} os={os} />
+        </div>
+        {os === 'macos' && (
+            <Row
+              label="Keep wallpaper on every Space"
+              hint="Sets the wallpaper again when you switch Spaces. Turns off 'Show on all Spaces' in System Settings."
+            >
+              {({ labelId, hintId }) => (
+                <Toggle
+                  enabled={config.daemon.reapply_on_space_change}
+                  onChange={(v) => onChange({ ...config, daemon: { ...config.daemon, reapply_on_space_change: v } })}
+                  labelledBy={labelId}
+                  describedBy={hintId}
+                />
+              )}
+            </Row>
+          )}
+      </Group>
     )
   }
 
@@ -271,9 +256,10 @@ export default function DesktopSettings({
   const backends = LINUX_BACKENDS.includes(desktop.backend) ? LINUX_BACKENDS : [desktop.backend, ...LINUX_BACKENDS]
 
   return (
-    <div className="space-y-6 max-w-2xl">
-      <Group title="In use">
+    <>
+      <Group title="Desktop">
         <div className="px-4 py-3 space-y-3">
+          <p className="font-medium">In use</p>
           <InUse view={view} savedDesktop={saved} os={os} />
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -281,25 +267,22 @@ export default function DesktopSettings({
               onClick={() => void runTest()}
               disabled={unsaved || test.kind === 'running' || view.kind === 'not_running'}
               aria-describedby={testHintId}
-              className="btn-primary text-xs py-1 px-3 gap-1"
+              className="btn btn-accent gap-1"
             >
               <Icon name="zap" className="w-3.5 h-3.5" />
               {test.kind === 'running' ? 'Testing…' : 'Test'}
             </button>
-            <span id={testHintId} className="text-xs text-gray-500 dark:text-gray-400">
-              {unsaved ? 'Save your changes to test them.' : 'Reloads the daemon and sets the current wallpaper again.'}
+            <span id={testHintId} className="text-xs text-muted">
+              {unsaved ? 'Saving your change…' : 'Reloads the daemon and sets the current wallpaper again.'}
             </span>
           </div>
           {test.kind === 'done' && <ApplyResult apply={test.value.apply} />}
           {test.kind === 'failed' && (
-            <p role="alert" className="text-xs text-red-600 dark:text-red-400 break-words">
+            <p role="alert" className="text-xs text-danger break-words">
               {test.message}
             </p>
           )}
         </div>
-      </Group>
-
-      <Group title="Backend">
         <Row label="Backend" hint={pinned ? 'Pinned: detection never changes it.' : 'Detection may replace it when the session changes.'}>
           {({ labelId, hintId }) => (
             <select
@@ -310,7 +293,7 @@ export default function DesktopSettings({
               }}
               aria-labelledby={labelId}
               aria-describedby={hintId}
-              className="form-input w-44 text-xs py-1"
+              className="field w-44"
             >
               {backends.map((b) => (
                 <option key={b} value={b}>
@@ -341,8 +324,8 @@ export default function DesktopSettings({
         </Row>
         {showCommand && (
           <div className="px-4 py-3 space-y-2">
-            <p className="text-sm font-medium">Wallpaper command</p>
-            <p id={commandHintId} className="text-xs text-gray-500 dark:text-gray-400">
+            <p className="font-medium">Wallpaper command</p>
+            <p id={commandHintId} className="text-xs text-muted">
               {commandHint}
             </p>
             <ArgvEditor
@@ -362,10 +345,6 @@ export default function DesktopSettings({
             )}
           </Row>
         )}
-      </Group>
-
-      <Group title="Display">
-        {fitRow}
         <Row label="Theme" hint="For {theme} and theme rotation when the desktop can't report light or dark.">
           {({ labelId, hintId }) => (
             <select
@@ -376,7 +355,7 @@ export default function DesktopSettings({
               }}
               aria-labelledby={labelId}
               aria-describedby={hintId}
-              className="form-input w-32 text-xs py-1"
+              className="field w-32"
             >
               {THEMES.map((t) => (
                 <option key={t.value} value={t.value}>
@@ -391,19 +370,19 @@ export default function DesktopSettings({
       <Group title="Detection">
         <div className="px-4 py-3 space-y-3">
           {saved.detected_session && (
-            <p className="text-xs text-gray-600 dark:text-gray-300">
+            <p className="text-xs text-muted">
               Saved for <span className="font-mono">{saved.detected_session}</span>
               {saved.detected_at ? ` on ${saved.detected_at}` : ''}.
             </p>
           )}
-          {detect.kind === 'running' && <p className="text-xs text-gray-500 dark:text-gray-400">Detecting…</p>}
+          {detect.kind === 'running' && <p className="text-xs text-muted">Detecting…</p>}
           {detect.kind === 'done' && (
             <pre aria-label="Detection report" className={pre}>
               {detect.value.trimEnd()}
             </pre>
           )}
           {detect.kind === 'failed' && (
-            <p role="alert" className="text-xs text-red-600 dark:text-red-400 break-words">
+            <p role="alert" className="text-xs text-danger break-words">
               {detect.message}
             </p>
           )}
@@ -412,7 +391,7 @@ export default function DesktopSettings({
               type="button"
               onClick={() => void runDetect()}
               disabled={detect.kind === 'running'}
-              className="btn-secondary text-xs py-1 px-2"
+              className="btn"
             >
               Re-detect
             </button>
@@ -420,22 +399,22 @@ export default function DesktopSettings({
               type="button"
               onClick={() => void writeDetection()}
               disabled={pinned || unsaved || write.kind === 'running'}
-              className="btn-secondary text-xs py-1 px-2"
+              className="btn"
             >
               {write.kind === 'running' ? 'Saving…' : 'Use detected backend'}
             </button>
-            <span className="text-xs text-gray-500 dark:text-gray-400">
-              {pinned ? 'Unpin to let detection change the backend.' : unsaved ? 'Save or discard your changes first.' : ''}
+            <span className="text-xs text-muted">
+              {pinned ? 'Unpin to let detection change the backend.' : unsaved ? 'Saving your change…' : ''}
             </span>
           </div>
           {write.kind === 'done' && <p className={pre}>{write.value.trimEnd()}</p>}
           {write.kind === 'failed' && (
-            <p role="alert" className="text-xs text-red-600 dark:text-red-400 break-words">
+            <p role="alert" className="text-xs text-danger break-words">
               {write.message}
             </p>
           )}
         </div>
       </Group>
-    </div>
+    </>
   )
 }

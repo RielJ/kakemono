@@ -3,7 +3,7 @@
 /**
  * `[apod]` (Go `APODConfig`).
  */
-export type ApodConfig = { enabled: boolean, 
+export type ApodConfig = { 
 /**
  * NASA API key; `"DEMO_KEY"` works for light use.
  */

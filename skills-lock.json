@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "skills": {
+    "rust-best-practices": {
+      "source": "apollographql/skills",
+      "sourceType": "github",
+      "skillPath": "skills/rust-best-practices/SKILL.md",
+      "computedHash": "a3db351ec552ed9d36b59e547d6c1d94077867eb5bcb98b3f802dfebb0a8a248",
+      "installMode": "copy"
+    },
+    "tauri-v2": {
+      "source": "nodnarbnitram/claude-code-extensions",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/tauri-v2/SKILL.md",
+      "computedHash": "377c61c46cf48c35b942042bc8abb9a039049a47f37d7f12b4f491d012777490",
+      "installMode": "copy"
+    }
+  }
+}

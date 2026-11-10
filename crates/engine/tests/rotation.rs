@@ -1,5 +1,5 @@
 //! The rotation loop (`Engine::run`) on tokio's paused clock, with `RecordingSetter`,
-//! `ManualSignals` and `StaticProvider` returning local files. The wall clock handed to the
+//! `ManualSignals` and a local folder source (internet off, so the downloader stays idle). The wall clock handed to the
 //! engine follows tokio's clock plus a test-controlled skew, which stands in for a machine that
 //! slept (its monotonic clock stopped while the wall clock moved on).
 
@@ -12,13 +12,13 @@ mod rotation {
 
     use chrono::{DateTime, TimeDelta};
     use kakemono_config::Config;
+    use kakemono_config::schema::{SourceEntry, SourceType};
     use kakemono_engine::state::State;
     use kakemono_engine::{Deps, Engine, EngineEvent};
     use kakemono_platform::api::{Platform, Signal, Theme};
     use kakemono_platform::fake::{ManualSignals, RecordingSetter};
     use kakemono_protocol::types::WallpaperInfo;
-    use kakemono_sources::fake::StaticProvider;
-    use kakemono_sources::registry::Registry;
+    use kakemono_sources::SourceSet;
     use tempfile::TempDir;
     use tokio::sync::broadcast;
     use tokio::task::JoinHandle;
@@ -33,8 +33,8 @@ mod rotation {
         root: PathBuf,
         setter: RecordingSetter,
         signals: ManualSignals,
-        bing: Arc<StaticProvider>,
-        apod: Arc<StaticProvider>,
+        /// The one image in the `pics` folder source.
+        day: PathBuf,
         /// Seconds added to the engine's wall clock on top of tokio's clock.
         skew: Arc<AtomicI64>,
         engine: Engine,
@@ -42,39 +42,27 @@ mod rotation {
     }
 
     impl Fixture {
+        /// An engine whose only source is the folder `pics` holding `day.png`.
         fn new(edit: impl FnOnce(&mut Config)) -> Self {
-            Self::with_bing(None, edit)
-        }
-
-        /// `bing_error`: make the light-theme provider fail with this message.
-        fn with_bing(bing_error: Option<&str>, edit: impl FnOnce(&mut Config)) -> Self {
             let dir = tempfile::tempdir().unwrap();
             let root = dir.path().to_path_buf();
-            let day = root.join("day.png");
-            let night = root.join("night.png");
+            let pics = root.join("pics");
+            std::fs::create_dir(&pics).unwrap();
+            let day = pics.join("day.png");
             std::fs::write(&day, b"day").unwrap();
-            std::fs::write(&night, b"night").unwrap();
-            let bing = Arc::new(match bing_error {
-                Some(msg) => StaticProvider::failing("bing", msg),
-                None => StaticProvider::new(
-                    "bing",
-                    vec![StaticProvider::result("bing", day.to_str().unwrap())],
-                ),
-            });
-            let apod = Arc::new(StaticProvider::new(
-                "apod",
-                vec![StaticProvider::result("apod", night.to_str().unwrap())],
-            ));
 
             let mut cfg = Config::default();
             cfg.daemon.download_dir = root.join("downloads");
             cfg.daemon.trash_dir = root.join("trash");
             cfg.favorites.dir = root.join("favorites");
             cfg.daemon.interval = "30m".to_owned();
-            cfg.light.sources = vec!["bing".to_owned()];
-            cfg.light.queries = vec!["day".to_owned()];
-            cfg.dark.sources = vec!["apod".to_owned()];
-            cfg.dark.queries = vec!["night".to_owned()];
+            cfg.daemon.internet = false;
+            cfg.sources = vec![SourceEntry {
+                id: "pics".to_owned(),
+                enabled: true,
+                kind: SourceType::Folder,
+                location: pics.to_string_lossy().into_owned(),
+            }];
             edit(&mut cfg);
 
             let setter = RecordingSetter::new();
@@ -88,7 +76,7 @@ mod rotation {
             let base = DateTime::parse_from_rfc3339(BASE).unwrap();
             let clock_skew = Arc::clone(&skew);
             let deps = Deps::new(platform, kakemono_sources::http::client().unwrap())
-                .with_registry(Registry::new().with(bing.clone()).with(apod.clone()))
+                .with_sources(SourceSet::default())
                 .with_clock(move || {
                     let elapsed = TimeDelta::from_std(Instant::now() - start).unwrap();
                     base + elapsed + TimeDelta::seconds(clock_skew.load(Ordering::SeqCst))
@@ -99,8 +87,7 @@ mod rotation {
                 root,
                 setter,
                 signals,
-                bing,
-                apod,
+                day,
                 skew,
                 engine,
                 start,
@@ -203,8 +190,8 @@ mod rotation {
         );
         let info = changed_within(&mut rx, MIN).await.expect("tick at 30m");
         assert_near(f.elapsed(), 30 * MIN);
-        assert_eq!(info.source, "bing");
-        assert_eq!(f.bing.queries(), vec!["day"]);
+        assert_eq!(info.source, "folder");
+        assert_eq!(PathBuf::from(&info.path), f.day);
 
         changed_within(&mut rx, 31 * MIN)
             .await
@@ -240,7 +227,6 @@ mod rotation {
         f.engine.pause();
         assert!(State::load(&f.root.join("state.json")).unwrap().paused());
         assert_eq!(changed_within(&mut rx, 135 * MIN).await, None);
-        assert_eq!(f.bing.calls(), 0);
         assert!(f.setter.calls().is_empty());
 
         // Resumed at 2h15m: the next tick is on the 30m cadence (2h30m), as with Go's ticker.
@@ -285,7 +271,7 @@ mod rotation {
         let info = changed_within(&mut rx, Duration::from_secs(1))
             .await
             .expect("immediate tick");
-        assert_eq!(info.source, "bing");
+        assert_eq!(info.source, "folder");
         run.stop().await;
     }
 
@@ -312,15 +298,16 @@ mod rotation {
 
     #[tokio::test(start_paused = true)]
     async fn failed_tick_retries_one_interval_later() {
-        let f = Fixture::with_bing(Some("bing: boom"), |_| {});
+        let f = Fixture::new(|_| {});
+        f.setter.fail_next(usize::MAX);
         let run = f.run().await;
 
         tokio::time::sleep(30 * MIN + Duration::from_secs(1)).await;
-        assert_eq!(f.bing.calls(), 1);
+        assert_eq!(f.setter.attempts(), 1);
         tokio::time::sleep(29 * MIN).await;
-        assert_eq!(f.bing.calls(), 1, "no retry before the next interval");
+        assert_eq!(f.setter.attempts(), 1, "no retry before the next interval");
         tokio::time::sleep(MIN).await;
-        assert_eq!(f.bing.calls(), 2);
+        assert_eq!(f.setter.attempts(), 2);
         run.stop().await;
     }
 
@@ -330,14 +317,14 @@ mod rotation {
         let mut rx = f.engine.subscribe();
         let run = f.run().await;
         assert_eq!(changed_within(&mut rx, 5 * 60 * MIN).await, None);
-        assert_eq!(f.bing.calls(), 0);
+        assert_eq!(f.setter.attempts(), 0);
         run.stop().await;
     }
 
     // ─── signals ──────────────────────────────────────────────────────────────────────────────
 
     #[tokio::test(start_paused = true)]
-    async fn theme_changed_to_dark_rotates_from_dark_sources() {
+    async fn theme_changed_to_dark_rotates() {
         let f = Fixture::new(|_| {});
         let mut rx = f.engine.subscribe();
         let run = f.run().await;
@@ -353,9 +340,7 @@ mod rotation {
         let info = changed_within(&mut rx, Duration::from_secs(1))
             .await
             .expect("rotation on theme change");
-        assert_eq!(info.source, "apod");
-        assert_eq!(f.apod.queries(), vec!["night"]);
-        assert_eq!(f.bing.calls(), 0);
+        assert_eq!(info.source, "folder");
 
         // The rotation restarted the interval.
         assert_eq!(
@@ -384,7 +369,7 @@ mod rotation {
                 EngineEvent::ThemeChanged(Theme::Dark)
             );
             assert_eq!(changed_within(&mut rx, MIN).await, None);
-            assert_eq!(f.apod.calls(), 0);
+            assert_eq!(f.setter.attempts(), 0);
             run.stop().await;
         }
     }
@@ -401,7 +386,7 @@ mod rotation {
         f.signals.emit(Signal::DisplaysChanged); // sentinel: handled after the theme signal
         until("display re-apply", || f.setter.calls().len() == 2).await;
         assert!(rx.try_recv().is_err(), "no ThemeChanged, no Changed");
-        assert_eq!(f.bing.calls(), 0);
+        assert_eq!(f.engine.status().history_count, 1);
         run.stop().await;
     }
 
@@ -455,7 +440,7 @@ mod rotation {
         let info = changed_within(&mut rx, Duration::from_secs(1))
             .await
             .expect("rotation on wake");
-        assert_eq!(info.source, "bing");
+        assert_eq!(info.source, "folder");
         assert_near(f.elapsed(), 5 * MIN);
         assert_eq!(f.engine.status().history_count, 2);
 
@@ -482,7 +467,6 @@ mod rotation {
         f.signals.emit(Signal::Resumed);
         until("wake re-apply", || f.setter.calls().len() == 2).await;
         assert_eq!(f.set_paths(), vec![a.clone(), a]);
-        assert_eq!(f.bing.calls(), 0);
         assert!(rx.try_recv().is_err());
 
         // 10m of the interval passed while asleep: the tick comes 20m later.
@@ -505,7 +489,6 @@ mod rotation {
         f.sleep_machine(3 * 60 * MIN);
         f.signals.emit(Signal::Resumed);
         until("wake re-apply", || f.setter.calls().len() == 2).await;
-        assert_eq!(f.bing.calls(), 0);
         assert_eq!(f.engine.status().history_count, 1);
         run.stop().await;
     }

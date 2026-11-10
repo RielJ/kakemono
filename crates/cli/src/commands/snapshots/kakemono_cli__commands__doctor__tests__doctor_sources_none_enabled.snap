@@ -1,0 +1,10 @@
+---
+source: crates/cli/src/commands/doctor.rs
+expression: "report(&cfg, Some(0))"
+---
+
+Sources
+  enabled:    0 of 1
+  internet:   on
+  downloads:  0.0 MB of 500 MB in /dl
+  warning:    no enabled sources; nothing to pick from

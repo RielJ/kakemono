@@ -5,10 +5,11 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use kakemono_config::schema::{PickerCustom, PickerPosition};
+use kakemono_config::schema::{PickerCustom, PickerOrientation, PickerPosition};
 use kakemono_ui::picker_place::{
-    Fallback, HyprPlacer, Monitor, PICKER_TITLE, PlaceError, Placer, PlacerKind, Rect, Restore,
-    Runner, SwayPlacer, check_custom, edge_rect, floating_size, needs_x11_relaunch, placer_kind,
+    FLOATING_HORIZONTAL, FLOATING_VERTICAL, Fallback, HyprPlacer, Monitor, PICKER_TITLE,
+    PlaceError, Placer, PlacerKind, Rect, Restore, Runner, SwayPlacer, check_custom, edge_rect,
+    floating_size, needs_x11_relaunch, placer_kind,
 };
 
 const PID: u32 = 4242;
@@ -324,53 +325,186 @@ fn picker_place_off_screen_rect_falls_back_to_edge() {
     );
 }
 
+const EDGES: [PickerPosition; 4] = [
+    PickerPosition::Bottom,
+    PickerPosition::Top,
+    PickerPosition::Left,
+    PickerPosition::Right,
+];
+
 #[test]
 fn picker_place_edge_rect_matches_go_sizes_on_the_work_area() {
     let area = Rect::new(0, 50, 3024, 1890); // below a 50 px menu bar
     let s = 2.0;
+    let auto = PickerOrientation::Auto;
     assert_eq!(
-        edge_rect(PickerPosition::Bottom, area, s),
+        edge_rect(PickerPosition::Bottom, auto, area, s),
         Rect::new(0, 1620, 3024, 320)
     );
     assert_eq!(
-        edge_rect(PickerPosition::Top, area, s),
+        edge_rect(PickerPosition::Top, auto, area, s),
         Rect::new(0, 50, 3024, 320)
     );
     assert_eq!(
-        edge_rect(PickerPosition::Left, area, s),
+        edge_rect(PickerPosition::Left, auto, area, s),
         Rect::new(0, 50, 400, 1890)
     );
     assert_eq!(
-        edge_rect(PickerPosition::Right, area, s),
+        edge_rect(PickerPosition::Right, auto, area, s),
         Rect::new(2624, 50, 400, 1890)
     );
     // Second monitor at a negative origin, scale 1.
     let area = Rect::new(-1920, -1080, 1920, 1080);
     assert_eq!(
-        edge_rect(PickerPosition::Bottom, area, 1.0),
+        edge_rect(PickerPosition::Bottom, auto, area, 1.0),
         Rect::new(-1920, -160, 1920, 160)
     );
     // A tiny work area clamps instead of overflowing.
     let area = Rect::new(0, 0, 100, 100);
     assert_eq!(
-        edge_rect(PickerPosition::Bottom, area, 1.0),
+        edge_rect(PickerPosition::Bottom, auto, area, 1.0),
         Rect::new(0, 0, 100, 100)
     );
 }
 
 #[test]
-fn picker_place_wayland_size_depends_on_orientation_only() {
+fn picker_place_on_axis_orientation_is_the_full_edge_strip() {
+    let area = Rect::new(0, 50, 3024, 1890);
+    for position in EDGES {
+        let explicit = if matches!(position, PickerPosition::Left | PickerPosition::Right) {
+            PickerOrientation::Vertical
+        } else {
+            PickerOrientation::Horizontal
+        };
+        for scale in [1.0, 2.0] {
+            assert_eq!(
+                edge_rect(position, explicit, area, scale),
+                edge_rect(position, PickerOrientation::Auto, area, scale),
+                "{position:?} {explicit:?} @{scale}"
+            );
+        }
+    }
+}
+
+#[test]
+fn picker_place_vertical_at_the_bottom_is_a_centred_docked_panel() {
+    let v = PickerOrientation::Vertical;
+    // Scale 1: 200 x 640, centred along the bottom edge.
+    let area = Rect::new(0, 0, 1920, 1080);
     assert_eq!(
-        floating_size(PickerPosition::Bottom),
-        floating_size(PickerPosition::Top)
+        edge_rect(PickerPosition::Bottom, v, area, 1.0),
+        Rect::new(860, 440, 200, 640)
     );
     assert_eq!(
-        floating_size(PickerPosition::Left),
-        floating_size(PickerPosition::Right)
+        edge_rect(PickerPosition::Top, v, area, 1.0),
+        Rect::new(860, 0, 200, 640)
     );
-    let (w, h) = floating_size(PickerPosition::Bottom);
+    // Scale 2 below a menu bar: 400 x 1280 physical px.
+    let area = Rect::new(0, 50, 3024, 1890);
+    assert_eq!(
+        edge_rect(PickerPosition::Bottom, v, area, 2.0),
+        Rect::new(1312, 660, 400, 1280)
+    );
+    // Negative origin.
+    let area = Rect::new(-1920, -1080, 1920, 1080);
+    assert_eq!(
+        edge_rect(PickerPosition::Bottom, v, area, 1.0),
+        Rect::new(-1060, -640, 200, 640)
+    );
+}
+
+#[test]
+fn picker_place_horizontal_at_the_right_is_a_centred_docked_panel() {
+    let h = PickerOrientation::Horizontal;
+    // Scale 1: 1000 x 160, centred along the right edge.
+    let area = Rect::new(0, 0, 1920, 1080);
+    assert_eq!(
+        edge_rect(PickerPosition::Right, h, area, 1.0),
+        Rect::new(920, 460, 1000, 160)
+    );
+    assert_eq!(
+        edge_rect(PickerPosition::Left, h, area, 1.0),
+        Rect::new(0, 460, 1000, 160)
+    );
+    // Scale 2 below a menu bar: 2000 x 320 physical px.
+    let area = Rect::new(0, 50, 3024, 1890);
+    assert_eq!(
+        edge_rect(PickerPosition::Right, h, area, 2.0),
+        Rect::new(1024, 835, 2000, 320)
+    );
+}
+
+#[test]
+fn picker_place_off_axis_panel_clamps_to_a_small_work_area() {
+    // Too short for 640 px: the vertical panel takes the full height.
+    let area = Rect::new(0, 0, 800, 500);
+    assert_eq!(
+        edge_rect(
+            PickerPosition::Bottom,
+            PickerOrientation::Vertical,
+            area,
+            1.0
+        ),
+        Rect::new(300, 0, 200, 500)
+    );
+    // Too narrow for 1000 px: the horizontal panel takes the full width.
+    assert_eq!(
+        edge_rect(
+            PickerPosition::Right,
+            PickerOrientation::Horizontal,
+            area,
+            1.0
+        ),
+        Rect::new(0, 170, 800, 160)
+    );
+    // Scale 2: 1280 physical px wanted, 800 available.
+    let area = Rect::new(100, 0, 1280, 800);
+    assert_eq!(
+        edge_rect(PickerPosition::Top, PickerOrientation::Vertical, area, 2.0),
+        Rect::new(540, 0, 400, 800)
+    );
+    // A tiny work area never overflows.
+    let area = Rect::new(0, 0, 100, 100);
+    assert_eq!(
+        edge_rect(
+            PickerPosition::Left,
+            PickerOrientation::Horizontal,
+            area,
+            1.0
+        ),
+        Rect::new(0, 0, 100, 100)
+    );
+}
+
+#[test]
+fn picker_place_wayland_size_follows_the_effective_orientation() {
+    let auto = PickerOrientation::Auto;
+    assert_eq!(
+        floating_size(PickerPosition::Bottom, auto),
+        FLOATING_HORIZONTAL
+    );
+    assert_eq!(
+        floating_size(PickerPosition::Top, auto),
+        FLOATING_HORIZONTAL
+    );
+    assert_eq!(floating_size(PickerPosition::Left, auto), FLOATING_VERTICAL);
+    assert_eq!(
+        floating_size(PickerPosition::Right, auto),
+        FLOATING_VERTICAL
+    );
+    for position in EDGES {
+        assert_eq!(
+            floating_size(position, PickerOrientation::Horizontal),
+            FLOATING_HORIZONTAL
+        );
+        assert_eq!(
+            floating_size(position, PickerOrientation::Vertical),
+            FLOATING_VERTICAL
+        );
+    }
+    let (w, h) = FLOATING_HORIZONTAL;
     assert!(w > h);
-    let (w, h) = floating_size(PickerPosition::Left);
+    let (w, h) = FLOATING_VERTICAL;
     assert!(h > w);
 }
 

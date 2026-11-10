@@ -2,13 +2,21 @@ import { clearMocks, mockIPC } from '@tauri-apps/api/mocks'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
+  checkSource,
+  deleteSourceFiles,
   desktopBackend,
   detectDesktop,
+  downloadNow,
   errorMessage,
   favoriteWallpaper,
+  fetchDroppedUrl,
+  importDroppedFile,
   isDaemonNotRunning,
+  isDaemonUnreachable,
+  openSourceFolder,
   saveConfig,
   selectDirectory,
+  selectFiles,
   setFile,
   setStartAtLogin,
   startDaemon,
@@ -28,6 +36,23 @@ function recordIPC(reply: (cmd: string) => unknown = () => null): Call[] {
     return reply(cmd)
   })
   return calls
+}
+
+/**
+ * Wraps the mocked IPC so each call's third `invoke` argument (headers) is recorded too;
+ * `mockIPC` drops it. Call after `mockIPC`.
+ */
+function recordInvokeOptions(): unknown[] {
+  const seen: unknown[] = []
+  const internals: unknown = Reflect.get(window, '__TAURI_INTERNALS__')
+  if (typeof internals !== 'object' || internals === null) throw new Error('mockIPC first')
+  const inner: unknown = Reflect.get(internals, 'invoke')
+  if (typeof inner !== 'function') throw new Error('mockIPC first')
+  Reflect.set(internals, 'invoke', (cmd: string, args: unknown, options: unknown) => {
+    seen.push(options)
+    return Reflect.apply(inner, internals, [cmd, args, options])
+  })
+  return seen
 }
 
 afterEach(() => clearMocks())
@@ -87,6 +112,17 @@ describe('shared/api', () => {
     expect(calls.map((c) => c.cmd)).toEqual(['plugin:dialog|open'])
   })
 
+  it('opens a multi-select image dialog and always returns a list of paths', async () => {
+    let reply: unknown = ['/p/a.jpg', '/p/b.png']
+    const calls = recordIPC((cmd) => (cmd === 'plugin:dialog|open' ? reply : undefined))
+    await expect(selectFiles()).resolves.toEqual(['/p/a.jpg', '/p/b.png'])
+    expect(calls[0]).toMatchObject({ cmd: 'plugin:dialog|open', args: { options: { directory: false, multiple: true } } })
+    reply = null
+    await expect(selectFiles()).resolves.toEqual([])
+    reply = '/p/c.webp'
+    await expect(selectFiles()).resolves.toEqual(['/p/c.webp'])
+  })
+
   it('sends save_config with the patch under `patch`', async () => {
     const calls = recordIPC(() => ({ reloaded: true, reload_error: null }))
     await expect(saveConfig({ daemon: { interval: '1h' } })).resolves.toEqual({ reloaded: true, reload_error: null })
@@ -110,6 +146,66 @@ describe('shared/api', () => {
       { cmd: 'test_desktop', args: {} },
       { cmd: 'detect_desktop', args: { write: true } },
     ])
+  })
+
+  it('sends check_source with kind and location and returns the count', async () => {
+    const calls = recordIPC(() => ({ count: 24 }))
+    await expect(checkSource('wallhaven', 'forest')).resolves.toEqual({ count: 24 })
+    expect(calls).toEqual([{ cmd: 'check_source', args: { kind: 'wallhaven', location: 'forest' } }])
+  })
+
+  it('tells daemon_unreachable apart from a source the daemon refused', async () => {
+    mockIPC(() => {
+      throw { kind: 'daemon_unreachable', message: 'cannot reach the kakemono daemon: no CLI' }
+    })
+    const down: unknown = await checkSource('bing', '').catch((e: unknown) => e)
+    expect(isDaemonUnreachable(down)).toBe(true)
+    expect(errorMessage(down)).toBe('cannot reach the kakemono daemon: no CLI')
+
+    mockIPC(() => {
+      throw { kind: 'daemon', message: 'no images found' }
+    })
+    const refused: unknown = await checkSource('bing', '').catch((e: unknown) => e)
+    expect(isDaemonUnreachable(refused)).toBe(false)
+    expect(errorMessage(refused)).toBe('no images found')
+    expect(isDaemonUnreachable(new Error('daemon_unreachable'))).toBe(false)
+  })
+
+  it('sends download_now with the id, or null for every source without images', async () => {
+    const calls = recordIPC(() => ({ path: '/d/wh-1/a.jpg' }))
+    await expect(downloadNow('wh-1')).resolves.toEqual({ path: '/d/wh-1/a.jpg' })
+    await downloadNow()
+    expect(calls).toEqual([
+      { cmd: 'download_now', args: { id: 'wh-1' } },
+      { cmd: 'download_now', args: { id: null } },
+    ])
+  })
+
+  it('sends delete_source_files and open_source_folder with the source id', async () => {
+    const calls = recordIPC()
+    await deleteSourceFiles('wh-1')
+    await openSourceFolder('dir-1')
+    expect(calls).toEqual([
+      { cmd: 'delete_source_files', args: { id: 'wh-1' } },
+      { cmd: 'open_source_folder', args: { id: 'dir-1' } },
+    ])
+  })
+
+  it('sends fetch_dropped_url with the url and returns the new wallpaper', async () => {
+    const info = { path: '/m/y.jpg', source: 'manual', title: 'y' }
+    const calls = recordIPC(() => info)
+    await expect(fetchDroppedUrl('https://x/y.jpg')).resolves.toEqual(info)
+    expect(calls).toEqual([{ cmd: 'fetch_dropped_url', args: { url: 'https://x/y.jpg' } }])
+  })
+
+  it('sends a dropped file as a raw body with its encoded name in a header', async () => {
+    const info = { path: '/m/naïve photo.png', source: 'manual', title: '' }
+    const calls = recordIPC(() => info)
+    const options = recordInvokeOptions()
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
+    await expect(importDroppedFile('naïve photo.png', bytes)).resolves.toEqual(info)
+    expect(calls).toEqual([{ cmd: 'import_dropped_file', args: bytes }])
+    expect(options).toEqual([{ headers: { 'x-file-name': 'na%C3%AFve%20photo.png' } }])
   })
 
   it('recognises a daemon_not_running command error', () => {

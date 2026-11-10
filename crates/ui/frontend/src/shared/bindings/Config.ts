@@ -4,11 +4,10 @@ import type { BingConfig } from "./BingConfig";
 import type { DaemonConfig } from "./DaemonConfig";
 import type { DesktopConfig } from "./DesktopConfig";
 import type { FavoritesConfig } from "./FavoritesConfig";
+import type { FiltersConfig } from "./FiltersConfig";
 import type { HooksConfig } from "./HooksConfig";
-import type { LocalConfig } from "./LocalConfig";
 import type { PickerConfig } from "./PickerConfig";
-import type { RedditConfig } from "./RedditConfig";
-import type { ThemeConfig } from "./ThemeConfig";
+import type { SourceEntry } from "./SourceEntry";
 import type { UiConfig } from "./UiConfig";
 import type { UnsplashConfig } from "./UnsplashConfig";
 import type { WallhavenConfig } from "./WallhavenConfig";
@@ -16,15 +15,16 @@ import type { WallhavenConfig } from "./WallhavenConfig";
 /**
  * The whole `config.toml`.
  */
-export type Config = { daemon: DaemonConfig, wallhaven: WallhavenConfig, unsplash: UnsplashConfig, reddit: RedditConfig, bing: BingConfig, apod: ApodConfig, local: LocalConfig, 
+export type Config = { daemon: DaemonConfig, wallhaven: WallhavenConfig, unsplash: UnsplashConfig, bing: BingConfig, apod: ApodConfig, 
 /**
- * Keys missing inside a present `[light]` keep the light defaults, as Go's decode-over-defaults did.
+ * `[[sources]]`: one row per source instance. A missing key gives the default rows; an
+ * explicit `sources = []` stays empty.
  */
-light: ThemeConfig, 
+sources: Array<SourceEntry>, 
 /**
- * Keys missing inside a present `[dark]` keep the dark defaults.
+ * `[filters]`: soft filters applied when picking and downloading images.
  */
-dark: ThemeConfig, favorites: FavoritesConfig, picker: PickerConfig, 
+filters: FiltersConfig, favorites: FavoritesConfig, picker: PickerConfig, 
 /**
  * New in the Rust rewrite (plan §E). Go ignores it.
  */
@@ -34,6 +34,6 @@ desktop: DesktopConfig,
  */
 hooks: HooksConfig, 
 /**
- * New in the Rust rewrite. Reserved for UI-only settings; currently empty.
+ * New in the Rust rewrite. Settings only the UI reads.
  */
 ui: UiConfig, };

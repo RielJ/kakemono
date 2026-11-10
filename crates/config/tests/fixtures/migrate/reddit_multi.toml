@@ -1,0 +1,7 @@
+[bing]
+enabled = false
+
+[reddit]
+enabled = true
+# Subreddits to pick from
+subreddits = ["EarthPorn", "wallpapers", "spaceporn"]

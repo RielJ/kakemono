@@ -12,77 +12,158 @@ import {
   saveConfig,
   startDaemon,
 } from '../shared/api'
-import DesktopSettings from './DesktopSettings'
-import HooksSettings from './HooksSettings'
-import FavoritesSettings from './components/FavoritesSettings'
+import type { Appearance } from '../shared/bindings/Appearance'
+import { useDaemonEvents, type Connection } from '../shared/useDaemonEvents'
+import { useImageDrop, type DropNotice } from '../shared/useImageDrop'
+import AdvancedSettings from './components/AdvancedSettings'
 import GeneralSettings from './components/GeneralSettings'
 import Icon from './components/Icon'
-import Sidebar from './components/Sidebar'
-import SourcesSettings from './components/SourcesSettings'
-import StatusBar, { type DaemonState } from './components/StatusBar'
-import ThemesSettings from './components/ThemesSettings'
-import { diffConfig, isEmptyPatch } from './configPatch'
-import { fileManagerName, TAB_TITLES, type TabId } from './sections'
-import { configErrors, hasErrors } from './validate'
-import { useDaemonEvents, type Connection } from '../shared/useDaemonEvents'
+import Tabs, { tabId } from './components/Tabs'
+import { fileManagerName, TABS, type DaemonState, type TabId } from './sections'
+import { useConfigStore, type SaveStatus } from './useConfigStore'
+import { configErrors } from './validate'
 
-// ── Save bar ─────────────────────────────────────────────────────────────────
+// ── Appearance ───────────────────────────────────────────────────────────────
 
-type SaveState =
-  | { kind: 'idle' }
-  | { kind: 'saving' }
-  | { kind: 'saved'; outcome: SaveOutcome }
-  | { kind: 'failed'; message: string }
-
-function savedText(outcome: SaveOutcome): string {
-  if (outcome.reloaded) return 'Saved. The daemon is using the new settings.'
-  if (outcome.reload_error) return `Saved, but the daemon did not reload: ${outcome.reload_error}`
-  return 'Saved. The daemon will use these settings when it starts.'
+function systemPrefersDark(): boolean {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches
 }
 
-function SaveBar({
-  dirty,
-  invalid,
-  state,
-  onSave,
-  onDiscard,
-}: {
-  dirty: boolean
-  invalid: boolean
-  state: SaveState
-  onSave: () => void
-  onDiscard: () => void
-}) {
-  const saving = state.kind === 'saving'
-  let message: string | null = null
-  let tone = 'text-gray-600 dark:text-gray-300'
-  if (state.kind === 'failed') {
-    message = `Save failed: ${state.message}`
-    tone = 'text-red-700 dark:text-red-300'
-  } else if (dirty && invalid) {
-    message = 'Fix the highlighted fields to save.'
-    tone = 'text-red-700 dark:text-red-300'
-  } else if (dirty) {
-    message = 'Unsaved changes'
-  } else if (state.kind === 'saved') {
-    message = savedText(state.outcome)
-    tone = state.outcome.reload_error ? 'text-amber-700 dark:text-amber-300' : 'text-gray-600 dark:text-gray-300'
-  }
+/** Sets `<html data-theme>` from `[ui] appearance`, following the system when it is `system`. */
+function useAppearance(appearance: Appearance) {
+  useEffect(() => {
+    const root = document.documentElement
+    const apply = () => {
+      const dark = appearance === 'dark' || (appearance === 'system' && systemPrefersDark())
+      root.dataset.theme = dark ? 'dark' : 'light'
+    }
+    apply()
+    if (appearance !== 'system' || typeof window.matchMedia !== 'function') return
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    mq.addEventListener('change', apply)
+    return () => mq.removeEventListener('change', apply)
+  }, [appearance])
+}
 
+// ── Save status ──────────────────────────────────────────────────────────────
+
+function savedText(outcome: SaveOutcome): string {
+  if (outcome.reloaded) return 'Saved'
+  if (outcome.reload_error) return `Saved, but the daemon did not reload: ${outcome.reload_error}`
+  return 'Saved. Applies when the daemon starts.'
+}
+
+/** Where every change reports back: a quiet line in the section header, never a button bar. */
+function SaveIndicator({ status, onRetry, onRevert }: { status: SaveStatus; onRetry: () => void; onRevert: () => void }) {
+  // "Saved" fades after a moment; warnings and errors stay until the next change.
+  const [fresh, setFresh] = useState(true)
+  useEffect(() => {
+    setFresh(true)
+    if (status.kind !== 'saved' || status.outcome.reload_error) return
+    const t = setTimeout(() => setFresh(false), 2000)
+    return () => clearTimeout(t)
+  }, [status])
+
+  let body: React.ReactNode = null
+  if (status.kind === 'saving') body = <span className="text-muted">Saving…</span>
+  else if (status.kind === 'saved') {
+    const warn = Boolean(status.outcome.reload_error)
+    body = (
+      <span className={`inline-flex items-center gap-1 ${warn ? 'text-warn' : 'text-muted'}`}>
+        {!warn && <Icon name="check" className="w-3.5 h-3.5" />}
+        <span className="break-words">{savedText(status.outcome)}</span>
+      </span>
+    )
+  } else if (status.kind === 'invalid')
+    body = (
+      <span className="inline-flex items-center gap-2 text-danger">
+        Fix the highlighted field to save.
+        <button type="button" className="btn-plain h-6 px-1.5 text-[12px]" onClick={onRevert}>
+          Undo
+        </button>
+      </span>
+    )
+  else if (status.kind === 'failed')
+    body = (
+      <span className="inline-flex items-center gap-2 text-danger">
+        <span className="break-words">Not saved: {status.message}</span>
+        <button type="button" className="btn-plain h-6 px-1.5 text-[12px]" onClick={onRetry}>
+          Retry
+        </button>
+        <button type="button" className="btn-plain h-6 px-1.5 text-[12px]" onClick={onRevert}>
+          Undo
+        </button>
+      </span>
+    )
+
+  const hidden = status.kind === 'idle' || (status.kind === 'saved' && !status.outcome.reload_error && !fresh)
   return (
-    <div className="flex items-center justify-between gap-3 px-4 py-2 min-h-11 border-t border-gray-200 dark:border-gray-700/70 bg-gray-50 dark:bg-gray-800">
-      <p className={`text-xs flex items-center gap-1.5 min-w-0 ${tone}`} role="status" aria-live="polite">
-        {state.kind === 'saved' && !dirty && !state.outcome.reload_error && <Icon name="check" className="w-3.5 h-3.5 shrink-0" />}
-        <span className="truncate">{message}</span>
-      </p>
-      <div className="flex items-center gap-2 shrink-0">
-        <button type="button" onClick={onDiscard} disabled={!dirty || saving} className="btn-secondary text-xs py-1">
-          Discard
+    <p
+      role="status"
+      aria-live="polite"
+      className={`text-[12px] text-right max-w-72 transition-opacity duration-300 ${hidden ? 'opacity-0' : 'opacity-100'}`}
+    >
+      {body}
+    </p>
+  )
+}
+
+// ── Dropped image ────────────────────────────────────────────────────────────
+
+/** A dropped image's progress and result, beside the save status in the footer. */
+function useDropNotice(): [DropNotice | null, (notice: DropNotice) => void] {
+  const [notice, setNotice] = useState<DropNotice | null>(null)
+  // "Set from …" fades like "Saved"; errors stay until the next drop.
+  useEffect(() => {
+    if (notice?.kind !== 'done') return
+    const t = setTimeout(() => setNotice(null), 4000)
+    return () => clearTimeout(t)
+  }, [notice])
+  return [notice, setNotice]
+}
+
+function DropStatus({ notice }: { notice: DropNotice | null }) {
+  return (
+    <p role="status" aria-live="polite" className="text-[12px] text-right max-w-72 min-w-0 break-words">
+      {notice && <span className={notice.kind === 'error' ? 'text-danger' : 'text-muted'}>{notice.text}</span>}
+    </p>
+  )
+}
+
+/** Shown while an image is dragged over the window; the drop itself is `useImageDrop`. */
+function DropOverlay() {
+  return (
+    <div
+      aria-hidden="true"
+      className="fixed inset-2 z-50 pointer-events-none flex items-center justify-center gap-2 rounded-xl border-2 border-dashed border-accent bg-[color-mix(in_srgb,var(--c-window)_85%,transparent)] text-ink font-semibold"
+    >
+      <Icon name="image" className="w-5 h-5 text-accent" />
+      Drop an image to set it
+    </div>
+  )
+}
+
+// ── Daemon status ────────────────────────────────────────────────────────────
+
+/** Whether the daemon is running, with a Start button when it is not. */
+function DaemonStatus({ daemon, onStart, starting }: { daemon: DaemonState; onStart: () => void; starting: boolean }) {
+  const dot = daemon === 'running' ? 'bg-ok' : daemon === 'stopped' ? 'bg-danger' : 'bg-faint'
+  const text = starting
+    ? 'Starting daemon…'
+    : daemon === 'running'
+      ? 'Daemon running'
+      : daemon === 'stopped'
+        ? 'Daemon stopped'
+        : 'Connecting…'
+  return (
+    <div className="flex items-center gap-2 min-w-0" role="status" aria-live="polite">
+      <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} aria-hidden="true" />
+      <span className="text-[12px] text-muted truncate">{text}</span>
+      {daemon === 'stopped' && !starting && (
+        <button type="button" className="btn-plain h-6 px-1.5 text-[12px]" onClick={onStart}>
+          Start
         </button>
-        <button type="button" onClick={onSave} disabled={!dirty || invalid || saving} className="btn-primary text-xs py-1">
-          {saving ? 'Saving…' : 'Save'}
-        </button>
-      </div>
+      )}
     </div>
   )
 }
@@ -91,20 +172,20 @@ function SaveBar({
 
 function LoadingPane() {
   return (
-    <div className="flex-1 flex items-center justify-center" role="status">
-      <p className="text-sm text-gray-500 dark:text-gray-400">Loading settings…</p>
+    <div className="py-16 text-center" role="status">
+      <p className="text-muted">Loading settings…</p>
     </div>
   )
 }
 
 function ErrorPane({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="flex-1 flex items-center justify-center p-8">
+    <div className="py-16 flex justify-center">
       <div className="text-center space-y-3 max-w-sm" role="alert">
-        <Icon name="alert" className="w-6 h-6 text-red-500 mx-auto" />
-        <h3 className="text-sm font-semibold">Could not load settings</h3>
-        <p className="text-xs text-gray-600 dark:text-gray-400 break-words">{message}</p>
-        <button type="button" onClick={onRetry} className="btn-primary mx-auto">
+        <Icon name="alert" className="w-6 h-6 text-danger mx-auto" />
+        <h3 className="font-semibold">Could not load settings</h3>
+        <p className="text-[12px] text-muted break-words">{message}</p>
+        <button type="button" onClick={onRetry} className="btn btn-accent mx-auto">
           Try again
         </button>
       </div>
@@ -112,19 +193,20 @@ function ErrorPane({ message, onRetry }: { message: string; onRetry: () => void 
   )
 }
 
-
 // ── Root ─────────────────────────────────────────────────────────────────────
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>('general')
-  const [config, setConfig] = useState<Config | null>(null)
-  const [savedConfig, setSavedConfig] = useState<Config | null>(null)
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null)
   const [status, setStatus] = useState<StatusData | null>(null)
   const [daemon, setDaemon] = useState<DaemonState>('checking')
+  const [starting, setStarting] = useState(false)
+  const [startError, setStartError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [saveState, setSaveState] = useState<SaveState>({ kind: 'idle' })
+  const [dropNotice, setDropNotice] = useDropNotice()
+  // A dropped image becomes the wallpaper; the daemon's `changed` event updates Now showing.
+  const drop = useImageDrop({ onNotice: setDropNotice })
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -136,19 +218,27 @@ export default function App() {
     }
   }, [])
 
+  const store = useConfigStore({
+    save: saveConfig,
+    onSaved: (outcome) => {
+      if (outcome.reloaded) void refreshStatus()
+    },
+  })
+  const { config, savedConfig, load, change, written, revert, flush, setStatus: setSaveStatus } = store
+
+  useAppearance(config?.ui.appearance ?? 'light')
+
   const loadAll = useCallback(async () => {
     setLoading(true)
     setLoadError(null)
     try {
-      const cfg = await getConfig()
-      setConfig(cfg)
-      setSavedConfig(cfg)
+      load(await getConfig())
     } catch (err) {
       setLoadError(errorMessage(err))
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [load])
 
   useEffect(() => {
     void loadAll()
@@ -193,82 +283,66 @@ export default function App() {
     return () => clearInterval(timer)
   }, [connection, refreshStatus])
 
-  const errors = useMemo(() => (config ? configErrors(config) : {}), [config])
-  const invalid = hasErrors(errors)
-  const patch = useMemo(() => (config && savedConfig ? diffConfig(savedConfig, config) : {}), [config, savedConfig])
-  const dirty = !isEmptyPatch(patch)
-
-  const handleSave = useCallback(async () => {
-    if (!config || !dirty || invalid) return
-    setSaveState({ kind: 'saving' })
-    try {
-      const outcome = await saveConfig(patch)
-      setSavedConfig(config)
-      setSaveState({ kind: 'saved', outcome })
-      if (outcome.reloaded) void refreshStatus()
-    } catch (err) {
-      setSaveState({ kind: 'failed', message: errorMessage(err) })
+  // Write a pending change before the window goes away.
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === 'hidden') void flush()
     }
-  }, [config, dirty, invalid, patch, refreshStatus])
+    document.addEventListener('visibilitychange', onHide)
+    window.addEventListener('blur', onHide)
+    return () => {
+      document.removeEventListener('visibilitychange', onHide)
+      window.removeEventListener('blur', onHide)
+    }
+  }, [flush])
 
-  const handleDiscard = useCallback(() => {
-    if (savedConfig) setConfig(savedConfig)
-    setSaveState({ kind: 'idle' })
-  }, [savedConfig])
+  const errors = useMemo(() => (config ? configErrors(config) : {}), [config])
 
-  const handleChange = useCallback((next: Config) => {
-    setConfig(next)
-    setSaveState((s) => (s.kind === 'failed' ? { kind: 'idle' } : s))
-  }, [])
-
-  // A change another command already wrote to disk (Pin, detect --write): apply it to the saved
-  // copy and the edited copy, keeping other edits pending.
-  const handleWritten = useCallback((update: (c: Config) => Config) => {
-    setSavedConfig((c) => c && update(c))
-    setConfig((c) => c && update(c))
-  }, [])
-
-  // Written to disk immediately, so update the saved copy too and keep other edits pending.
+  // Written to disk by the backend; update both copies and keep other edits pending.
   const handleResetPicker = useCallback(async () => {
     try {
       await resetPickerPosition()
-      const reset = (c: Config | null): Config | null =>
-        c && { ...c, picker: { ...c.picker, placement: 'edge', custom: null } }
-      setSavedConfig(reset)
-      setConfig(reset)
+      written((c) => ({ ...c, picker: { ...c.picker, placement: 'edge', custom: null } }))
     } catch (err) {
-      setSaveState({ kind: 'failed', message: errorMessage(err) })
+      setSaveStatus({ kind: 'failed', message: errorMessage(err) })
     }
-  }, [])
+  }, [written, setSaveStatus])
 
   const handleStartDaemon = useCallback(async () => {
-    setDaemon('checking')
-    const started = await startDaemon().catch((err: unknown) => {
-      setDaemon('stopped')
-      throw err
-    })
-    await refreshStatus()
-    if (!started) throw new Error('The daemon did not start. Run "kakemono daemon" in a terminal to see why.')
+    setStarting(true)
+    setStartError(null)
+    try {
+      const started = await startDaemon()
+      await refreshStatus()
+      if (!started) setStartError('The daemon did not start. Run "kakemono daemon" in a terminal to see why.')
+    } catch (err) {
+      setStartError(errorMessage(err))
+    } finally {
+      setStarting(false)
+    }
   }, [refreshStatus])
 
-  // ⌘S / Ctrl+S saves; ⌘W / Ctrl+W closes the window (the app stays in the tray).
+  // ⌘S / Ctrl+S writes now; ⌘W / Ctrl+W writes, then closes the window (the app stays in the tray).
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
       const key = e.key.toLowerCase()
       if (key === 's') {
         e.preventDefault()
-        void handleSave()
+        void flush()
       } else if (key === 'w') {
         e.preventDefault()
-        void closeWindow()
+        void flush().finally(() => void closeWindow())
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [handleSave])
+  }, [flush])
 
-  let content = null
+  const fileManager = fileManagerName(appInfo?.os)
+
+  // Each tab mounts the existing sections for now; Tasks 21–23 regroup them.
+  let content: React.ReactNode = null
   if (loading) content = <LoadingPane />
   else if (loadError) content = <ErrorPane message={loadError} onRetry={() => void loadAll()} />
   else if (config) {
@@ -277,39 +351,30 @@ export default function App() {
         content = (
           <GeneralSettings
             config={config}
-            onChange={handleChange}
+            onChange={change}
+            onCommit={store.commit}
             errors={errors}
-            appInfo={appInfo}
-            onResetPickerPosition={() => void handleResetPicker()}
+            status={status}
+            daemon={daemon}
+            onStatusChange={() => void refreshStatus()}
+            fileManager={fileManager}
+            os={appInfo?.os}
+            onResetPosition={() => void handleResetPicker()}
           />
         )
         break
-      case 'sources':
-        content = <SourcesSettings config={config} onChange={handleChange} />
-        break
-      case 'themes':
-        content = <ThemesSettings config={config} onChange={handleChange} />
-        break
-      case 'favorites':
-        content = <FavoritesSettings config={config} onChange={handleChange} />
-        break
-      case 'desktop':
-        content =
-          savedConfig && appInfo ? (
-            <DesktopSettings
-              config={config}
-              savedConfig={savedConfig}
-              onChange={handleChange}
-              onWritten={handleWritten}
-              os={appInfo.os}
-              commandError={errors.set_command}
-            />
-          ) : (
-            <LoadingPane />
-          )
-        break
-      case 'hooks':
-        content = <HooksSettings config={config} onChange={handleChange} error={errors.on_change} />
+      case 'advanced':
+        content = (
+          <AdvancedSettings
+            config={config}
+            savedConfig={savedConfig}
+            onChange={change}
+            onWritten={written}
+            errors={errors}
+            appInfo={appInfo}
+            fileManager={fileManager}
+          />
+        )
         break
       default: {
         const _exhaustive: never = activeTab
@@ -319,26 +384,35 @@ export default function App() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100">
-      <StatusBar
-        status={status}
-        daemon={daemon}
-        onStatusChange={() => void refreshStatus()}
-        onStartDaemon={handleStartDaemon}
-        fileManager={fileManagerName(appInfo?.os)}
-      />
-      <div className="flex flex-1 min-h-0">
-        <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
-        <main className="flex flex-col flex-1 min-w-0" aria-labelledby="section-title">
-          <h2 id="section-title" className="px-6 py-3 text-sm font-semibold border-b border-gray-100 dark:border-gray-700/70">
-            {TAB_TITLES[activeTab]}
-          </h2>
-          <div className="flex-1 overflow-y-auto px-6 py-5">{content}</div>
-          {config && (
-            <SaveBar dirty={dirty} invalid={invalid} state={saveState} onSave={() => void handleSave()} onDiscard={handleDiscard} />
+    <div className="flex flex-col h-screen bg-window text-ink">
+      <header className="shrink-0 flex justify-center px-6 py-3 bg-sidebar border-b border-line">
+        <Tabs tabs={TABS} value={activeTab} onChange={setActiveTab} panelId="settings-panel" label="Settings" />
+      </header>
+      <main
+        id="settings-panel"
+        role="tabpanel"
+        aria-labelledby={tabId(activeTab)}
+        className="flex-1 min-h-0 overflow-y-auto"
+      >
+        <div className="max-w-[640px] mx-auto px-8 pt-6 pb-10">
+          {startError && (
+            <p role="alert" className="mb-4 text-[12px] text-danger break-words">
+              {startError}
+            </p>
           )}
-        </main>
-      </div>
+          <div className="space-y-7">{content}</div>
+        </div>
+      </main>
+      <footer className="shrink-0 flex items-center justify-between gap-4 px-4 min-h-10 bg-sidebar border-t border-line">
+        <DaemonStatus daemon={daemon} onStart={() => void handleStartDaemon()} starting={starting} />
+        <div className="flex items-center gap-3 min-w-0">
+          <DropStatus notice={dropNotice} />
+          {config && <SaveIndicator status={store.status} onRetry={() => void flush()} onRevert={revert} />}
+        </div>
+      </footer>
+      {drop.over && <DropOverlay />}
     </div>
   )
 }
+
+export type { Config }

@@ -1,0 +1,50 @@
+---
+source: crates/config/tests/migrate.rs
+expression: text
+---
+[bing]
+market = "de-DE"
+
+[unsplash]
+access_key = "abc"
+
+[apod]
+api_key = "DEMO_KEY"
+
+# --- Sources ---
+# Migrated from [light], [dark] and the per-provider settings.
+[[sources]]
+id = "bing-3caa"
+enabled = false
+type = "bing"
+location = ""
+
+[[sources]]
+id = "us-9553"
+enabled = false
+type = "unsplash"
+location = "mountains"
+
+[[sources]]
+id = "us-2250"
+enabled = false
+type = "unsplash"
+location = "space"
+
+[[sources]]
+id = "us-1d5c"
+enabled = false
+type = "unsplash"
+location = "night"
+
+[[sources]]
+id = "us-eda0"
+enabled = false
+type = "unsplash"
+location = "dark"
+
+[[sources]]
+id = "apod-bde1"
+enabled = false
+type = "apod"
+location = ""

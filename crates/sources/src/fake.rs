@@ -1,17 +1,38 @@
-//! `StaticProvider`: a scripted [`Provider`] for engine and registry tests (behind the `fake`
+//! `StaticProvider`: a scripted [`Provider`] for engine and source tests (behind the `fake`
 //! feature).
 
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
+use kakemono_config::schema::SourceType;
 
+use crate::instance::{OnlineSource, SourceSet};
 use crate::provider::{Provider, ProviderError, WallpaperResult};
+
+impl SourceSet {
+    /// A set of scripted sources, one per `(id, provider, query)`, in order. Each source's
+    /// `kind` is the [`SourceType`] named by `provider.name()` (`unsupported` for other names).
+    ///
+    /// Callers coerce the provider: `("wh-1", Arc::clone(&p) as Arc<dyn Provider>, "forest")`.
+    pub fn fake(sources: Vec<(&str, Arc<dyn Provider>, &str)>) -> Self {
+        Self {
+            online: sources
+                .into_iter()
+                .map(|(id, provider, query)| OnlineSource {
+                    id: id.to_owned(),
+                    kind: SourceType::from_config_str(provider.name()),
+                    provider,
+                    query: query.to_owned(),
+                })
+                .collect(),
+        }
+    }
+}
 
 /// A [`Provider`] that returns fixed results (or a fixed error) and records every query.
 #[derive(Debug)]
 pub struct StaticProvider {
     name: &'static str,
-    enabled: bool,
     outcome: Outcome,
     queries: Mutex<Vec<String>>,
 }
@@ -23,31 +44,22 @@ enum Outcome {
 }
 
 impl StaticProvider {
-    /// An enabled provider whose `fetch` always returns `results`.
+    /// A provider whose `fetch` always returns `results`.
     pub fn new(name: &'static str, results: Vec<WallpaperResult>) -> Self {
         Self {
             name,
-            enabled: true,
             outcome: Outcome::Results(results),
             queries: Mutex::new(Vec::new()),
         }
     }
 
-    /// An enabled provider whose `fetch` always fails with `ProviderError::Other(message)`.
+    /// A provider whose `fetch` always fails with `ProviderError::Other(message)`.
     pub fn failing(name: &'static str, message: impl Into<String>) -> Self {
         Self {
             name,
-            enabled: true,
             outcome: Outcome::Error(message.into()),
             queries: Mutex::new(Vec::new()),
         }
-    }
-
-    /// Same provider with `enabled()` returning `enabled`.
-    #[must_use]
-    pub fn with_enabled(mut self, enabled: bool) -> Self {
-        self.enabled = enabled;
-        self
     }
 
     /// One result with `source = name` and the given image URL; other fields derived from it.
@@ -84,10 +96,6 @@ impl Provider for StaticProvider {
         self.name
     }
 
-    fn enabled(&self) -> bool {
-        self.enabled
-    }
-
     async fn fetch(&self, query: &str) -> Result<Vec<WallpaperResult>, ProviderError> {
         self.queries
             .lock()
@@ -113,9 +121,27 @@ mod tests {
         assert_eq!(ok.fetch("q").await.unwrap()[0].source, "bing");
         assert_eq!(ok.queries(), ["q"]);
 
-        let bad = StaticProvider::failing("apod", "apod: boom").with_enabled(false);
-        assert!(!bad.enabled());
+        let bad = StaticProvider::failing("apod", "apod: boom");
         assert_eq!(bad.fetch("").await.unwrap_err().to_string(), "apod: boom");
         assert_eq!(bad.calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn fake_source_set_keeps_order_kind_and_query() {
+        let wh = Arc::new(StaticProvider::new(
+            "wallhaven",
+            vec![StaticProvider::result("wallhaven", "https://i/w.jpg")],
+        ));
+        let set = SourceSet::fake(vec![
+            ("wh-1", Arc::clone(&wh) as Arc<dyn Provider>, "forest"),
+            ("x-1", Arc::new(StaticProvider::new("custom", vec![])), ""),
+        ]);
+        let ids: Vec<&str> = set.online.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, ["wh-1", "x-1"]);
+        let src = set.get("wh-1").unwrap();
+        assert_eq!(src.kind, SourceType::Wallhaven);
+        assert_eq!(set.get("x-1").unwrap().kind, SourceType::Unsupported);
+        src.provider.fetch(&src.query).await.unwrap();
+        assert_eq!(wh.queries(), ["forest"]);
     }
 }

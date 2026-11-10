@@ -1,0 +1,9 @@
+---
+source: crates/cli/src/commands/doctor.rs
+expression: "report(&cfg, None)"
+---
+
+Sources
+  enabled:    1 of 1 (1 bing)
+  internet:   on
+  downloads:  none yet in /dl (no limit)

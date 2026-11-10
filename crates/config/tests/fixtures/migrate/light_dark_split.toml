@@ -1,0 +1,20 @@
+[daemon]
+interval = "15m"
+cache_size = 80
+
+[wallhaven]
+enabled = true
+api_key = "secret"
+purity = "110"
+
+[reddit]
+enabled = true
+subreddits = ["EarthPorn"]
+
+[light]
+sources = ["bing", "wallhaven"]
+queries = ["landscape", "nature", "landscape"]
+
+[dark]
+sources = ["wallhaven", "reddit"]
+queries = ["space", "nature", "night"]

@@ -516,9 +516,12 @@ mod golden {
         let cfg = ts_rs::Config::default();
         let info = WallpaperInfo::decl(&cfg);
         assert!(info.contains("width: number"), "{info}");
+        // Every Go field is always written. Only the new `source_id` (Task 16) is optional:
+        // it is left out when empty so the Go bytes stay the same.
+        assert!(info.contains("source_id?: string"), "{info}");
         assert!(
-            !info.contains('?'),
-            "no optional WallpaperInfo fields: {info}"
+            !info.replace("source_id?: string", "").contains('?'),
+            "no other optional WallpaperInfo fields: {info}"
         );
         let status = StatusData::decl(&cfg);
         assert!(status.contains("current: WallpaperInfo | null"), "{status}");

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 import { errorMessage, getStartAtLogin, setStartAtLogin } from '../../shared/api'
 import { Row } from './Group'
+import { CheckLine, LineText } from './SettingLine'
 import Toggle from './Toggle'
 
 type State =
@@ -12,9 +13,10 @@ type State =
 /**
  * "Start at login": the daemon's login service plus the UI's autostart entry, switched
  * together by the backend (`set_start_at_login`). Not part of the config file, so it applies
- * immediately rather than on Save.
+ * immediately rather than on Save. `variant="line"` draws it as a General-tab checkbox line
+ * instead of a switch row.
  */
-export default function StartAtLogin() {
+export default function StartAtLogin({ variant = 'row' }: { variant?: 'row' | 'line' } = {}) {
   const [state, setState] = useState<State>({ kind: 'loading' })
 
   useEffect(() => {
@@ -45,10 +47,24 @@ export default function StartAtLogin() {
   }
 
   const error = state.kind === 'unavailable' ? state.message : state.kind === 'ready' ? state.error : null
+  const hint = 'Starts the wallpaper daemon and the kakemono tray when you log in. Applies right away.'
+  if (variant === 'line') {
+    return (
+      <CheckLine
+        checked={state.kind === 'ready' && state.enabled}
+        onChange={(v) => void change(v)}
+        disabled={state.kind !== 'ready' || state.busy}
+        hint={hint}
+        error={error}
+      >
+        <LineText>Start at login</LineText>
+      </CheckLine>
+    )
+  }
   return (
     <Row
       label="Start at login"
-      hint="Starts the wallpaper daemon and the kakemono tray when you log in. Applies right away."
+      hint={hint}
       error={error}
     >
       {({ labelId, hintId }) => (

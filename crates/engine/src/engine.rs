@@ -1,14 +1,28 @@
 //! `Engine`: the wallpaper ops (`next`, `prev`, `set_file`, `favorite`, `trash`, `pause`,
-//! `resume`, `status`, `reload`) over history state, the provider registry and the platform seam
-//! (plan §D). Port of Go `internal/wallpaper/manager.go`.
+//! `resume`, `status`, `reload`) over history state, the local image pool, the online sources
+//! and the platform seam (plan §D). Port of Go `internal/wallpaper/manager.go`.
+//!
+//! # Changes pick from disk
+//!
+//! A change that isn't a step through history picks an image already on disk
+//! ([`crate::pool`]): the background downloader ([`crate::downloader`], spawned by
+//! [`Engine::run`]) keeps `<download_dir>/<id>/` filled for every online source. Only when the
+//! pool is empty does `next` download one image on demand, and only with `[daemon] internet` on
+//! and an online source enabled; otherwise it fails with [`EngineError::NoImages`].
+//!
+//! `WallpaperInfo.source` is the row's type string (`"bing"`, `"wallhaven"`, `"folder"`,
+//! `"album-name"`, ...), `"manual"` for the manual folder and `"local"` for `set_file`. The row
+//! id is logged at the change.
 //!
 //! # Locking
 //!
 //! - `Inner::op` (`tokio::sync::Mutex<()>`) serialises every op that sets the wallpaper or
-//!   changes history. It is held across provider fetches, downloads and `WallpaperSetter::set`.
-//! - `Inner::snap` (`std::sync::Mutex<Snapshot>`) holds the state, config and registry. It is
-//!   only held for short, non-async sections, so `status`, `pause`, `resume` and `subscribe`
-//!   never wait for the network (Go's single mutex made `status` wait for downloads).
+//!   changes history. It is held across the pick, on-demand downloads and
+//!   `WallpaperSetter::set`.
+//! - `Inner::snap` (`std::sync::Mutex<Snapshot>`) holds the state, config, sources and filters.
+//!   It is only held for short, non-async sections, so `status`, `pause`, `resume` and
+//!   `subscribe` never wait for the network (Go's single mutex made `status` wait for
+//!   downloads).
 //! - `Inner::save` (`std::sync::Mutex<()>`) orders writes of `state.json`: the state is cloned
 //!   *inside* it, so the last write always holds the latest state.
 //! - `Inner::setter` (`std::sync::Mutex<Arc<dyn WallpaperSetter>>`) holds the setter in use.
@@ -30,13 +44,18 @@ use kakemono_config::Config;
 use kakemono_platform::api::{Platform, SetError, Theme, WallpaperSetter};
 use kakemono_platform::exec::{CommandRunner, TokioRunner};
 use kakemono_protocol::types::{StatusData, WallpaperInfo};
-use kakemono_sources::registry::Registry;
-use kakemono_sources::{Provider, WallpaperResult, http as source_http};
-use rand::seq::IndexedRandom;
+use kakemono_sources::{SourceSet, WallpaperResult, http as source_http};
+use rand::SeedableRng;
+use rand::rngs::StdRng;
 use reqwest::{Client, Url};
 use tokio::sync::{Notify, broadcast};
 
+use crate::downloader::{self, DownloadEnv};
 use crate::events::EngineEvent;
+use crate::facts::{self, FactsCache};
+use crate::files::Protect;
+use crate::filters::{FilterCtx, Filters};
+use crate::pool::{self, Picked, Pool};
 use crate::state::State;
 use crate::{files, hooks};
 
@@ -46,9 +65,12 @@ pub const EVENT_CAPACITY: usize = 64;
 /// Wall-clock source. Used for `WallpaperInfo.set_at` and `state.last_changed`.
 pub type Clock = Arc<dyn Fn() -> DateTime<FixedOffset> + Send + Sync>;
 
-/// Builds the provider registry for a config. Called by [`Engine::new`] and on every
-/// [`Engine::reload`], so provider settings (keys, `enabled`) take effect on reload.
-pub type RegistryFactory = Arc<dyn Fn(&Config, &Client) -> Registry + Send + Sync>;
+/// Builds the online sources for a config. Called by [`Engine::new`] and on every
+/// [`Engine::reload`], so `[[sources]]` edits and provider keys take effect on reload.
+pub type SourcesFactory = Arc<dyn Fn(&Config, Client) -> SourceSet + Send + Sync>;
+
+/// The screen size the filters assume when `signals.screen_size()` doesn't know it.
+pub const FALLBACK_SCREEN: (u32, u32) = (1920, 1080);
 
 /// Why an op failed. Crosses IPC as its `Display` string; messages keep Go's `manager: ` prefix
 /// and wording where Go had the same failure.
@@ -74,19 +96,14 @@ pub enum EngineError {
     /// stay.
     #[error("[desktop]: {0}")]
     Desktop(#[source] SetError),
-    /// No provider is enabled for the current theme's sources (nor any other enabled provider).
-    #[error(
-        "manager: no enabled provider available (theme: {}, sources: {sources})",
-        theme.as_str()
-    )]
-    NoProvider {
-        theme: Theme,
-        /// The source list in Go `%v` form, e.g. `[bing apod]`.
-        sources: String,
-    },
-    /// Every candidate provider failed. One message per provider, in the order tried, without
-    /// the `manager: ` prefix (e.g. `provider bing fetch: …`, `download image: …`). URLs in
-    /// download errors are redacted. With one provider the text equals Go's.
+    /// A change found no image on disk and couldn't download one: `[daemon] internet` is off
+    /// or no online source is enabled. Go had no such failure; the text is meant for the UI.
+    #[error("No images yet. Add a source or turn on Internet access.")]
+    NoImages,
+    /// The pool was empty and every on-demand download failed. One message per online source,
+    /// in config order, without the `manager: ` prefix (e.g. `provider bing fetch: …`,
+    /// `download image: …`). URLs in download errors are redacted. With one source the text
+    /// equals Go's.
     #[error("manager: {}", .0.join("; "))]
     Fetch(Vec<String>),
     /// Creating one of the engine's directories failed.
@@ -99,6 +116,10 @@ pub enum EngineError {
     /// Favorite/trash file operations (Task 20). The payload has no `manager: ` prefix.
     #[error("manager: {0}")]
     Files(String),
+    /// `fetch_url` failed (Task 16): a bad input, `[daemon] internet` off for a URL, a download
+    /// or copy failure, not a JPEG/PNG/WebP, or over the size cap. Shown as is, no prefix.
+    #[error("{0}")]
+    Manual(String),
 }
 
 /// Everything the engine needs from outside. Cheap to clone.
@@ -110,8 +131,8 @@ pub struct Deps {
     /// Shared HTTP client for providers and downloads (build with
     /// `kakemono_sources::http::client`).
     pub http: Client,
-    /// Builds the registry from config. Default: `Registry::from_config`.
-    pub registry: RegistryFactory,
+    /// Builds the online sources from config. Default: `SourceSet::from_config`.
+    pub sources: SourcesFactory,
     /// Runs external commands (hooks, Task 22). Default: `TokioRunner`.
     pub runner: Arc<dyn CommandRunner>,
     /// Wall clock. Default: local time.
@@ -119,31 +140,31 @@ pub struct Deps {
 }
 
 impl Deps {
-    /// Production defaults: the six real providers, `TokioRunner`, local time.
+    /// Production defaults: the real online sources, `TokioRunner`, local time.
     pub fn new(platform: Platform, http: Client) -> Self {
         Self {
             platform,
             http,
-            registry: Arc::new(|cfg, http| Registry::from_config(cfg, http.clone())),
+            sources: Arc::new(SourceSet::from_config),
             runner: Arc::new(TokioRunner),
             now: Arc::new(|| Local::now().fixed_offset()),
         }
     }
 
-    /// Use `factory` to build the registry (on construction and every reload).
+    /// Use `factory` to build the online sources (on construction and every reload).
     #[must_use]
-    pub fn with_registry_factory(
+    pub fn with_sources_factory(
         mut self,
-        factory: impl Fn(&Config, &Client) -> Registry + Send + Sync + 'static,
+        factory: impl Fn(&Config, Client) -> SourceSet + Send + Sync + 'static,
     ) -> Self {
-        self.registry = Arc::new(factory);
+        self.sources = Arc::new(factory);
         self
     }
 
-    /// Use `registry` regardless of config (tests). Reloads keep it.
+    /// Use `sources` regardless of config (tests). Reloads keep it.
     #[must_use]
-    pub fn with_registry(self, registry: Registry) -> Self {
-        self.with_registry_factory(move |_, _| registry.clone())
+    pub fn with_sources(self, sources: SourceSet) -> Self {
+        self.with_sources_factory(move |_, _| sources.clone())
     }
 
     /// Use `runner` for external commands.
@@ -176,7 +197,10 @@ impl fmt::Debug for Deps {
 pub(crate) struct Snapshot {
     pub(crate) state: State,
     pub(crate) cfg: Arc<Config>,
-    pub(crate) registry: Arc<Registry>,
+    /// The enabled online sources of `cfg`, built by `Deps::sources`.
+    pub(crate) sources: Arc<SourceSet>,
+    /// `cfg.filters`, compiled once per config.
+    pub(crate) filters: Arc<Filters>,
 }
 
 pub(crate) struct Inner {
@@ -194,6 +218,10 @@ pub(crate) struct Inner {
     /// change, pause/resume and reload. The rotation loop (Task 21) recomputes its due time.
     pub(crate) reset: Notify,
     pub(crate) hooks: crate::hooks::HookSlots,
+    /// Image facts for the filters, at `<state dir>/facts.json`. Shared with the downloader.
+    pub(crate) facts: Arc<FactsCache>,
+    /// Wakes the downloader (`notify_one`) after a reload.
+    pub(crate) wake: Arc<Notify>,
 }
 
 /// The wallpaper engine. Cheap to clone; clones share everything.
@@ -214,7 +242,7 @@ impl Engine {
     /// An engine over `state` (load it with `State::load_from_paths`), saving to `state_path`.
     ///
     /// Creates the download, trash and favorites directories (Go `NewManager`); empty paths are
-    /// skipped.
+    /// skipped. Loads the facts cache next to `state_path` (`facts.json`).
     pub fn new(
         cfg: Config,
         state: State,
@@ -222,7 +250,11 @@ impl Engine {
         deps: Deps,
     ) -> Result<Self, EngineError> {
         create_dirs(&cfg)?;
-        let registry = Arc::new((deps.registry)(&cfg, &deps.http));
+        let sources = Arc::new((deps.sources)(&cfg, deps.http.clone()));
+        let filters = Arc::new(compile_filters(&cfg));
+        let facts = Arc::new(FactsCache::load(
+            state_path.with_file_name(facts::CACHE_FILE),
+        ));
         let (events, _) = broadcast::channel(EVENT_CAPACITY);
         Ok(Self {
             inner: Arc::new(Inner {
@@ -230,7 +262,8 @@ impl Engine {
                 snap: Mutex::new(Snapshot {
                     state,
                     cfg: Arc::new(cfg),
-                    registry,
+                    sources,
+                    filters,
                 }),
                 save: Mutex::new(()),
                 state_path,
@@ -239,15 +272,18 @@ impl Engine {
                 events,
                 reset: Notify::new(),
                 hooks: crate::hooks::HookSlots::default(),
+                facts,
+                wake: Arc::new(Notify::new()),
             }),
         })
     }
 
     /// Next wallpaper. If the user went back with `prev`, steps forward through history
-    /// without fetching. Otherwise fetches from the current theme's sources: candidates in
-    /// random order, falling back to the next one when a fetch, an empty result or a download
-    /// fails (Go gave up on the first error). Then sets it, pushes it to history and trims the
-    /// download cache.
+    /// without fetching. Otherwise picks an image on disk ([`pool::pick`]) and makes no HTTP
+    /// request. Only when the pool is empty, `[daemon] internet` is on and an online source is
+    /// enabled, downloads one image on demand: sources in config order, falling back to the next
+    /// one when a download fails ([`EngineError::Fetch`] lists every failure). Otherwise
+    /// [`EngineError::NoImages`]. Then sets it and pushes it to history.
     pub async fn next(&self) -> Result<WallpaperInfo, EngineError> {
         let _op = self.inner.op.lock().await;
         self.next_locked().await
@@ -271,8 +307,9 @@ impl Engine {
         Ok(info)
     }
 
-    /// Sets the local file `path` and pushes it to history with source `local` and the file
-    /// name as title (Go `SetFile`). The path is stored as given.
+    /// Sets the local file `path` and pushes it to history with source `local`, an empty
+    /// `source_id` (no `[[sources]]` row) and the file name as title (Go `SetFile`). The path is
+    /// stored as given.
     pub async fn set_file(&self, path: &Path) -> Result<WallpaperInfo, EngineError> {
         let _op = self.inner.op.lock().await;
         if let Err(e) = tokio::fs::metadata(path).await {
@@ -380,8 +417,9 @@ impl Engine {
         Ok(Some(info))
     }
 
-    /// Replaces the config: creates its directories, rebuilds the registry, and wakes the
-    /// rotation loop (interval changes take effect here). Waits for a running op.
+    /// Replaces the config: creates its directories, rebuilds the online sources and the
+    /// filters (logging filter warnings once), and wakes the rotation loop (interval changes
+    /// take effect here) and the downloader. Waits for a running op.
     ///
     /// When `[desktop]` changed (ignoring `detected_at`), the setter is rebuilt with
     /// [`WallpaperSetter::rebuild`] under the op lock, after every other step that can fail, so
@@ -392,7 +430,10 @@ impl Engine {
     pub async fn reload(&self, cfg: Config) -> Result<(), EngineError> {
         let _op = self.inner.op.lock().await;
         create_dirs(&cfg)?;
-        let registry = Arc::new((self.inner.deps.registry)(&cfg, &self.inner.deps.http));
+        let sources = Arc::new((self.inner.deps.sources)(
+            &cfg,
+            self.inner.deps.http.clone(),
+        ));
         let old = self.config();
         if desktop_changed(&old.desktop, &cfg.desktop) {
             let current = self.setter();
@@ -413,12 +454,15 @@ impl Engine {
                 }
             }
         }
+        let filters = Arc::new(compile_filters(&cfg));
         {
             let mut snap = self.snap();
             snap.cfg = Arc::new(cfg);
-            snap.registry = registry;
+            snap.sources = sources;
+            snap.filters = filters;
         }
         self.inner.reset.notify_one();
+        self.inner.wake.notify_one();
         Ok(())
     }
 
@@ -511,7 +555,40 @@ impl Engine {
             self.changed(&info);
             return Ok(info);
         }
-        self.fetch_and_set().await
+        self.pick_and_set().await
+    }
+
+    /// Downloads one image for the online source `id` into `<download_dir>/<id>/` (the
+    /// downloader's [`downloader::download_one`]) without setting it. Ignores the downloader's
+    /// backoff. Errors: the source isn't an enabled online row, `[daemon] internet` is off, or
+    /// the download failed (`provider {name} fetch: …`, `download image: …`).
+    pub async fn download_one(&self, id: &str) -> Result<PathBuf, String> {
+        let (cfg, sources) = {
+            let snap = self.snap();
+            (Arc::clone(&snap.cfg), Arc::clone(&snap.sources))
+        };
+        let source = sources
+            .get(id)
+            .ok_or_else(|| format!("no enabled online source {id:?}"))?;
+        if !cfg.daemon.internet {
+            return Err("Internet access is off".to_owned());
+        }
+        downloader::download_one(self, source).await
+    }
+
+    /// Saves the facts cache now (it is otherwise saved debounced). Failures are logged.
+    pub(crate) async fn save_facts(&self) {
+        let facts = Arc::clone(&self.inner.facts);
+        match tokio::task::spawn_blocking(move || facts.save()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => tracing::warn!(error = %e, "can't save the facts cache"),
+            Err(e) => tracing::warn!(error = %e, "facts cache save task failed"),
+        }
+    }
+
+    /// The wake handle of the downloader [`Engine::run`] spawns.
+    pub(crate) fn downloader_wake(&self) -> Arc<Notify> {
+        Arc::clone(&self.inner.wake)
     }
 
     // ─── internals ──────────────────────────────────────────────────────────────────────────
@@ -536,7 +613,7 @@ impl Engine {
     }
 
     /// Sets `image` with the configured fit.
-    async fn set_image(&self, image: &Path) -> Result<(), EngineError> {
+    pub(crate) async fn set_image(&self, image: &Path) -> Result<(), EngineError> {
         let fit = self.snap().cfg.desktop.fit;
         self.setter()
             .set(image, fit)
@@ -554,105 +631,173 @@ impl Engine {
     }
 
     /// After every wallpaper change: event, rotation reset, hook.
-    fn changed(&self, info: &WallpaperInfo) {
+    pub(crate) fn changed(&self, info: &WallpaperInfo) {
         tracing::info!(path = %info.path, source = %info.source, "wallpaper changed");
         self.emit(EngineEvent::Changed(info.clone()));
         self.reset_timer();
         hooks::on_change(self, info, self.theme());
     }
 
-    async fn fetch_and_set(&self) -> Result<WallpaperInfo, EngineError> {
-        let theme = self.theme();
-        let (cfg, registry) = {
+    /// Picks an image from the pool and sets it; with an empty pool, downloads one on demand
+    /// (see [`Engine::next`]).
+    async fn pick_and_set(&self) -> Result<WallpaperInfo, EngineError> {
+        let (cfg, sources, filters, state) = {
             let snap = self.snap();
-            (Arc::clone(&snap.cfg), Arc::clone(&snap.registry))
+            (
+                Arc::clone(&snap.cfg),
+                Arc::clone(&snap.sources),
+                Arc::clone(&snap.filters),
+                snap.state.clone(),
+            )
         };
-        let theme_cfg = match theme {
-            Theme::Dark => &cfg.dark,
-            Theme::Light => &cfg.light,
+        let pool = {
+            let cfg = Arc::clone(&cfg);
+            tokio::task::spawn_blocking(move || Pool::collect(&cfg))
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!(error = %e, "listing the image pool failed");
+                    Pool::default()
+                })
         };
-        let candidates = registry.candidates(&theme_cfg.sources);
-        if candidates.is_empty() {
-            return Err(EngineError::NoProvider {
-                theme,
-                sources: go_string_list(&theme_cfg.sources),
-            });
+        let ctx = self.filter_ctx();
+        let mut rng = StdRng::from_rng(&mut rand::rng());
+        let picked = pool::pick(&pool, &filters, &ctx, &self.inner.facts, &state, &mut rng).await;
+        if !filters.is_empty() {
+            self.inner.facts.schedule_save();
         }
-        let query = theme_cfg
-            .queries
-            .choose(&mut rand::rng())
-            .cloned()
-            .unwrap_or_default();
-
-        let download_dir = &cfg.daemon.download_dir;
-        let mut failures = Vec::new();
-        let mut picked = None;
-        for provider in candidates {
-            match self.try_provider(&*provider, &query, download_dir).await {
-                Ok(found) => {
-                    picked = Some(found);
-                    break;
-                }
-                Err(message) => {
-                    tracing::warn!(provider = provider.name(), error = %message, "provider failed");
-                    failures.push(message);
-                }
-            }
+        match picked {
+            Some(picked) => self.set_picked(picked).await,
+            None => self.download_and_set(&cfg, &sources).await,
         }
-        let Some((result, local_path)) = picked else {
-            return Err(EngineError::Fetch(failures));
-        };
+    }
 
-        self.set_image(&local_path).await?;
+    /// Sets an image [`pool::pick`] chose, then records it (album cursor, history).
+    async fn set_picked(&self, picked: Picked) -> Result<WallpaperInfo, EngineError> {
+        self.set_image(&picked.path).await?;
         let now = (self.inner.deps.now)();
-        let info = WallpaperInfo {
-            path: local_path.to_string_lossy().into_owned(),
-            source: result.source,
-            source_url: result.source_url,
-            image_url: result.image_url,
-            title: result.title,
-            author: result.author,
-            set_at: format_set_at(&now),
-            ..WallpaperInfo::default()
-        };
-        let state = {
+        let info = disk_info(&picked.path, picked.kind.as_str(), &picked.source_id, &now);
+        tracing::info!(
+            source_id = %picked.source_id,
+            outcome = ?picked.outcome,
+            path = %picked.path.display(),
+            "picked from disk"
+        );
+        {
             let mut snap = self.snap();
+            picked.commit(&mut snap.state);
             snap.state.push(info.clone(), now);
-            snap.state.clone()
-        };
+        }
         self.persist();
-        files::trim_cache(
-            download_dir,
-            &cfg.favorites.dir,
-            &cfg.daemon.trash_dir,
-            cfg.daemon.cache_size,
-            &state,
-        )
-        .await;
         self.changed(&info);
         Ok(info)
     }
 
-    /// One candidate: fetch, pick a result at random, resolve it to a local file. The error is
-    /// a message without the `manager: ` prefix.
-    async fn try_provider(
+    /// The empty-pool fallback: one on-demand download, online sources in config order (with
+    /// an empty pool every source folder is empty, so all tie on "fewest files").
+    async fn download_and_set(
         &self,
-        provider: &dyn Provider,
-        query: &str,
-        download_dir: &Path,
-    ) -> Result<(WallpaperResult, PathBuf), String> {
-        let name = provider.name();
-        let results = provider
-            .fetch(query)
-            .await
-            .map_err(|e| format!("provider {name} fetch: {e}"))?;
-        let result = results
-            .choose(&mut rand::rng())
-            .cloned()
-            .ok_or_else(|| format!("provider {name} returned no results for query {query:?}"))?;
-        let path = resolve_local_path(&self.inner.deps.http, &result, download_dir).await?;
-        Ok((result, path))
+        cfg: &Config,
+        sources: &SourceSet,
+    ) -> Result<WallpaperInfo, EngineError> {
+        if !cfg.daemon.internet || sources.is_empty() {
+            return Err(EngineError::NoImages);
+        }
+        let mut failures = Vec::new();
+        for source in &sources.online {
+            let path = match downloader::download_one(self, source).await {
+                Ok(path) => path,
+                Err(message) => {
+                    tracing::warn!(source_id = %source.id, error = %message, "on-demand download failed");
+                    failures.push(message);
+                    continue;
+                }
+            };
+            self.set_image(&path).await?;
+            let now = (self.inner.deps.now)();
+            let info = disk_info(&path, source.kind.as_str(), &source.id, &now);
+            tracing::info!(
+                source_id = %source.id,
+                path = %path.display(),
+                "empty pool; downloaded on demand"
+            );
+            self.snap().state.push(info.clone(), now);
+            self.persist();
+            self.changed(&info);
+            return Ok(info);
+        }
+        Err(EngineError::Fetch(failures))
     }
+}
+
+/// The engine is the downloader's host ([`crate::downloader`] module docs).
+impl DownloadEnv for Engine {
+    fn config(&self) -> Arc<Config> {
+        Engine::config(self)
+    }
+
+    fn sources(&self) -> Arc<SourceSet> {
+        Arc::clone(&self.snap().sources)
+    }
+
+    fn facts(&self) -> Arc<FactsCache> {
+        Arc::clone(&self.inner.facts)
+    }
+
+    fn http(&self) -> Client {
+        self.inner.deps.http.clone()
+    }
+
+    /// The manual, favorites and trash dirs, every local `[[sources]]` location (enabled or
+    /// not), the current wallpaper and the history, all from the live config and state.
+    fn protect(&self) -> Protect {
+        let snap = self.snap();
+        let cfg = &snap.cfg;
+        Protect::new().config(cfg).state(&snap.state)
+    }
+
+    /// `signals.screen_size()` (or [`FALLBACK_SCREEN`]) and the system theme.
+    fn filter_ctx(&self) -> FilterCtx {
+        FilterCtx {
+            screen: self
+                .inner
+                .deps
+                .platform
+                .signals
+                .screen_size()
+                .unwrap_or(FALLBACK_SCREEN),
+            theme: self.theme(),
+        }
+    }
+}
+
+/// The history entry for an image from disk: its path, `source` (the row type, `"manual"`),
+/// `source_id` (the row id, `"manual"`) and file name as title.
+pub(crate) fn disk_info(
+    path: &Path,
+    source: &str,
+    source_id: &str,
+    now: &DateTime<FixedOffset>,
+) -> WallpaperInfo {
+    WallpaperInfo {
+        path: path.to_string_lossy().into_owned(),
+        source: source.to_owned(),
+        source_id: source_id.to_owned(),
+        title: path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        set_at: format_set_at(now),
+        ..WallpaperInfo::default()
+    }
+}
+
+/// Compiles `cfg.filters`, logging each warning (an invalid regex turns its filter off).
+fn compile_filters(cfg: &Config) -> Filters {
+    let (filters, warnings) = Filters::compile(&cfg.filters);
+    for warning in warnings {
+        tracing::warn!("[filters]: {warning}");
+    }
+    filters
 }
 
 /// The local file for `result` (Go `resolveLocalPath`): a `file://` URL or an absolute path
@@ -726,7 +871,7 @@ pub fn redact_in(message: &str, url: &str) -> String {
 
 /// Go's `os.Stat` error text: `stat <path>: <reason>`, with Go's lower-case reasons for the
 /// common cases.
-fn go_stat_error(path: &Path, err: &io::Error) -> String {
+pub(crate) fn go_stat_error(path: &Path, err: &io::Error) -> String {
     let reason = match err.kind() {
         io::ErrorKind::NotFound => "no such file or directory".to_owned(),
         io::ErrorKind::PermissionDenied => "permission denied".to_owned(),
@@ -736,13 +881,8 @@ fn go_stat_error(path: &Path, err: &io::Error) -> String {
     format!("stat {}: {reason}", path.display())
 }
 
-/// Go `%v` of a `[]string`: `[a b c]`.
-fn go_string_list(items: &[String]) -> String {
-    format!("[{}]", items.join(" "))
-}
-
 /// Go `time.Now().Format(time.RFC3339)`: whole seconds, `Z` for UTC.
-fn format_set_at(now: &DateTime<FixedOffset>) -> String {
+pub(crate) fn format_set_at(now: &DateTime<FixedOffset>) -> String {
     now.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
@@ -794,15 +934,6 @@ mod tests {
             ..old.clone()
         };
         assert!(desktop_changed(&old, &pinned));
-    }
-
-    #[test]
-    fn go_list_format() {
-        assert_eq!(go_string_list(&[]), "[]");
-        assert_eq!(
-            go_string_list(&["bing".to_owned(), "apod".to_owned()]),
-            "[bing apod]"
-        );
     }
 
     #[test]

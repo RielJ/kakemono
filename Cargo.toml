@@ -79,6 +79,10 @@ httpdate = "1.0.3"
 rand = "0.10.3"
 walkdir = "2.5.0"
 
+# Image facts and filters (engine)
+kamadak-exif = "0.6.2"
+regex = "1.13.1"
+
 # Theme (all OSes)
 dark-light = { version = "3.0.0", default-features = false, features = ["tokio"] }
 

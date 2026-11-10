@@ -1,0 +1,9 @@
+---
+source: crates/cli/src/commands/doctor.rs
+expression: "report(&cfg, Some(150 * MB / 2))"
+---
+
+Sources
+  enabled:    4 of 5 (1 bing, 2 wallhaven, 1 folder)
+  internet:   on
+  downloads:  75.0 MB of 500 MB in /dl

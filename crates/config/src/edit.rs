@@ -7,7 +7,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value as Json};
-use toml_edit::{Array, DocumentMut, InlineTable, Item, TableLike, Value};
+use toml_edit::{Array, ArrayOfTables, DocumentMut, InlineTable, Item, Table, TableLike, Value};
 
 use crate::defaults::home_dir;
 use crate::error::ConfigError;
@@ -74,6 +74,10 @@ pub fn set_desktop_doc(doc: &mut DocumentMut, desktop: &DesktopConfig) -> Result
 }
 
 /// [`apply_patch`] on an in-memory document. The patch must be a JSON object.
+///
+/// A top-level array whose items are all objects (like `sources`) is written as `[[key]]` blocks,
+/// so the file stays hand-editable. It replaces existing blocks where they stood, keeping the
+/// comment above the first one. A top-level empty array removes the blocks and writes `key = []`.
 pub fn apply_json(doc: &mut DocumentMut, json_patch: &Json) -> Result<(), String> {
     let Json::Object(obj) = json_patch else {
         return Err("patch must be a JSON object".to_owned());
@@ -86,6 +90,20 @@ fn merge(table: &mut dyn TableLike, obj: &Map<String, Json>, root: bool) -> Resu
         match val {
             Json::Null => {
                 table.remove(key);
+            }
+            Json::Array(items) if root && is_rows(items) => {
+                let rows = to_array_of_tables(items).map_err(|e| format!("{key}: {e}"))?;
+                replace_rows(table, key, rows);
+            }
+            Json::Array(items)
+                if root
+                    && items.is_empty()
+                    && table.get(key).is_some_and(Item::is_array_of_tables) =>
+            {
+                // Re-insert rather than overwrite: the old `[[key]]` header leaves key decor
+                // that would print as `key= []`.
+                table.remove(key);
+                table.insert(key, Item::Value(Value::Array(Array::new())));
             }
             Json::Object(child) => {
                 let exists = table.get(key).is_some_and(Item::is_table_like);
@@ -120,6 +138,61 @@ fn merge(table: &mut dyn TableLike, obj: &Map<String, Json>, root: bool) -> Resu
         }
     }
     Ok(())
+}
+
+/// Keys a `[[sources]]` row writes first, in this order; any others follow alphabetically. JSON
+/// objects arrive key-sorted, which would put `id` after `enabled`.
+const ROW_KEY_ORDER: [&str; 4] = ["id", "enabled", "type", "location"];
+
+fn is_rows(items: &[Json]) -> bool {
+    !items.is_empty() && items.iter().all(Json::is_object)
+}
+
+fn to_array_of_tables(items: &[Json]) -> Result<ArrayOfTables, String> {
+    let mut aot = ArrayOfTables::new();
+    for item in items {
+        let Json::Object(map) = item else {
+            return Err("expected an array of objects".to_owned());
+        };
+        let mut keys: Vec<&String> = map.keys().collect();
+        keys.sort_by_key(|k| {
+            let rank = ROW_KEY_ORDER.iter().position(|o| o == k);
+            (rank.unwrap_or(ROW_KEY_ORDER.len()), k.as_str())
+        });
+        let mut t = Table::new();
+        for k in keys {
+            let v = &map[k.as_str()];
+            if !v.is_null() {
+                t.insert(
+                    k,
+                    Item::Value(to_value(v).map_err(|e| format!("{k}: {e}"))?),
+                );
+            }
+        }
+        aot.push(t);
+    }
+    Ok(aot)
+}
+
+/// Puts `rows` at `key`. Existing `[[key]]` blocks are replaced where the first one stood, and
+/// the first new block takes over its leading comment; anything else at `key` is dropped and the
+/// blocks go at the end of the file.
+fn replace_rows(table: &mut dyn TableLike, key: &str, mut rows: ArrayOfTables) {
+    let anchor = table
+        .get(key)
+        .and_then(Item::as_array_of_tables)
+        .and_then(|old| old.get(0))
+        .map(|first| (first.position(), first.decor().prefix().cloned()));
+    if let Some((position, prefix)) = anchor {
+        for t in rows.iter_mut() {
+            t.set_position(position);
+        }
+        if let (Some(first), Some(prefix)) = (rows.get_mut(0), prefix) {
+            first.decor_mut().set_prefix(prefix);
+        }
+    }
+    table.remove(key);
+    table.insert(key, Item::ArrayOfTables(rows));
 }
 
 fn to_value(j: &Json) -> Result<Value, String> {

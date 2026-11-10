@@ -21,6 +21,7 @@ use std::time::Duration;
 use futures::future::BoxFuture;
 use interprocess::local_socket::tokio::Listener;
 use interprocess::local_socket::traits::tokio::Listener as _;
+use kakemono_config::schema::SourceType;
 use kakemono_config::{Config, ConfigError};
 use kakemono_engine::{Engine, EngineEvent};
 use kakemono_platform::api::BackendInfo;
@@ -28,7 +29,9 @@ use kakemono_platform::linux::detect::Env;
 use kakemono_protocol::client;
 use kakemono_protocol::codec::{self, CodecError};
 use kakemono_protocol::endpoint::Endpoint;
-use kakemono_protocol::types::{Command, Event, Request, Response};
+use kakemono_protocol::types::{
+    CheckSourceData, Command, DownloadNowData, Event, Request, Response,
+};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::broadcast::error::RecvError;
@@ -329,8 +332,30 @@ impl Server {
             Request::Reload => self.reload().await,
             Request::Version => data(Ok::<_, String>(VersionData::current())),
             Request::Doctor { apply } => self.doctor(apply).await,
+            Request::CheckSource { kind, location } => self.check_source(&kind, &location).await,
+            Request::Fetch { url } => data(self.engine.fetch_url(&url).await),
+            Request::DownloadNow { id } => data(self.engine.download_now(id.as_deref()).await.map(
+                |path| DownloadNowData {
+                    path: path.map(|p| p.to_string_lossy().into_owned()),
+                },
+            )),
             Request::Subscribe => Response::err("subscribe: only valid on a connection"),
         }
+    }
+
+    /// `check_source`: `{"count":n}`, or the engine's error text. A `type` that isn't a
+    /// `[[sources]]` type is `check_source: unknown source type "<type>"`.
+    async fn check_source(&self, kind: &str, location: &str) -> Response {
+        let parsed = SourceType::from_config_str(kind);
+        if parsed == SourceType::Unsupported {
+            return Response::err(format!("check_source: unknown source type {kind:?}"));
+        }
+        data(
+            self.engine
+                .check_source(parsed, location)
+                .await
+                .map(|count| CheckSourceData { count }),
+        )
     }
 
     async fn reload(&self) -> Response {

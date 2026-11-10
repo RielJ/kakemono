@@ -67,16 +67,21 @@ describe('DesktopSettings on macOS and Windows', () => {
   it.each([
     ['macos', 'NSWorkspace setDesktopImageURL (current Space of every screen)'],
     ['windows', 'IDesktopWallpaper'],
-  ])('%s shows only the native backend and Fit', async (os, detail) => {
+  ])('%s shows only the native backend, with no selects (Display mode moved to the Wallpaper group)', async (os, detail) => {
     vi.mocked(api.desktopBackend).mockResolvedValue(report(os, detail))
     await renderPanel({ saved: testConfig(), os })
     expect(screen.getByText(os)).toBeTruthy()
     expect(screen.getByText(detail)).toBeTruthy()
-    expect(screen.getByRole('combobox', { name: 'Fit' })).toBeTruthy()
-    expect(screen.getAllByRole('combobox')).toHaveLength(1)
+    expect(screen.getByRole('heading', { name: 'Desktop' })).toBeTruthy()
+    expect(screen.queryAllByRole('combobox')).toHaveLength(0)
     expect(screen.queryByRole('button', { name: /Test|Re-detect/ })).toBeNull()
     expect(screen.queryByText('Wallpaper command')).toBeNull()
-    expect(screen.queryByRole('switch')).toBeNull()
+    // The only switch is macOS's "Keep wallpaper on every Space".
+    if (os === 'macos') {
+      expect(screen.getByRole('switch', { name: 'Keep wallpaper on every Space' })).toBeTruthy()
+    } else {
+      expect(screen.queryByRole('switch')).toBeNull()
+    }
     expect(api.detectDesktop).not.toHaveBeenCalled()
   })
 })
@@ -102,7 +107,7 @@ describe('DesktopSettings on Linux', () => {
     const edited = withDesktop({ ...command.desktop, set_command: ['setbg', '--new', '{path}'] })
     await renderPanel({ saved: command, edited, os: 'linux' })
     expect(screen.getByRole('button', { name: 'Test' })).toHaveProperty('disabled', true)
-    expect(screen.getByText('Save your changes to test them.')).toBeTruthy()
+    expect(screen.getByText('Saving your change…')).toBeTruthy()
   })
 
   it('Test shows the daemon error text when the re-set fails', async () => {
