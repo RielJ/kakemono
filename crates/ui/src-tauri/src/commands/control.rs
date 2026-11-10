@@ -138,7 +138,11 @@ mod tests {
         std::fs::write(&listed, b"img").unwrap();
         std::fs::write(&secret, b"key").unwrap();
         let thumbs = Thumbs::new(dir.path().join("cache"));
-        thumbs.admit(&[dir.path()], &[listed.to_str().unwrap()]);
+        thumbs.admit(
+            crate::thumbs::ListKind::Legacy,
+            &[dir.path()],
+            &[listed.to_str().unwrap()],
+        );
 
         assert!(require_listed(&thumbs, "favorite", &listed.to_string_lossy()).is_ok());
         let err =

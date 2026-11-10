@@ -15,6 +15,12 @@
 //! The same listing gates the path-taking picker commands: [`Thumbs::is_admitted`] is true only
 //! for an entry of the last listing.
 //!
+//! Each picker tab keeps its own allowlist ([`ListKind`]): admitting one tab replaces only that
+//! tab's entries, and a request or [`Thumbs::is_admitted`] check succeeds if any tab admits the
+//! file. [`ListKind::Previews`] holds remote previews the daemon wrote under its preview root:
+//! only files inside that root are entries, and their header dimensions are checked against
+//! [`PREVIEW_MAX_EDGE`] before decoding (415 when larger).
+//!
 //! Thumbnails are JPEGs whose short edge is [`THUMB_EDGE`] px, cached in
 //! `<platform cache dir>/thumbs/<content hash>.jpg`, never next to the wallpapers. An id also
 //! hashes the file's size and mtime, so a file replaced in place gets a new URL and the webview
@@ -45,6 +51,54 @@ pub const DECODE_LIMIT: usize = 4;
 pub const CACHE_MAX_AGE: Duration = Duration::from_secs(30 * 24 * 3600);
 /// Bumped when the thumbnail recipe changes, so old cache files are not reused.
 const RECIPE: &str = "v1-384-q82";
+/// Largest width or height of a [`ListKind::Previews`] image, px. The daemon applies the same
+/// cap when it saves a preview; this re-check means a file swapped under the preview root
+/// still can't make the UI decode a huge image.
+pub const PREVIEW_MAX_EDGE: u32 = 4096;
+
+/// The picker list a set of paths was admitted for. Each kind has its own allowlist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ListKind {
+    /// Online downloads.
+    Downloaded,
+    /// `[local] dirs`.
+    Local,
+    /// `[favorites] dir`.
+    Favorites,
+    /// The daemon's wallpaper cache.
+    Cache,
+    /// Remote previews under the daemon's preview root. Untrusted: only files inside the root
+    /// are entries, and their size is capped ([`PREVIEW_MAX_EDGE`]).
+    Previews,
+    /// The single-list `thumbnails` command.
+    Legacy,
+}
+
+impl ListKind {
+    /// Every kind.
+    pub const ALL: [Self; 6] = [
+        Self::Downloaded,
+        Self::Local,
+        Self::Favorites,
+        Self::Cache,
+        Self::Previews,
+        Self::Legacy,
+    ];
+
+    /// Largest width or height this kind may decode; `None` = no cap.
+    fn max_edge(self) -> Option<u32> {
+        match self {
+            Self::Previews => Some(PREVIEW_MAX_EDGE),
+            Self::Downloaded | Self::Local | Self::Favorites | Self::Cache | Self::Legacy => None,
+        }
+    }
+
+    /// Whether a listed path outside the roots is still a picker entry ([`Thumbs::is_admitted`]).
+    /// Only for the user's own files; a preview outside the preview root is nothing.
+    fn lists_outside_roots(self) -> bool {
+        self.max_edge().is_none()
+    }
+}
 
 /// Why a request was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,17 +109,38 @@ pub enum Denied {
     NotFound,
 }
 
+/// One [`ListKind`]'s last listing.
 #[derive(Debug, Default)]
-struct Allow {
+struct Allowlist {
     /// Real (canonical) paths of the roots.
     roots: Vec<PathBuf>,
     /// id → admitted real path.
     ids: HashMap<String, PathBuf>,
     /// Real paths of every entry in the last listing, served or not ([`Thumbs::is_admitted`]).
     listed: HashSet<PathBuf>,
+}
+
+#[derive(Debug, Default)]
+struct Allow {
+    lists: HashMap<ListKind, Allowlist>,
     /// (real path, len, mtime) → content key, so a cache hit doesn't re-read the image. Holds
-    /// only files of the last listing.
+    /// only files of the current listings.
     keys: HashMap<Stamp, String>,
+}
+
+impl Allow {
+    fn is_listed(&self, real: &Path) -> bool {
+        self.lists.values().any(|list| list.listed.contains(real))
+    }
+}
+
+/// An admitted file found by id, before it is re-checked on disk.
+struct Found {
+    path: PathBuf,
+    /// Roots of every kind that admits the file.
+    roots: Vec<PathBuf>,
+    /// Tightest size cap of those kinds.
+    max_edge: Option<u32>,
 }
 
 /// (real path, len, mtime): a file and the version of its content.
@@ -176,17 +251,20 @@ impl Thumbs {
         format!("{:016x}", hasher.finish())
     }
 
-    /// Replaces the allowlist with `paths` that resolve inside `roots`. Returns one image URL
-    /// per input path, `""` for a path that was not admitted. Every path that exists becomes a
-    /// picker entry for [`is_admitted`](Self::is_admitted), served or not.
-    pub fn admit<P: AsRef<Path>>(&self, roots: &[P], paths: &[&str]) -> Vec<String> {
+    /// Replaces `kind`'s allowlist with `paths` that resolve inside `roots`; other kinds keep
+    /// theirs. Returns one image URL per input path, `""` for a path that was not admitted. The
+    /// same file gets the same URL under every kind. Every path that exists becomes a picker
+    /// entry for [`is_admitted`](Self::is_admitted), served or not, except for
+    /// [`ListKind::Previews`], where only admitted paths do.
+    pub fn admit<P: AsRef<Path>>(
+        &self,
+        kind: ListKind,
+        roots: &[P],
+        paths: &[&str],
+    ) -> Vec<String> {
         let roots: Vec<PathBuf> = roots
             .iter()
             .filter_map(|r| std::fs::canonicalize(r.as_ref()).ok())
-            .collect();
-        let listed: HashSet<PathBuf> = paths
-            .iter()
-            .filter_map(|path| std::fs::canonicalize(path).ok())
             .collect();
         let mut ids = HashMap::new();
         let urls = paths
@@ -200,57 +278,65 @@ impl Thumbs {
                 None => String::new(),
             })
             .collect();
-        self.with(|allow| {
-            allow.roots = roots;
-            allow.ids = ids;
-            allow.keys.retain(|(real, ..), _| listed.contains(real));
-            allow.listed = listed;
+        let listed: HashSet<PathBuf> = if kind.lists_outside_roots() {
+            paths
+                .iter()
+                .filter_map(|path| std::fs::canonicalize(path).ok())
+                .collect()
+        } else {
+            ids.values().cloned().collect()
+        };
+        self.with(|Allow { lists, keys }| {
+            lists.insert(kind, Allowlist { roots, ids, listed });
+            keys.retain(|(real, ..), _| lists.values().any(|list| list.listed.contains(real)));
         });
         urls
     }
 
-    /// True when `path` (symlinks resolved) is an entry of the last listing. The picker only
-    /// ever sends such paths, so `favorite`, `set_file` and `reveal` refuse anything else.
+    /// True when `path` (symlinks resolved) is an entry of the last listing of any kind. The
+    /// picker only ever sends such paths, so `favorite`, `set_file` and `reveal` refuse
+    /// anything else.
     pub fn is_admitted(&self, path: &Path) -> bool {
         let Ok(real) = std::fs::canonicalize(path) else {
             return false;
         };
-        self.with(|allow| allow.listed.contains(&real))
+        self.with(|allow| allow.is_listed(&real))
     }
 
     /// Maps a request path (`/<id>`) to the admitted file, re-checking it on disk.
     pub fn resolve(&self, uri_path: &str) -> Result<PathBuf, Denied> {
+        self.lookup(uri_path).map(|found| found.path)
+    }
+
+    /// [`resolve`](Self::resolve), also returning the size cap of the kinds that admit the file.
+    fn lookup(&self, uri_path: &str) -> Result<Found, Denied> {
         let id = uri_path.strip_prefix('/').unwrap_or(uri_path);
         if !is_id(id) {
             return Err(Denied::Forbidden);
         }
-        let (roots, admitted) = self.with(|allow| {
-            (
-                allow.roots.clone(),
-                allow.ids.get(id).cloned().ok_or(Denied::Forbidden),
-            )
-        });
-        let admitted = admitted?;
-        let real = match std::fs::canonicalize(&admitted) {
+        let found = self
+            .with(|allow| find(&allow.lists, id))
+            .ok_or(Denied::Forbidden)?;
+        let real = match std::fs::canonicalize(&found.path) {
             Ok(real) => real,
-            Err(_) if !admitted.exists() => return Err(Denied::NotFound),
+            Err(_) if !found.path.exists() => return Err(Denied::NotFound),
             Err(_) => return Err(Denied::Forbidden),
         };
         // A file replaced by a symlink after listing resolves somewhere else.
-        if real != admitted || !inside(&roots, &real) {
+        if real != found.path || !inside(&found.roots, &real) {
             return Err(Denied::Forbidden);
         }
-        Ok(real)
+        Ok(found)
     }
 
     /// Serves `uri_path`: 200 with a JPEG, or 403 / 404 / 415 / 500 with an empty body.
     pub fn respond(&self, uri_path: &str) -> Response<Vec<u8>> {
-        let path = match self.resolve(uri_path) {
-            Ok(path) => path,
+        let Found { path, max_edge, .. } = match self.lookup(uri_path) {
+            Ok(found) => found,
             Err(Denied::Forbidden) => return status(StatusCode::FORBIDDEN),
             Err(Denied::NotFound) => return status(StatusCode::NOT_FOUND),
         };
-        match self.thumbnail(&path) {
+        match self.thumbnail_capped(&path, max_edge) {
             Ok(bytes) => Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "image/jpeg")
@@ -258,7 +344,7 @@ impl Thumbs {
                 .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
                 .body(bytes)
                 .unwrap_or_else(|_| status(StatusCode::INTERNAL_SERVER_ERROR)),
-            Err(ThumbError::Decode(err)) => {
+            Err(err @ (ThumbError::Decode(_) | ThumbError::TooLarge { .. })) => {
                 tracing::debug!(path = %path.display(), error = %err, "cannot decode image");
                 status(StatusCode::UNSUPPORTED_MEDIA_TYPE)
             }
@@ -272,6 +358,12 @@ impl Thumbs {
     /// The cached thumbnail of `path`, generated on a miss.
     /// `path` is opened once, checked to still be the file at `path`, and read from that handle.
     pub fn thumbnail(&self, path: &Path) -> Result<Vec<u8>, ThumbError> {
+        self.thumbnail_capped(path, None)
+    }
+
+    /// [`thumbnail`](Self::thumbnail), refusing with [`ThumbError::TooLarge`] an image whose
+    /// header says it is wider or taller than `max_edge`, before decoding it.
+    fn thumbnail_capped(&self, path: &Path, max_edge: Option<u32>) -> Result<Vec<u8>, ThumbError> {
         let mut file = open_checked(path)?;
         let memo = stamp(path, &file.metadata()?);
         if let Some(key) = self.with(|allow| allow.keys.get(&memo).cloned())
@@ -282,9 +374,12 @@ impl Thumbs {
 
         let mut source = Vec::new();
         std::io::Read::read_to_end(&mut file, &mut source)?;
+        if let Some(max_edge) = max_edge {
+            check_size(&source, max_edge)?;
+        }
         let key = content_key(&source);
         self.with(|allow| {
-            if allow.listed.contains(path) {
+            if allow.is_listed(path) {
                 allow.keys.insert(memo, key.clone());
             }
         });
@@ -367,6 +462,45 @@ pub enum ThumbError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Decode(#[from] image::ImageError),
+    /// The header gives a size over the kind's cap; the image was not decoded.
+    #[error("image is {width}×{height} px, over the size cap")]
+    TooLarge { width: u32, height: u32 },
+}
+
+/// The admitted file with id `id` in any of `lists`. The id hashes the real path, so every
+/// kind that has it maps it to the same file.
+fn find(lists: &HashMap<ListKind, Allowlist>, id: &str) -> Option<Found> {
+    let mut found: Option<Found> = None;
+    for (kind, list) in lists {
+        let Some(path) = list.ids.get(id) else {
+            continue;
+        };
+        let entry = found.get_or_insert_with(|| Found {
+            path: path.clone(),
+            roots: Vec::new(),
+            max_edge: None,
+        });
+        if entry.path != *path {
+            continue;
+        }
+        entry.roots.extend(list.roots.iter().cloned());
+        entry.max_edge = match (entry.max_edge, kind.max_edge()) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+    }
+    found
+}
+
+/// Reads only the header of `source` and refuses an image wider or taller than `max_edge`.
+fn check_size(source: &[u8], max_edge: u32) -> Result<(), ThumbError> {
+    let (width, height) = ImageReader::new(Cursor::new(source))
+        .with_guessed_format()?
+        .into_dimensions()?;
+    if width > max_edge || height > max_edge {
+        return Err(ThumbError::TooLarge { width, height });
+    }
+    Ok(())
 }
 
 fn status(code: StatusCode) -> Response<Vec<u8>> {
@@ -505,7 +639,9 @@ mod tests {
     fn thumbs_admitted_file_is_served_as_a_small_jpeg() {
         let f = fixture();
         let pic = png(&f.root, "a.png", 1600, 900);
-        let urls = f.thumbs.admit(&[&f.root], &[pic.to_str().unwrap()]);
+        let urls = f
+            .thumbs
+            .admit(ListKind::Legacy, &[&f.root], &[pic.to_str().unwrap()]);
         assert!(urls[0].contains(SCHEME), "{urls:?}");
         let res = f.thumbs.respond(&format!("/{}", id_of(&urls[0])));
         assert_eq!(res.status(), StatusCode::OK);
@@ -522,7 +658,9 @@ mod tests {
     fn thumbs_path_outside_the_roots_is_403() {
         let f = fixture();
         let secret = png(&f.outside, "secret.png", 10, 10);
-        let urls = f.thumbs.admit(&[&f.root], &[secret.to_str().unwrap()]);
+        let urls = f
+            .thumbs
+            .admit(ListKind::Legacy, &[&f.root], &[secret.to_str().unwrap()]);
         assert_eq!(urls, vec![String::new()], "not admitted");
         // Even its would-be id is unknown.
         let real = std::fs::canonicalize(&secret).unwrap();
@@ -542,7 +680,9 @@ mod tests {
         // `..` in a listed path resolves outside the root: not admitted.
         let sneaky = f.root.join("../secret/secret.png");
         assert!(sneaky.exists());
-        let urls = f.thumbs.admit(&[&f.root], &[sneaky.to_str().unwrap()]);
+        let urls = f
+            .thumbs
+            .admit(ListKind::Legacy, &[&f.root], &[sneaky.to_str().unwrap()]);
         assert_eq!(urls, vec![String::new()]);
         // `..` in the request itself, raw and percent-encoded.
         for uri in [
@@ -563,12 +703,16 @@ mod tests {
         let secret = png(&f.outside, "secret.png", 10, 10);
         let link = f.root.join("link.png");
         std::os::unix::fs::symlink(&secret, &link).unwrap();
-        let urls = f.thumbs.admit(&[&f.root], &[link.to_str().unwrap()]);
+        let urls = f
+            .thumbs
+            .admit(ListKind::Legacy, &[&f.root], &[link.to_str().unwrap()]);
         assert_eq!(urls, vec![String::new()], "symlink out of the root");
 
         // Admitted while a real file, then swapped for a symlink before the request.
         let pic = png(&f.root, "swap.png", 10, 10);
-        let urls = f.thumbs.admit(&[&f.root], &[pic.to_str().unwrap()]);
+        let urls = f
+            .thumbs
+            .admit(ListKind::Legacy, &[&f.root], &[pic.to_str().unwrap()]);
         let uri = format!("/{}", id_of(&urls[0]));
         std::fs::remove_file(&pic).unwrap();
         std::os::unix::fs::symlink(&secret, &pic).unwrap();
@@ -582,7 +726,9 @@ mod tests {
         let pic = png(&f.root, "real.png", 10, 10);
         let link = f.root.join("alias.png");
         std::os::unix::fs::symlink(&pic, &link).unwrap();
-        let urls = f.thumbs.admit(&[&f.root], &[link.to_str().unwrap()]);
+        let urls = f
+            .thumbs
+            .admit(ListKind::Legacy, &[&f.root], &[link.to_str().unwrap()]);
         assert_eq!(
             f.thumbs.respond(&format!("/{}", id_of(&urls[0]))).status(),
             200
@@ -610,6 +756,7 @@ mod tests {
         let thumbs = Thumbs::new(tmp.path().join("cache/thumbs"));
         let via_alias = alias.join("wallpaper.png");
         let urls = thumbs.admit(
+            ListKind::Legacy,
             &[&downloads, &alias],
             &[link.to_str().unwrap(), via_alias.to_str().unwrap()],
         );
@@ -624,8 +771,11 @@ mod tests {
         let f = fixture();
         let a = png(&f.root, "a.png", 10, 10);
         let b = png(&f.root, "b.png", 10, 10);
-        let first = f.thumbs.admit(&[&f.root], &[a.to_str().unwrap()]);
-        f.thumbs.admit(&[&f.root], &[b.to_str().unwrap()]);
+        let first = f
+            .thumbs
+            .admit(ListKind::Legacy, &[&f.root], &[a.to_str().unwrap()]);
+        f.thumbs
+            .admit(ListKind::Legacy, &[&f.root], &[b.to_str().unwrap()]);
         assert_eq!(
             f.thumbs.respond(&format!("/{}", id_of(&first[0]))).status(),
             403
@@ -636,13 +786,17 @@ mod tests {
     fn thumbs_a_file_replaced_in_place_gets_a_new_url() {
         let f = fixture();
         let pic = png(&f.root, "a.png", 10, 10);
-        let before = f.thumbs.admit(&[&f.root], &[pic.to_str().unwrap()]);
+        let before = f
+            .thumbs
+            .admit(ListKind::Legacy, &[&f.root], &[pic.to_str().unwrap()]);
         let res = f.thumbs.respond(&format!("/{}", id_of(&before[0])));
         assert_eq!(res.headers()[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
 
         // Same path, new content: the webview must not reuse its cached response.
         png(&f.root, "a.png", 20, 20);
-        let after = f.thumbs.admit(&[&f.root], &[pic.to_str().unwrap()]);
+        let after = f
+            .thumbs
+            .admit(ListKind::Legacy, &[&f.root], &[pic.to_str().unwrap()]);
         assert_ne!(before, after);
         let res = f.thumbs.respond(&format!("/{}", id_of(&after[0])));
         let img = image::load_from_memory(res.body()).unwrap();
@@ -654,10 +808,13 @@ mod tests {
         let f = fixture();
         let a = png(&f.root, "a.png", 10, 10);
         let b = png(&f.root, "b.png", 10, 10);
-        let urls = f.thumbs.admit(&[&f.root], &[a.to_str().unwrap()]);
+        let urls = f
+            .thumbs
+            .admit(ListKind::Legacy, &[&f.root], &[a.to_str().unwrap()]);
         f.thumbs.respond(&format!("/{}", id_of(&urls[0])));
         assert_eq!(f.thumbs.with(|allow| allow.keys.len()), 1);
-        f.thumbs.admit(&[&f.root], &[b.to_str().unwrap()]);
+        f.thumbs
+            .admit(ListKind::Legacy, &[&f.root], &[b.to_str().unwrap()]);
         assert_eq!(f.thumbs.with(|allow| allow.keys.len()), 0);
     }
 
@@ -738,6 +895,7 @@ mod tests {
 
         // Listed outside the roots: no thumbnail, but still a picker entry.
         f.thumbs.admit(
+            ListKind::Legacy,
             &[&f.root],
             &[pic.to_str().unwrap(), secret.to_str().unwrap()],
         );
@@ -747,7 +905,8 @@ mod tests {
         assert!(!f.thumbs.is_admitted(&other), "never listed");
         assert!(!f.thumbs.is_admitted(&f.outside.join("missing.png")));
 
-        f.thumbs.admit(&[&f.root], &[other.to_str().unwrap()]);
+        f.thumbs
+            .admit(ListKind::Legacy, &[&f.root], &[other.to_str().unwrap()]);
         assert!(!f.thumbs.is_admitted(&pic), "replaced by the new listing");
         assert!(f.thumbs.is_admitted(&other));
     }
@@ -758,9 +917,11 @@ mod tests {
         let pic = png(&f.root, "gone.png", 10, 10);
         let txt = f.root.join("notes.txt");
         std::fs::write(&txt, "hi").unwrap();
-        let urls = f
-            .thumbs
-            .admit(&[&f.root], &[pic.to_str().unwrap(), txt.to_str().unwrap()]);
+        let urls = f.thumbs.admit(
+            ListKind::Legacy,
+            &[&f.root],
+            &[pic.to_str().unwrap(), txt.to_str().unwrap()],
+        );
         assert_eq!(urls[1], "");
         std::fs::remove_file(&pic).unwrap();
         assert_eq!(
@@ -774,7 +935,9 @@ mod tests {
         let f = fixture();
         let bad = f.root.join("bad.jpg");
         std::fs::write(&bad, b"not a jpeg").unwrap();
-        let urls = f.thumbs.admit(&[&f.root], &[bad.to_str().unwrap()]);
+        let urls = f
+            .thumbs
+            .admit(ListKind::Legacy, &[&f.root], &[bad.to_str().unwrap()]);
         assert_eq!(
             f.thumbs.respond(&format!("/{}", id_of(&urls[0]))).status(),
             415
@@ -808,6 +971,217 @@ mod tests {
         assert_eq!(content_key(b"abc"), content_key(b"abc"));
         assert_ne!(content_key(b"abc"), content_key(b"abd"));
         assert_eq!(content_key(b"").len(), 32);
+    }
+
+    /// A PNG whose header says `w`×`h` but whose pixel data is garbage: its dimensions can be
+    /// read, a full decode fails (with [`ThumbError::Decode`]).
+    fn png_header_only(dir: &Path, name: &str, w: u32, h: u32) -> PathBuf {
+        fn crc32(bytes: &[u8]) -> u32 {
+            let mut crc = !0u32;
+            for byte in bytes {
+                crc ^= u32::from(*byte);
+                for _ in 0..8 {
+                    crc = if crc & 1 == 1 {
+                        (crc >> 1) ^ 0xEDB8_8320
+                    } else {
+                        crc >> 1
+                    };
+                }
+            }
+            !crc
+        }
+        fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+            out.extend_from_slice(&u32::try_from(data.len()).unwrap().to_be_bytes());
+            let start = out.len();
+            out.extend_from_slice(kind);
+            out.extend_from_slice(data);
+            let crc = crc32(&out[start..]);
+            out.extend_from_slice(&crc.to_be_bytes());
+        }
+        let mut ihdr = Vec::new();
+        ihdr.extend_from_slice(&w.to_be_bytes());
+        ihdr.extend_from_slice(&h.to_be_bytes());
+        ihdr.extend_from_slice(&[8, 2, 0, 0, 0]); // 8-bit RGB, no interlace
+        let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+        chunk(&mut out, b"IHDR", &ihdr);
+        chunk(&mut out, b"IDAT", b"not zlib data");
+        chunk(&mut out, b"IEND", &[]);
+        let path = dir.join(name);
+        std::fs::write(&path, out).unwrap();
+        path
+    }
+
+    struct Previews {
+        _tmp: tempfile::TempDir,
+        root: PathBuf,
+        outside: PathBuf,
+        thumbs: Thumbs,
+    }
+
+    fn previews() -> Previews {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("cache/previews");
+        let outside = tmp.path().join("elsewhere");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let thumbs = Thumbs::new(tmp.path().join("cache/thumbs"));
+        Previews {
+            _tmp: tmp,
+            root,
+            outside,
+            thumbs,
+        }
+    }
+
+    #[test]
+    fn admit_keeps_paths_of_other_kinds_admitted() {
+        let f = fixture();
+        let downloads = f.root.parent().unwrap().join("downloads");
+        std::fs::create_dir_all(&downloads).unwrap();
+        let dl = png(&downloads, "dl.png", 10, 10);
+        let fav = png(&f.root, "fav.png", 10, 10);
+
+        let dl_urls = f
+            .thumbs
+            .admit(ListKind::Downloaded, &[&downloads], &[dl.to_str().unwrap()]);
+        let fav_urls = f
+            .thumbs
+            .admit(ListKind::Favorites, &[&f.root], &[fav.to_str().unwrap()]);
+
+        assert!(f.thumbs.is_admitted(&dl) && f.thumbs.is_admitted(&fav));
+        for url in [&dl_urls[0], &fav_urls[0]] {
+            assert_eq!(f.thumbs.respond(&format!("/{}", id_of(url))).status(), 200);
+        }
+    }
+
+    #[test]
+    fn admit_replaces_only_the_same_kind() {
+        let f = fixture();
+        let a = png(&f.root, "a.png", 10, 10);
+        let b = png(&f.root, "b.png", 10, 10);
+        let fav = png(&f.root, "fav.png", 10, 10);
+        let favs = f
+            .thumbs
+            .admit(ListKind::Favorites, &[&f.root], &[fav.to_str().unwrap()]);
+        let first = f
+            .thumbs
+            .admit(ListKind::Downloaded, &[&f.root], &[a.to_str().unwrap()]);
+
+        f.thumbs
+            .admit(ListKind::Downloaded, &[&f.root], &[b.to_str().unwrap()]);
+
+        assert!(!f.thumbs.is_admitted(&a), "old Downloaded path dropped");
+        assert_eq!(
+            f.thumbs.respond(&format!("/{}", id_of(&first[0]))).status(),
+            403
+        );
+        assert!(f.thumbs.is_admitted(&b));
+        assert!(f.thumbs.is_admitted(&fav), "Favorites untouched");
+        assert_eq!(
+            f.thumbs.respond(&format!("/{}", id_of(&favs[0]))).status(),
+            200
+        );
+    }
+
+    #[test]
+    fn admit_gives_the_same_file_the_same_id_under_every_kind() {
+        let f = fixture();
+        let pic = png(&f.root, "a.png", 10, 10);
+        let urls: Vec<String> = ListKind::ALL
+            .into_iter()
+            .flat_map(|kind| f.thumbs.admit(kind, &[&f.root], &[pic.to_str().unwrap()]))
+            .collect();
+        assert_eq!(urls.len(), ListKind::ALL.len());
+        assert!(
+            urls.iter().all(|url| !url.is_empty() && *url == urls[0]),
+            "{urls:?}"
+        );
+    }
+
+    #[test]
+    fn admit_refuses_a_preview_outside_the_preview_root() {
+        let f = previews();
+        let stray = png(&f.outside, "stray.png", 10, 10);
+        let urls = f
+            .thumbs
+            .admit(ListKind::Previews, &[&f.root], &[stray.to_str().unwrap()]);
+        assert_eq!(urls, vec![String::new()]);
+        assert!(!f.thumbs.is_admitted(&stray), "not a picker entry either");
+        let real = std::fs::canonicalize(&stray).unwrap();
+        let id = f
+            .thumbs
+            .id_for(&stamp(&real, &std::fs::metadata(&real).unwrap()));
+        assert_eq!(f.thumbs.respond(&format!("/{id}")).status(), 403);
+    }
+
+    #[test]
+    fn respond_serves_a_preview_inside_the_preview_root() {
+        let f = previews();
+        let pic = png(&f.root, "p.png", 600, 400);
+        let urls = f
+            .thumbs
+            .admit(ListKind::Previews, &[&f.root], &[pic.to_str().unwrap()]);
+        assert_eq!(
+            f.thumbs.respond(&format!("/{}", id_of(&urls[0]))).status(),
+            200
+        );
+    }
+
+    #[test]
+    fn respond_refuses_an_oversized_preview_with_415() {
+        let f = previews();
+        let big = png_header_only(&f.root, "big.png", 5000, 5000);
+        let urls = f
+            .thumbs
+            .admit(ListKind::Previews, &[&f.root], &[big.to_str().unwrap()]);
+        assert_eq!(
+            f.thumbs.respond(&format!("/{}", id_of(&urls[0]))).status(),
+            415
+        );
+    }
+
+    #[test]
+    fn thumbnail_rejects_an_oversized_preview_before_decoding() {
+        let f = previews();
+        let big = png_header_only(&f.root, "big.png", 5000, 5000);
+        // A decode of this file fails with `Decode`; `TooLarge` proves it never got that far.
+        let err = f
+            .thumbs
+            .thumbnail_capped(&big, Some(PREVIEW_MAX_EDGE))
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ThumbError::TooLarge {
+                    width: 5000,
+                    height: 5000
+                }
+            ),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn thumbnail_decodes_a_preview_at_the_size_cap() {
+        let f = previews();
+        let edge = png_header_only(&f.root, "edge.png", PREVIEW_MAX_EDGE, PREVIEW_MAX_EDGE);
+        let err = f
+            .thumbs
+            .thumbnail_capped(&edge, Some(PREVIEW_MAX_EDGE))
+            .unwrap_err();
+        assert!(matches!(err, ThumbError::Decode(_)), "{err:?}");
+    }
+
+    #[test]
+    fn thumbnail_does_not_cap_a_large_legacy_image() {
+        let f = fixture();
+        let big = png_header_only(&f.root, "big.png", 5000, 5000);
+        let urls = f
+            .thumbs
+            .admit(ListKind::Legacy, &[&f.root], &[big.to_str().unwrap()]);
+        let path = f.thumbs.resolve(&format!("/{}", id_of(&urls[0]))).unwrap();
+        let err = f.thumbs.thumbnail(&path).unwrap_err();
+        assert!(matches!(err, ThumbError::Decode(_)), "{err:?}");
     }
 
     #[test]
