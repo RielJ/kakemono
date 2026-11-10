@@ -68,6 +68,30 @@
 //! Without `id`, every enabled online source whose download folder has no image downloads one,
 //! in config order; `path` is the first success, and the call fails only when all failed. The
 //! image is not set.
+//!
+//! # Browse requests (`docs/plans/picker-browse-impl.md` Task 2)
+//!
+//! **`browse`**: one page of remote images from the enabled online sources, for the picker's
+//! Sources tab. Nothing is downloaded except small previews into `preview_dir`.
+//!
+//! ```text
+//! → {"cmd":"browse","args":{"page":0}}                          // start a new session
+//! → {"cmd":"browse","args":{"page":3,"session":"9f2c","source":"wh-59f2"}}
+//! ← {"ok":true,"data":{"session":"9f2c","page":3,...}}            // BrowseData
+//! ← {"ok":false,"error":"browse: argument 'page' must be a non-negative integer"}
+//! ```
+//!
+//! `session` and `source` are optional (missing, `null` or `""` = none); `page` is optional
+//! and defaults to `0`.
+//!
+//! **`browse_use`**: download one browsed image and set, favorite or just keep it.
+//!
+//! ```text
+//! → {"cmd":"browse_use","args":{"action":"favorite","remote_id":"x8e1k2","source_id":"wh-59f2"}}
+//! ← {"ok":true,"data":{"path":"...","wallpaper":null}}            // BrowseUseData
+//! ← {"ok":false,"error":"browse_use: missing required argument 'source_id'"}
+//! ← {"ok":false,"error":"browse_use: unknown action \"nuke\""}
+//! ```
 
 use std::fmt;
 
@@ -166,6 +190,56 @@ pub enum Request {
     DownloadNow {
         id: Option<String>,
     },
+    /// New: one page of remote images for the picker. Wire: `args.page` (always written;
+    /// missing or `null` reads as `0`), `args.session` and `args.source` (omitted when `None`;
+    /// `null` or `""` read as `None`). Answer: [`BrowseData`].
+    Browse {
+        session: Option<String>,
+        page: u32,
+        source: Option<String>,
+    },
+    /// New: download a browsed image and apply `action` to it. Wire: `args.source_id`,
+    /// `args.remote_id` and `args.action`, all required and non-empty. Answer:
+    /// [`BrowseUseData`].
+    BrowseUse {
+        source_id: String,
+        remote_id: String,
+        action: BrowseAction,
+    },
+}
+
+/// What `browse_use` does with the downloaded image. Wire: `"set"`, `"favorite"` or
+/// `"download"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowseAction {
+    /// Download it and set it as the wallpaper.
+    Set,
+    /// Download it and copy it into the favorites folder.
+    Favorite,
+    /// Download it into the source's download folder, nothing more.
+    Download,
+}
+
+impl BrowseAction {
+    /// The wire name, as serde writes it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Set => "set",
+            Self::Favorite => "favorite",
+            Self::Download => "download",
+        }
+    }
+
+    /// Parses a wire name. Case-sensitive, like serde.
+    pub fn from_wire(name: &str) -> Option<Self> {
+        match name {
+            "set" => Some(Self::Set),
+            "favorite" => Some(Self::Favorite),
+            "download" => Some(Self::Download),
+            _ => None,
+        }
+    }
 }
 
 impl Request {
@@ -187,6 +261,8 @@ impl Request {
             Self::CheckSource { .. } => "check_source",
             Self::Fetch { .. } => "fetch",
             Self::DownloadNow { .. } => "download_now",
+            Self::Browse { .. } => "browse",
+            Self::BrowseUse { .. } => "browse_use",
         }
     }
 }
@@ -219,6 +295,52 @@ pub enum RequestError {
     /// `download_now` with an `id` that is neither a string nor `null`.
     #[error("download_now: argument 'id' must be a string")]
     InvalidId,
+    /// `browse` with a `session` that is neither a string nor `null`.
+    #[error("browse: argument 'session' must be a string")]
+    InvalidSession,
+    /// `browse` with a `page` that is not an integer in `0..=u32::MAX` or `null`.
+    #[error("browse: argument 'page' must be a non-negative integer")]
+    InvalidPage,
+    /// `browse` with a `source` that is neither a string nor `null`.
+    #[error("browse: argument 'source' must be a string")]
+    InvalidSource,
+    /// `browse_use` with no `source_id`, a non-string `source_id`, or `""`.
+    #[error("browse_use: missing required argument 'source_id'")]
+    MissingSourceId,
+    /// `browse_use` with no `remote_id`, a non-string `remote_id`, or `""`.
+    #[error("browse_use: missing required argument 'remote_id'")]
+    MissingRemoteId,
+    /// `browse_use` with no `action`, a non-string `action`, or `""`.
+    #[error("browse_use: missing required argument 'action'")]
+    MissingAction,
+    /// `browse_use` with an `action` that is not a [`BrowseAction`] name (Go `%q` quoting).
+    #[error("browse_use: unknown action {}", go_quote(.0))]
+    UnknownAction(String),
+}
+
+/// A required, non-empty string argument; anything else is `missing`.
+fn required_string(
+    args: &Map<String, Value>,
+    key: &str,
+    missing: RequestError,
+) -> Result<String, RequestError> {
+    match args.get(key) {
+        Some(Value::String(s)) if !s.is_empty() => Ok(s.clone()),
+        _ => Err(missing),
+    }
+}
+
+/// An optional string argument: missing, `null` or `""` is `None`; a non-string is `invalid`.
+fn optional_string(
+    args: &Map<String, Value>,
+    key: &str,
+    invalid: RequestError,
+) -> Result<Option<String>, RequestError> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) => Ok((!s.is_empty()).then(|| s.clone())),
+        Some(_) => Err(invalid),
+    }
 }
 
 impl TryFrom<Command> for Request {
@@ -276,6 +398,37 @@ impl TryFrom<Command> for Request {
                 },
                 Some(_) => return Err(RequestError::InvalidId),
             },
+            "browse" => {
+                let session = optional_string(&cmd.args, "session", RequestError::InvalidSession)?;
+                let page = match cmd.args.get("page") {
+                    None | Some(Value::Null) => 0,
+                    Some(Value::Number(n)) => n
+                        .as_u64()
+                        .and_then(|n| u32::try_from(n).ok())
+                        .ok_or(RequestError::InvalidPage)?,
+                    Some(_) => return Err(RequestError::InvalidPage),
+                };
+                let source = optional_string(&cmd.args, "source", RequestError::InvalidSource)?;
+                Self::Browse {
+                    session,
+                    page,
+                    source,
+                }
+            }
+            "browse_use" => {
+                let source_id =
+                    required_string(&cmd.args, "source_id", RequestError::MissingSourceId)?;
+                let remote_id =
+                    required_string(&cmd.args, "remote_id", RequestError::MissingRemoteId)?;
+                let name = required_string(&cmd.args, "action", RequestError::MissingAction)?;
+                let action =
+                    BrowseAction::from_wire(&name).ok_or(RequestError::UnknownAction(name))?;
+                Self::BrowseUse {
+                    source_id,
+                    remote_id,
+                    action,
+                }
+            }
             _ => return Err(RequestError::UnknownCommand(cmd.cmd)),
         })
     }
@@ -305,6 +458,31 @@ impl From<Request> for Command {
             }
             Request::DownloadNow { id: Some(id) } => {
                 out.args.insert("id".into(), Value::String(id));
+            }
+            Request::Browse {
+                session,
+                page,
+                source,
+            } => {
+                if let Some(session) = session {
+                    out.args.insert("session".into(), Value::String(session));
+                }
+                out.args.insert("page".into(), Value::from(page));
+                if let Some(source) = source {
+                    out.args.insert("source".into(), Value::String(source));
+                }
+            }
+            Request::BrowseUse {
+                source_id,
+                remote_id,
+                action,
+            } => {
+                out.args
+                    .insert("source_id".into(), Value::String(source_id));
+                out.args
+                    .insert("remote_id".into(), Value::String(remote_id));
+                out.args
+                    .insert("action".into(), Value::from(action.as_str()));
             }
             _ => {}
         }
@@ -421,6 +599,82 @@ pub struct CheckSourceData {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct DownloadNowData {
     pub path: Option<String>,
+}
+
+/// Payload of the `browse` response: one page of remote images and every source's state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct BrowseData {
+    /// The session this page belongs to. Send it back to get the next page.
+    pub session: String,
+    pub page: u32,
+    /// The requested session was unknown or expired, so a new one started at page 0.
+    pub restarted: bool,
+    /// Nothing more to load: this page is empty and no source is active.
+    pub done: bool,
+    /// Absolute folder holding every `BrowseItem::preview`.
+    pub preview_dir: String,
+    pub items: Vec<BrowseItem>,
+    pub sources: Vec<BrowseSourceStatus>,
+}
+
+/// One remote image on a `browse` page. Carries no remote URL: the UI shows `preview`, a local
+/// file, and asks for the full image with `browse_use`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct BrowseItem {
+    /// The `[[sources]]` row id.
+    pub source_id: String,
+    /// The source row's type (`"wallhaven"`, ...).
+    pub kind: String,
+    /// The provider's id for the image, sanitized to `[A-Za-z0-9_-]{1,64}`.
+    pub remote_id: String,
+    pub title: String,
+    pub author: String,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub nsfw: bool,
+    /// Absolute path of the preview inside `BrowseData::preview_dir`, or `null` when the
+    /// preview download failed.
+    pub preview: Option<String>,
+}
+
+/// A source's browse state on a `browse` page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct BrowseSourceStatus {
+    pub source_id: String,
+    pub kind: String,
+    pub state: BrowseSourceState,
+}
+
+/// A source's browse state, tagged by `state`: `{"state":"active"}`,
+/// `{"state":"rate_limited","message":"...","retry_after_secs":60}`, ...
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum BrowseSourceState {
+    /// Has more pages.
+    Active,
+    /// Has no more pages.
+    Exhausted,
+    /// This source type cannot browse.
+    Unsupported,
+    /// The provider refused for now; `retry_after_secs` when it said how long to wait.
+    RateLimited {
+        message: String,
+        // ts-rs maps `u64` to `bigint`, but `JSON.parse` gives a `number`.
+        #[ts(type = "number | null")]
+        retry_after_secs: Option<u64>,
+    },
+    /// The source needs setup first, e.g. an API key.
+    NotConfigured { message: String },
+    /// The last page request failed.
+    Failed { message: String },
+}
+
+/// Payload of the `browse_use` response: the downloaded file, and the new wallpaper when the
+/// action was `set` (else `null`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct BrowseUseData {
+    pub path: String,
+    pub wallpaper: Option<WallpaperInfo>,
 }
 
 /// Payload of the `status` response. `current` is serialised as `null` when unset.

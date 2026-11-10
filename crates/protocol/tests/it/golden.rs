@@ -8,8 +8,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use kakemono_protocol::types::{
-    Command, Event, Request, RequestError, Response, StatusData, WallpaperInfo,
-    unknown_command_error,
+    BrowseAction, BrowseData, BrowseItem, BrowseSourceState, BrowseUseData, Command, Event,
+    Request, RequestError, Response, StatusData, WallpaperInfo, unknown_command_error,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -530,6 +530,171 @@ fn golden_ts_bindings_match_wire_shape() {
     assert!(cmd.contains("args?:"), "{cmd}");
     let event = Event::decl(&cfg);
     assert!(event.contains("\"changed\""), "{event}");
+    // Browse payloads (picker-browse Task 2): nullable, never optional, like the wire.
+    let action = BrowseAction::decl(&cfg);
+    assert!(
+        action.contains(r#""set" | "favorite" | "download""#),
+        "{action}"
+    );
+    let state = BrowseSourceState::decl(&cfg);
+    assert!(
+        state.contains(
+            r#""state": "rate_limited", message: string, retry_after_secs: number | null"#
+        ),
+        "{state}"
+    );
+    assert!(state.contains(r#"{ "state": "active" }"#), "{state}");
+    let item = BrowseItem::decl(&cfg);
+    assert!(item.contains("width: number | null"), "{item}");
+    assert!(item.contains("preview: string | null"), "{item}");
+    assert!(!item.contains('?'), "no optional BrowseItem fields: {item}");
+    let data = BrowseData::decl(&cfg);
+    assert!(
+        data.contains("sources: Array<BrowseSourceStatus>"),
+        "{data}"
+    );
+    let used = BrowseUseData::decl(&cfg);
+    assert!(used.contains("wallpaper: WallpaperInfo | null"), "{used}");
+}
+
+// ---- browse / browse_use (picker-browse Task 2), hand-written fixtures ----
+
+/// Parses a hand-written command fixture into `want`, re-encodes it to the same bytes, and
+/// checks `Request -> Command` writes the same args back.
+fn assert_browse_command_fixture(name: &str, want: &Request) {
+    let cmd: Command = round_trip_file(name);
+    assert_eq!(Request::try_from(cmd.clone()).as_ref(), Ok(want), "{name}");
+    assert_go_bytes::<Command>(name, read(name).trim_end());
+    assert_eq!(Command::from(want.clone()), cmd, "{name}");
+}
+
+#[test]
+fn golden_command_browse_first_page() {
+    assert_browse_command_fixture(
+        "browse_first_page.json",
+        &Request::Browse {
+            session: None,
+            page: 0,
+            source: None,
+        },
+    );
+}
+
+#[test]
+fn golden_command_browse_resume() {
+    assert_browse_command_fixture(
+        "browse_resume.json",
+        &Request::Browse {
+            session: Some("9f2c41d07ab3".into()),
+            page: 3,
+            source: Some("wh-59f2".into()),
+        },
+    );
+}
+
+#[test]
+fn golden_command_browse_use_favorite() {
+    assert_browse_command_fixture(
+        "browse_use_favorite.json",
+        &Request::BrowseUse {
+            source_id: "wh-59f2".into(),
+            remote_id: "x8e1k2".into(),
+            action: BrowseAction::Favorite,
+        },
+    );
+}
+
+/// The plan writes the args in a different key order than the encoder; both parse the same.
+#[test]
+fn golden_browse_args_key_order_does_not_matter() {
+    for (fixture, line) in [
+        (
+            "browse_resume.json",
+            r#"{"cmd":"browse","args":{"session":"9f2c41d07ab3","page":3,"source":"wh-59f2"}}"#,
+        ),
+        (
+            "browse_use_favorite.json",
+            r#"{"cmd":"browse_use","args":{"source_id":"wh-59f2","remote_id":"x8e1k2","action":"favorite"}}"#,
+        ),
+    ] {
+        let from_fixture: Command = serde_json::from_str(&read(fixture)).expect(fixture);
+        let reordered: Command = serde_json::from_str(line).expect("line");
+        assert_eq!(
+            Request::try_from(reordered),
+            Request::try_from(from_fixture),
+            "{fixture}"
+        );
+    }
+}
+
+#[test]
+fn golden_browse_errors_match_request_error_text() {
+    for (line, want) in [
+        (
+            r#"{"cmd":"browse_use","args":{"remote_id":"x8e1k2","action":"set"}}"#,
+            "browse_use: missing required argument 'source_id'",
+        ),
+        (
+            r#"{"cmd":"browse_use","args":{"source_id":"wh-59f2","action":"set"}}"#,
+            "browse_use: missing required argument 'remote_id'",
+        ),
+        (
+            r#"{"cmd":"browse_use","args":{"source_id":"wh-59f2","remote_id":"x8e1k2","action":"nuke"}}"#,
+            r#"browse_use: unknown action "nuke""#,
+        ),
+        (
+            r#"{"cmd":"browse","args":{"page":-1}}"#,
+            "browse: argument 'page' must be a non-negative integer",
+        ),
+    ] {
+        let cmd: Command = serde_json::from_str(line).expect("command");
+        let err = Request::try_from(cmd).expect_err(line);
+        assert_eq!(err.to_string(), want, "{line}");
+    }
+}
+
+/// `Response::ok_data` of the decoded payload rebuilds each fixture byte for byte, and every
+/// key in the fixture survives the round trip.
+#[test]
+fn golden_browse_payloads_match_fixture_bytes() {
+    fn check<T: DeserializeOwned + Serialize>(name: &str) {
+        let line = read(name);
+        let line = line.trim_end_matches('\n');
+        let resp: Response = round_trip(name, line);
+        let raw = resp.data.as_ref().expect("data");
+        let data: T = round_trip(name, raw.get());
+        let rebuilt = Response::ok_data(&data).expect("ok_data");
+        let out = kakemono_protocol::codec::to_string_go(&rebuilt).expect("ser");
+        assert_eq!(out, line, "{name}");
+    }
+    check::<BrowseData>("browse_response_data.json");
+    check::<BrowseUseData>("browse_use_response_data.json");
+}
+
+#[test]
+fn golden_browse_response_states_are_tagged() {
+    let line = read("browse_response_data.json");
+    let resp: Response = serde_json::from_str(&line).expect("response");
+    let data: BrowseData = resp.data_as().expect("data").expect("some");
+    let states: Vec<_> = data.sources.into_iter().map(|s| s.state).collect();
+    assert_eq!(
+        states,
+        [
+            BrowseSourceState::Active,
+            BrowseSourceState::RateLimited {
+                message: "reddit: HTTP 429".into(),
+                retry_after_secs: Some(60),
+            },
+            BrowseSourceState::NotConfigured {
+                message: "unsplash: no API key".into(),
+            },
+            BrowseSourceState::Exhausted,
+            BrowseSourceState::Failed {
+                message: "apod: HTTP 500".into(),
+            },
+            BrowseSourceState::Unsupported,
+        ]
+    );
 }
 
 // ---- byte-exact re-encoding with the Go-compatible encoder ----
