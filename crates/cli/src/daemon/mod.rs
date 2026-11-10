@@ -19,6 +19,7 @@
 //! Test builds with the `fake` feature replace the platform with
 //! `kakemono_platform::fake` when `KAKEMONO_FAKE_PLATFORM=1`.
 
+pub mod browse;
 pub mod lock;
 pub mod server;
 
@@ -177,6 +178,7 @@ pub fn run(paths: &Paths, options: &Options) -> anyhow::Result<()> {
     let _pid_file = PidFile::write(paths.runtime_dir.join(PID_FILE_NAME));
 
     let state_file = paths.state_file.clone();
+    let cache_dir = paths.cache_dir.clone();
     let state = State::load_from_paths(paths)
         .context("loading state")?
         .state;
@@ -187,6 +189,7 @@ pub fn run(paths: &Paths, options: &Options) -> anyhow::Result<()> {
         endpoint,
         state,
         state_file,
+        cache_dir,
         lock,
     };
     host(&desktop, paths.runtime_dir.clone(), move |platform| {
@@ -242,6 +245,8 @@ struct Daemon {
     endpoint: Endpoint,
     state: State,
     state_file: PathBuf,
+    /// The cache dir; browse previews go in `previews/` under it.
+    cache_dir: PathBuf,
     /// Held until the server has stopped and the state is saved.
     lock: LockGuard,
 }
@@ -254,13 +259,18 @@ impl Daemon {
             endpoint,
             state,
             state_file,
+            cache_dir,
             lock,
         } = self;
         let listener = server::bind(&endpoint, &lock).await?;
 
         let rotation = rotation_summary(&config);
         let http = kakemono_sources::http::client().context("building the HTTP client")?;
-        let engine = Engine::new(config, state, state_file.clone(), Deps::new(platform, http))
+        let deps = browse::with_browse(Deps::new(platform, http), &cache_dir)?;
+        if let Some(browse) = &deps.browse {
+            browse::prune_previews_soon(browse);
+        }
+        let engine = Engine::new(config, state, state_file.clone(), deps)
             .context("initialising the engine")?;
         let backend = engine.platform().setter.info();
         let server = Server::new(engine.clone(), move || load_config(&config_path));
