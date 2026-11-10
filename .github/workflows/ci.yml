@@ -28,10 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS first: Linux and Windows are paused until the core
-        # design settles. Add windows-latest and ubuntu-24.04 back to
-        # resume them.
-        os: [macos-14]
+        os: [macos-14, windows-latest, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

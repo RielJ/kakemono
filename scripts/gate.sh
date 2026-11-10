@@ -3,13 +3,8 @@
 #
 #   scripts/gate.sh quick <crate>...   while working: check + tests of the named crates only
 #   scripts/gate.sh full [<crate>...]  once, before commit: fmt, clippy, all tests, doctests;
-#                                      with KK_CROSS=1 the named crates are also clippy-checked
-#                                      for the Linux and Windows targets (only crates with cfg'd
-#                                      OS code)
-#
-# macOS first: Linux and Windows support is paused until the core design settles. Their code
-# stays in the tree but is not checked by default (no cross clippy here, no Linux/Windows CI
-# jobs). Set KK_CROSS=1 to run the cross clippy step anyway.
+#                                      the named crates are also clippy-checked for the Linux
+#                                      and Windows targets (only crates with cfg'd OS code)
 #
 # Cross clippy and C dependencies: crates that pull in reqwest build aws-lc-sys, which needs a C
 # compiler for the target. For Linux the gate uses `x86_64-linux-gnu-gcc` if installed, else zig
@@ -20,7 +15,6 @@
 # Crate names are short (`config`, `engine`, `ui`) or full (`kakemono-config`).
 #
 # Environment:
-#   KK_CROSS=1   also run cross clippy for Linux and Windows (off by default; see above).
 #   KK_LANES=N   number of lanes building at once; caps this run at ncpu/N jobs (min 2) and
 #                runs at lower priority, so parallel lanes don't starve each other or the desktop.
 #
@@ -91,7 +85,7 @@ case "$mode" in
     step cargo clippy --workspace --all-targets --all-features -- -D warnings
     step cargo nextest run --workspace --all-features
     step cargo test --workspace --all-features --doc
-    if [[ "${KK_CROSS:-0}" == 1 ]] && ((${#cross_flags[@]} > 0)); then
+    if ((${#cross_flags[@]} > 0)); then
       for target in x86_64-unknown-linux-gnu x86_64-pc-windows-msvc; do
         clippy=(cargo clippy)
         if needs_c "$target"; then

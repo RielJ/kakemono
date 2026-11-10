@@ -5,9 +5,9 @@ name: Windows
 # macOS cannot cross-check Windows because aws-lc-sys does not
 # cross-compile there.
 
-# Paused while the project is macOS first: manual runs only. Restore the
-# `push: branches-ignore: [main]` trigger to resume.
 on:
+  push:
+    branches-ignore: [main]
   workflow_dispatch:
 
 permissions:
