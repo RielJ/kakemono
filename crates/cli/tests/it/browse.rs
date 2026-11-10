@@ -16,7 +16,7 @@ use kakemono_engine::{Deps, Engine};
 use kakemono_platform::api::{Platform, Theme};
 use kakemono_platform::fake::{ManualSignals, RecordingSetter};
 use kakemono_protocol::codec::MAX_LINE_BYTES;
-use kakemono_protocol::endpoint::Endpoint;
+use kakemono_protocol::endpoint::{Endpoint, test_socket_path};
 use kakemono_protocol::types::{BrowseAction, BrowseData, Request, Response};
 use kakemono_sources::fake::StaticProvider;
 use kakemono_sources::{GuardConfig, Provider, SourceSet};
@@ -24,6 +24,8 @@ use tempfile::TempDir;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+
+use crate::support::real_dir;
 
 const STEP: Duration = Duration::from_secs(5);
 
@@ -60,7 +62,7 @@ struct Daemon {
 impl Daemon {
     async fn start(setup: Setup) -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().canonicalize().unwrap();
+        let root = real_dir(dir.path());
         let cfg = config(&root, setup.internet);
         let platform = Platform {
             setter: Arc::new(RecordingSetter::new()),
@@ -69,7 +71,7 @@ impl Daemon {
         let browse = BrowseDeps::new(
             kakemono_sources::http::client().unwrap(),
             GuardConfig::permissive_loopback(),
-            root.join("cache/previews"),
+            root.join("cache").join("previews"),
         )
         .with_limits(setup.limits);
         let deps = Deps::new(platform, kakemono_sources::http::client().unwrap())
@@ -78,7 +80,7 @@ impl Daemon {
         let engine = Engine::new(cfg.clone(), State::new(), root.join("state.json"), deps).unwrap();
 
         let lock = lock::acquire(&root.join("run")).unwrap();
-        let endpoint = Endpoint::new(root.join("run/k.sock")).unwrap();
+        let endpoint = Endpoint::new(test_socket_path(&root, "k.sock")).unwrap();
         let listener = server::bind(&endpoint, &lock).await.unwrap();
         let server = Server::new(engine, move || Ok(cfg.clone()));
         let shutdown = CancellationToken::new();
@@ -133,12 +135,6 @@ impl Daemon {
         ok_data(&response)
     }
 
-    /// Replaces the root (as it appears inside JSON strings) with `[ROOT]`.
-    fn redact(&self, text: &str) -> String {
-        let root = serde_json::to_string(&self.root).unwrap();
-        text.replace(root.trim_matches('"'), "[ROOT]")
-    }
-
     async fn stop(self) {
         self.shutdown.cancel();
         tokio::time::timeout(STEP, self.task)
@@ -188,9 +184,20 @@ async fn browse_with_no_online_source_is_an_empty_done_page() {
             data.done,
             data.items.len(),
             data.sources.len(),
-            d.redact(&data.preview_dir),
+            data.preview_dir,
         ),
-        (0, false, true, 0, 0, "[ROOT]/cache/previews".to_owned())
+        (
+            0,
+            false,
+            true,
+            0,
+            0,
+            d.root
+                .join("cache")
+                .join("previews")
+                .to_string_lossy()
+                .into_owned()
+        )
     );
     d.stop().await;
 }

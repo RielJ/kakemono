@@ -22,13 +22,15 @@ use kakemono_platform::api::{Fit, Platform, Theme};
 use kakemono_platform::fake::{ManualSignals, RecordingSetter};
 use kakemono_platform::linux::detect::Env;
 use kakemono_protocol::client::{self, Client};
-use kakemono_protocol::endpoint::Endpoint;
+use kakemono_protocol::endpoint::{Endpoint, test_socket_path};
 use kakemono_protocol::types::{Command, Event, Request, Response, StatusData, WallpaperInfo};
 use kakemono_sources::SourceSet;
 use tempfile::TempDir;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+
+use crate::support::real_dir;
 
 const NOW: &str = "2026-03-04T05:06:07.890+08:00";
 const STEP: Duration = Duration::from_secs(5);
@@ -53,17 +55,24 @@ impl Daemon {
         self.root.join("config.toml")
     }
 
-    /// Replaces the root (as it appears inside JSON strings) with `[ROOT]`, and this build's
-    /// version with `[VERSION]`.
+    /// Replaces the root (as it appears inside JSON strings) with `[ROOT]`, this build's
+    /// version with `[VERSION]`, and on Windows the path separator (`\\` inside JSON strings)
+    /// with `/`, so one transcript states the paths for every OS.
     fn redact(&self, text: &str) -> String {
         let root = serde_json::to_string(&self.root).unwrap();
         let root = root.trim_matches('"');
-        text.replace(root, "[ROOT]")
+        let text = text
+            .replace(root, "[ROOT]")
             .replace(env!("CARGO_PKG_VERSION"), "[VERSION]")
             .replace(
                 &format!("\"pid\":{},", std::process::id()),
                 "\"pid\":\"[PID]\",",
-            )
+            );
+        if cfg!(windows) {
+            text.replace(r"\\", "/")
+        } else {
+            text
+        }
     }
 
     async fn stop(mut self) {
@@ -84,7 +93,7 @@ fn config(root: &Path) -> Config {
     cfg.daemon.trash_dir = root.join("trash");
     cfg.favorites.dir = root.join("favorites");
     cfg.daemon.interval = "45m".to_owned();
-    cfg.daemon.socket_path = Some(root.join("run/k.sock"));
+    cfg.daemon.socket_path = Some(test_socket_path(root, "k.sock"));
     cfg.desktop.fit = Fit::Fill;
     cfg.daemon.internet = false;
     cfg.sources = vec![pics_row(root)];
@@ -101,7 +110,7 @@ fn pics_row(root: &Path) -> SourceEntry {
     }
 }
 
-/// Lock, bind and serve on `<tmp>/run/k.sock`. The folder source `<tmp>/pics` holds two
+/// Lock, bind and serve on `test_socket_path(<tmp>, "k.sock")`. The folder source `<tmp>/pics` holds two
 /// images (`one.jpg`, `two.jpg`); `next` picks one of them at random.
 async fn start() -> Daemon {
     start_with(|srv| srv).await
@@ -110,7 +119,7 @@ async fn start() -> Daemon {
 /// [`start`], with `customize` applied to the [`Server`] before it serves.
 async fn start_with(customize: impl FnOnce(Server) -> Server) -> Daemon {
     let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().canonicalize().unwrap();
+    let root = real_dir(dir.path());
     std::fs::create_dir(root.join("pics")).unwrap();
     for name in ["one.jpg", "two.jpg"] {
         std::fs::write(root.join("pics").join(name), b"fake image data").unwrap();
@@ -132,7 +141,7 @@ async fn start_with(customize: impl FnOnce(Server) -> Server) -> Daemon {
     let engine = Engine::new(cfg.clone(), State::new(), root.join("state.json"), deps).unwrap();
 
     let lock = lock::acquire(&root.join("run")).unwrap();
-    let endpoint = Endpoint::new(root.join("run/k.sock")).unwrap();
+    let endpoint = Endpoint::new(test_socket_path(&root, "k.sock")).unwrap();
     let listener = server::bind(&endpoint, &lock).await.unwrap();
 
     let config_path = root.join("config.toml");
@@ -298,7 +307,9 @@ async fn every_command_through_client() {
 #[tokio::test]
 async fn raw_response_lines_match_go_serialisation() {
     let d = start().await;
-    let image = d.root.join("a<b>&c.jpg");
+    // Go escapes `&`, U+2028 and U+2029 (and `<`, `>`, which Windows file names can't hold;
+    // the `<bogus>` command below covers those) in every string.
+    let image = d.root.join("a&b\u{2028}c\u{2029}.jpg");
     std::fs::write(&image, b"fake image data").unwrap();
     let set_line = serde_json::json!({"cmd":"set","args":{"path":image}}).to_string();
 
@@ -320,6 +331,7 @@ async fn raw_response_lines_match_go_serialisation() {
             r#"{"cmd":"version"}"#,
             r#"{"cmd":"doctor"}"#,
             r#"{"cmd":"bogus"}"#,
+            r#"{"cmd":"<bogus>"}"#,
             r#"{"args":{}}"#,
             r#"{"cmd":"status","extra":1}"#,
         ],
@@ -420,8 +432,12 @@ async fn second_lock_attempt_fails_while_daemon_runs() {
 async fn shutdown_removes_the_socket() {
     let d = start().await;
     let path = d.endpoint.path().to_owned();
-    assert!(path.exists());
+    // A Windows pipe is no file: probing it with `exists` would open a client connection.
+    if cfg!(unix) {
+        assert!(path.exists());
+    }
     let endpoint = d.endpoint.clone();
+    assert!(client::is_running(&endpoint).await);
     d.stop().await;
     if cfg!(unix) {
         assert!(!path.exists());
@@ -582,7 +598,7 @@ async fn doctor_apply_resets_the_current_wallpaper_through_the_daemon() {
 async fn source_requests_on_the_wire() {
     let d = start().await;
     let pics = d.root.join("pics");
-    let dropped = d.root.join("drop/My Pic.png");
+    let dropped = d.root.join("drop").join("My Pic.png");
     std::fs::create_dir_all(dropped.parent().unwrap()).unwrap();
     std::fs::write(&dropped, b"\x89PNG\r\n\x1a\nnot decoded").unwrap();
     let check_pics =
@@ -630,7 +646,7 @@ async fn source_requests_on_the_wire() {
             r#"{"ok":false,"error":"download_now: argument 'id' must be a string"}"#,
         ]
     );
-    let manual = d.root.join("downloads/manual/My Pic.png");
+    let manual = d.root.join("downloads").join("manual").join("My Pic.png");
     assert_eq!(d.setter.calls(), vec![(manual.clone(), Fit::Fill)]);
     let status = d.engine.status();
     assert_eq!(

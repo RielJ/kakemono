@@ -14,10 +14,12 @@ use kakemono_engine::{Deps, Engine};
 use kakemono_platform::api::{Platform, Theme};
 use kakemono_platform::fake::{ArgvSetter, ManualSignals};
 use kakemono_protocol::client::Client;
-use kakemono_protocol::endpoint::Endpoint;
+use kakemono_protocol::endpoint::{Endpoint, test_socket_path};
 use kakemono_protocol::types::{Request, Response};
 use kakemono_sources::SourceSet;
 use tokio_util::sync::CancellationToken;
+
+use crate::support::real_dir;
 
 fn ok_data<T: serde::de::DeserializeOwned>(response: &Response) -> T {
     assert!(response.ok, "{response:?}");
@@ -30,7 +32,7 @@ fn load(config_path: &Path, root: &Path) -> Result<Config, kakemono_config::Conf
     cfg.daemon.download_dir = root.join("downloads");
     cfg.daemon.trash_dir = root.join("trash");
     cfg.favorites.dir = root.join("favorites");
-    cfg.daemon.socket_path = Some(root.join("run/k.sock"));
+    cfg.daemon.socket_path = Some(test_socket_path(root, "k.sock"));
     Ok(cfg)
 }
 
@@ -45,7 +47,7 @@ fn write_desktop(config_path: &Path, set_command: &str) {
 #[tokio::test]
 async fn reload_rebuilds_the_setter_that_doctor_apply_uses() {
     let dir = tempfile::tempdir().unwrap();
-    let root: PathBuf = dir.path().canonicalize().unwrap();
+    let root: PathBuf = real_dir(dir.path());
     let config_path = root.join("config.toml");
     write_desktop(&config_path, r#"["old-setter", "{path}"]"#);
     let cfg = load(&config_path, &root).unwrap();
@@ -63,7 +65,7 @@ async fn reload_rebuilds_the_setter_that_doctor_apply_uses() {
     engine.set_file(&image).await.unwrap();
 
     let lock = lock::acquire(&root.join("run")).unwrap();
-    let endpoint = Endpoint::new(root.join("run/k.sock")).unwrap();
+    let endpoint = Endpoint::new(test_socket_path(&root, "k.sock")).unwrap();
     let listener = server::bind(&endpoint, &lock).await.unwrap();
     let srv = Server::new(engine.clone(), {
         let (config_path, root) = (config_path.clone(), root.clone());
