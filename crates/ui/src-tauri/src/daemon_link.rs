@@ -137,6 +137,19 @@ impl DaemonLink {
         ok_or_daemon(client.request(command).await?)
     }
 
+    /// [`call_alone`](Self::call_alone) with its own answer deadline instead of
+    /// [`REQUEST_TIMEOUT`](kakemono_protocol::client::REQUEST_TIMEOUT), for requests that can
+    /// run longer than that (`browse_use` downloads a full image). A timeout is
+    /// [`ClientError::Timeout`]; the daemon may still finish the request.
+    pub async fn call_alone_with_timeout(
+        &self,
+        command: impl Into<Command>,
+        timeout: std::time::Duration,
+    ) -> Result<Response, LinkError> {
+        let mut client = Client::connect(&self.endpoint).await?;
+        ok_or_daemon(client.request_with_timeout(command, timeout).await?)
+    }
+
     /// IPC `status`, decoded.
     pub async fn status(&self) -> Result<StatusData, LinkError> {
         let response = self.call(kakemono_protocol::types::Request::Status).await?;

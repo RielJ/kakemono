@@ -82,6 +82,7 @@ pub fn run() -> anyhow::Result<()> {
         .manage(link)
         .manage(picker::PickerState::detect())
         .manage(Arc::new(thumbs::Thumbs::detect()))
+        .manage(Arc::new(commands_sources::BrowsePreviews::default()))
         .manage(events::LiveState::default())
         .invoke_handler(tauri::generate_handler![
             commands::get_config,
@@ -95,12 +96,15 @@ pub fn run() -> anyhow::Result<()> {
             commands::trash,
             commands::set_file,
             commands::thumbnails,
+            commands::tab_thumbnails,
             commands_sources::check_source,
             commands_sources::download_now,
             commands_sources::delete_source_files,
             commands_sources::open_source_folder,
             commands_sources::fetch_dropped_url,
             commands_sources::import_dropped_file,
+            commands_sources::browse_page,
+            commands_sources::browse_use,
             commands_desktop::desktop_backend,
             commands_desktop::test_desktop,
             commands_desktop::detect_desktop,

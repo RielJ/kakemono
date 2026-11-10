@@ -1,5 +1,6 @@
-//! Tauri commands for the Sources table and for images dropped on a window.
+//! Tauri commands for the Sources table, the picker's Sources tab and images dropped on a window.
 //!
+//! - `browse_page` and `browse_use`: the picker's remote images ([`BrowseListing`], [`BrowseUseData`]).
 //! - `check_source { kind, location }` → [`CheckSourceData`]: starts the daemon when it doesn't
 //!   answer, then sends IPC `check_source`.
 //! - `download_now { id }` → [`DownloadNowData`]: IPC `download_now`.
@@ -31,9 +32,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::State;
 
+mod browse;
 mod drop;
 mod folders;
 
+pub use browse::*;
 pub use drop::*;
 pub use folders::*;
 
@@ -54,6 +57,10 @@ pub enum SourceError {
     /// `daemon_timeout`.
     #[error("the kakemono daemon did not answer in time (it may still finish): {0}")]
     Timeout(String),
+    /// `browse_use` outlived [`BROWSE_USE_TIMEOUT`]; the daemon goes on downloading. Kind
+    /// `daemon_timeout`.
+    #[error("{STILL_DOWNLOADING}")]
+    StillDownloading,
     #[error(transparent)]
     Command(#[from] CommandError),
 }
@@ -62,7 +69,7 @@ impl Kinded for SourceError {
     fn kind(&self) -> ErrorKind {
         match self {
             Self::Unreachable(_) => ErrorKind::DaemonUnreachable,
-            Self::Timeout(_) => ErrorKind::DaemonTimeout,
+            Self::Timeout(_) | Self::StillDownloading => ErrorKind::DaemonTimeout,
             Self::Command(err) => err.kind(),
         }
     }
@@ -122,7 +129,14 @@ async fn call_for<T: DeserializeOwned>(
     request: Request,
     what: &'static str,
 ) -> SrcResult<T> {
-    let response = link.call_alone(request).await?;
+    decode_data(&link.call_alone(request).await?, what)
+}
+
+/// Decodes a response's `data`; missing data is a decode error.
+fn decode_data<T: DeserializeOwned>(
+    response: &kakemono_protocol::types::Response,
+    what: &'static str,
+) -> SrcResult<T> {
     let data = response
         .data_as::<T>()
         .map_err(|source| LinkError::Decode { what, source })?;
@@ -252,41 +266,15 @@ pub(crate) mod fixtures {
     }
 }
 
+/// A fake daemon on a temp socket, for the source and browse command tests.
 #[cfg(test)]
-mod tests {
-    use super::fixtures::*;
-    use super::*;
+pub(crate) mod fake_daemon {
     use interprocess::local_socket::tokio::prelude::*;
     use kakemono_protocol::endpoint::Endpoint;
+    use std::sync::Arc;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-    // ── Errors ──
-
-    #[test]
-    fn transport_failures_are_daemon_unreachable() {
-        let not_running = LinkError::Client(kakemono_protocol::client::ClientError::Closed);
-        let err = SourceError::from(not_running);
-        assert_eq!(err.kind(), ErrorKind::DaemonUnreachable);
-        let json = serde_json::to_value(&err).unwrap();
-        assert_eq!(json["kind"], "daemon_unreachable");
-        assert!(
-            json["message"]
-                .as_str()
-                .unwrap()
-                .starts_with("cannot reach")
-        );
-
-        let refused = SourceError::from(LinkError::Daemon("no images found".into()));
-        assert_eq!(refused.kind(), ErrorKind::Daemon);
-        assert_eq!(refused.to_string(), "no images found");
-
-        let no_cli = SourceError::from(LifecycleError::CliNotFound);
-        assert_eq!(no_cli.kind(), ErrorKind::DaemonUnreachable);
-    }
-
-    // ── Daemon requests against a fake daemon ──
-
-    fn temp_endpoint() -> (tempfile::TempDir, Endpoint) {
+    pub fn temp_endpoint() -> (tempfile::TempDir, Endpoint) {
         let dir = tempfile::tempdir().expect("tempdir");
         let endpoint = Endpoint::new(dir.path().join("run/k.sock")).expect("endpoint");
         (dir, endpoint)
@@ -294,7 +282,7 @@ mod tests {
 
     /// Answers each request line with the next reply, on any connection (long requests dial
     /// their own). Returns the requests it read, parsed as JSON, once every reply is sent.
-    fn serve(
+    pub fn serve(
         endpoint: &Endpoint,
         replies: Vec<String>,
     ) -> tokio::task::JoinHandle<Vec<serde_json::Value>> {
@@ -341,6 +329,43 @@ mod tests {
             std::mem::take(&mut *seen.lock().unwrap())
         })
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fixtures::*;
+    use super::*;
+
+    // ── Errors ──
+
+    #[test]
+    fn transport_failures_are_daemon_unreachable() {
+        let not_running = LinkError::Client(kakemono_protocol::client::ClientError::Closed);
+        let err = SourceError::from(not_running);
+        assert_eq!(err.kind(), ErrorKind::DaemonUnreachable);
+        let json = serde_json::to_value(&err).unwrap();
+        assert_eq!(json["kind"], "daemon_unreachable");
+        assert!(
+            json["message"]
+                .as_str()
+                .unwrap()
+                .starts_with("cannot reach")
+        );
+
+        let refused = SourceError::from(LinkError::Daemon("no images found".into()));
+        assert_eq!(refused.kind(), ErrorKind::Daemon);
+        assert_eq!(refused.to_string(), "no images found");
+
+        let no_cli = SourceError::from(LifecycleError::CliNotFound);
+        assert_eq!(no_cli.kind(), ErrorKind::DaemonUnreachable);
+    }
+
+    // ── Daemon requests against a fake daemon ──
+
+    use super::fake_daemon::{serve, temp_endpoint};
+    use interprocess::local_socket::tokio::prelude::*;
+    use kakemono_protocol::endpoint::Endpoint;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     const STATUS: &str = concat!(
         "{\"ok\":true,\"data\":{\"current\":null,\"paused\":false,\"interval\":\"30m\",",
