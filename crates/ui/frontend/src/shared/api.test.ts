@@ -1,7 +1,10 @@
+import { emit } from '@tauri-apps/api/event'
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  browsePage,
+  browseUse,
   checkSource,
   deleteSourceFiles,
   desktopBackend,
@@ -12,7 +15,10 @@ import {
   fetchDroppedUrl,
   importDroppedFile,
   isDaemonNotRunning,
+  isDaemonTimeout,
   isDaemonUnreachable,
+  listTab,
+  onPickerShown,
   openSourceFolder,
   saveConfig,
   selectDirectory,
@@ -206,6 +212,51 @@ describe('shared/api', () => {
     await expect(importDroppedFile('naïve photo.png', bytes)).resolves.toEqual(info)
     expect(calls).toEqual([{ cmd: 'import_dropped_file', args: bytes }])
     expect(options).toEqual([{ headers: { 'x-file-name': 'na%C3%AFve%20photo.png' } }])
+  })
+
+  it('sends tab_thumbnails with the tab and offset and returns the page', async () => {
+    const page = { items: [], currentIndex: null, hasMore: true }
+    const calls = recordIPC(() => page)
+    await expect(listTab('downloaded', 40)).resolves.toEqual(page)
+    expect(calls).toEqual([{ cmd: 'tab_thumbnails', args: { tab: 'downloaded', offset: 40 } }])
+  })
+
+  it('sends browse_page with null session and source for a fresh, unfiltered page', async () => {
+    const listing = { session: 's1', page: 0, restarted: false, done: false, items: [], sources: [] }
+    const calls = recordIPC(() => listing)
+    await expect(browsePage({ page: 0 })).resolves.toEqual(listing)
+    await browsePage({ session: 's1', page: 3, source: 'wh-1' })
+    expect(calls).toEqual([
+      { cmd: 'browse_page', args: { session: null, page: 0, source: null } },
+      { cmd: 'browse_page', args: { session: 's1', page: 3, source: 'wh-1' } },
+    ])
+  })
+
+  it('sends browse_use with camelCase ids and the action', async () => {
+    const data = { path: '/d/wh-1/x.jpg', wallpaper: null }
+    const calls = recordIPC(() => data)
+    await expect(browseUse({ sourceId: 'wh-1', remoteId: 'x8e1k2', action: 'favorite' })).resolves.toEqual(data)
+    expect(calls).toEqual([
+      { cmd: 'browse_use', args: { sourceId: 'wh-1', remoteId: 'x8e1k2', action: 'favorite' } },
+    ])
+  })
+
+  it('recognises the browse_use timeout as daemon_timeout', () => {
+    expect(isDaemonTimeout({ kind: 'daemon_timeout', message: 'Still downloading in the background…' })).toBe(true)
+    expect(isDaemonTimeout({ kind: 'daemon', message: 'x' })).toBe(false)
+    expect(isDaemonTimeout(new Error('daemon_timeout'))).toBe(false)
+  })
+
+  it('calls the picker-shown handler on each event until unlistened', async () => {
+    mockIPC(() => null, { shouldMockEvents: true })
+    const shown = vi.fn()
+    const unlisten = await onPickerShown(shown)
+    await emit('picker-shown')
+    await emit('picker-shown')
+    expect(shown).toHaveBeenCalledTimes(2)
+    unlisten()
+    await emit('picker-shown')
+    expect(shown).toHaveBeenCalledTimes(2)
   })
 
   it('recognises a daemon_not_running command error', () => {
