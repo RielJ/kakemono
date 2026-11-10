@@ -369,3 +369,14 @@ async fn the_download_limit_spares_the_new_file() {
         (true, false)
     );
 }
+
+/// The daemon runs every request on a spawned task, so both futures must be `Send` for any
+/// borrow lifetime. A closure over a borrowed stream item breaks that while each call alone
+/// still compiles; this only has to build.
+#[expect(dead_code, reason = "a compile-time check, never called")]
+fn browse_futures_are_spawnable(engine: kakemono_engine::Engine) {
+    tokio::spawn(async move {
+        let _ = engine.browse(None, 0, None).await;
+        let _ = engine.browse_use("wh", "1", BrowseAction::Set).await;
+    });
+}

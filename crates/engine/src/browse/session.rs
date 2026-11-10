@@ -555,21 +555,30 @@ impl Ready {
         items: &[Arc<IndexedItem>],
         deadline: Instant,
     ) -> Vec<Option<PathBuf>> {
-        stream::iter(items)
-            .map(|indexed| async move {
-                let job = PreviewJob {
-                    source_id: &indexed.source_id,
-                    item: &indexed.item,
-                    hosts: indexed.hosts,
-                };
-                tokio::time::timeout_at(deadline, self.previews.fetch(job))
-                    .await
-                    .ok()
-                    .flatten()
-            })
+        // The futures are built up front, not in a `.map` closure: a closure over a borrowed
+        // item makes the whole `browse` future `Send` only for one lifetime, and the daemon's
+        // `tokio::spawn` needs it for every lifetime.
+        let fetches: Vec<_> = items
+            .iter()
+            .map(|indexed| self.preview(indexed, deadline))
+            .collect();
+        stream::iter(fetches)
             .buffered(self.deps.preview_limits.concurrency.max(1))
             .collect()
             .await
+    }
+
+    /// One item's preview path, `None` when it failed or `deadline` passed.
+    async fn preview(&self, indexed: &IndexedItem, deadline: Instant) -> Option<PathBuf> {
+        let job = PreviewJob {
+            source_id: &indexed.source_id,
+            item: &indexed.item,
+            hosts: indexed.hosts,
+        };
+        tokio::time::timeout_at(deadline, self.previews.fetch(job))
+            .await
+            .ok()
+            .flatten()
     }
 
     /// Prunes the preview cache in the background.
