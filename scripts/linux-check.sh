@@ -14,7 +14,9 @@
 #
 # Cleanup: the container is always removed. The image and the cache volumes (cargo registry,
 # target dir, node_modules) are removed when the run ends, unless KK_LINUX_KEEP=1, which keeps
-# them to make the next run fast. `scripts/linux-check.sh --clean` removes kept ones.
+# them to make the next run fast. `scripts/linux-check.sh --clean` removes kept ones. Docker's
+# build cache (BuildKit layers, about 2.5 GB after a build) is shared with every other image
+# build, so this script leaves it; `docker builder prune` removes it.
 #
 # Environment:
 #   KK_LINUX_KEEP=1     keep the image and cache volumes after the run
@@ -36,10 +38,11 @@ clean() {
 if [[ "${1:-}" == "--clean" ]]; then
   clean
   echo "linux-check: removed the image and cache volumes"
+  echo "linux-check: Docker's shared build cache is left; 'docker builder prune' removes it"
   exit 0
 fi
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
   exit 0
 fi
 
