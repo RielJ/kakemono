@@ -3,28 +3,53 @@ import {
   errorMessage,
   favoriteWallpaper,
   getStatus,
-  hidePicker,
-  listThumbnails,
+  listTab,
   resetPickerPosition,
   setFile,
   trashWallpaper,
+  type DiskTab,
   type Thumbnail,
 } from '../../shared/api'
 import { useDaemonEvents } from '../../shared/useDaemonEvents'
-import { useImageDrop } from '../../shared/useImageDrop'
 import { keyAction, type KeyAction } from '../keys'
 import { commitTrash, MESSAGES, UNDO_MS } from '../trash'
+import { useSentinel } from '../useSentinel'
 import ContextMenu, { type MenuItem } from './ContextMenu'
 import Icon from './Icon'
 
-interface StripProps {
-  vertical?: boolean
+/** The picker's one toast, owned by the App so every tab and the image drop share it. */
+export interface Notices {
+  /** Shows `text`; with `onUndo` it also shows an Undo button and stays until replaced. */
+  say: (text: string, onUndo?: () => void) => void
+  /** Hides the toast if it is the Undo one (its trash was sent). */
+  dismissUndo: () => void
 }
 
-interface Notice {
-  text: string
-  /** Shows the Undo button (a trash is pending). */
-  undo: boolean
+interface StripProps {
+  /** Which on-disk tab this strip lists; the App remounts the strip for another tab. */
+  tab: DiskTab
+  vertical: boolean
+  notices: Notices
+}
+
+/** Moving the keyboard this close to the end of the list loads the next page. */
+export const NEAR_END = 3
+
+/** What each tab says when it has nothing to show. */
+const EMPTY_TEXT: Record<DiskTab, string> = {
+  downloaded: 'Nothing downloaded yet. Pick an image in Sources to download it.',
+  local: 'No local images. Add a folder, album or images source in Settings.',
+  favorites: 'No favorites yet. Press F on a wallpaper to add it here.',
+  cache: 'The cache is empty.',
+}
+
+/**
+ * True when nothing else holds the keyboard: focus is on the body or already in `list`. The
+ * strip takes focus only then, so it never pulls focus out of the tab bar.
+ */
+export function focusIsFree(list: HTMLElement | null): boolean {
+  const el = document.activeElement
+  return el === null || el === document.body || (list?.contains(el) ?? false)
 }
 
 /** "title — source", the option's accessible name. */
@@ -34,50 +59,86 @@ export function optionLabel(thumb: Thumbnail): string {
 }
 
 /**
- * The wallpaper strip: a `listbox` with `aria-activedescendant`, the §H key map, a context
- * menu, a drag handle and a deferred trash with undo (see `../trash.ts`).
+ * The strip of one on-disk tab: a `listbox` with `aria-activedescendant`, the §H key map, a
+ * context menu and a deferred trash with undo (see `../trash.ts`). Pages of 40 load as the
+ * sentinel at the end scrolls into view, or as the keyboard nears the end.
  */
-export default function ThumbnailStrip({ vertical = false }: StripProps) {
+export default function ThumbnailStrip({ tab, vertical, notices }: StripProps) {
+  const { say, dismissUndo } = notices
   const idPrefix = useId()
   const [thumbs, setThumbs] = useState<Thumbnail[]>([])
   const thumbsRef = useRef(thumbs)
   thumbsRef.current = thumbs
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [active, setActive] = useState(0)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const [pendingPath, setPendingPath] = useState<string | null>(null)
-  const [notice, setNotice] = useState<Notice | null>(null)
   const pending = useRef<{ path: string; timer: ReturnType<typeof setTimeout> } | null>(null)
-  const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const listRef = useRef<HTMLDivElement>(null)
+  const sentinelRef = useRef<HTMLDivElement>(null)
+  /** Bumped by every first-page load, so a page that was asked for before it is dropped. */
+  const generation = useRef(0)
+  /** A next page is in flight: further requests collapse into it. */
+  const moreInFlight = useRef(false)
 
   const visible = pendingPath === null ? thumbs : thumbs.filter((t) => t.path !== pendingPath)
   const activeIndex = Math.min(active, Math.max(0, visible.length - 1))
   const activeThumb: Thumbnail | undefined = visible[activeIndex]
   const optionId = (i: number) => `${idPrefix}-option-${i}`
 
-  const say = useCallback((text: string, undo = false) => {
-    clearTimeout(noticeTimer.current)
-    setNotice({ text, undo })
-    if (!undo) noticeTimer.current = setTimeout(() => setNotice(null), UNDO_MS)
-  }, [])
-
-  // A dropped image file or URL is set as the wallpaper; the daemon's `changed` event
-  // (below) then reloads the strip with it.
-  const drop = useImageDrop({ onNotice: (n) => say(n.text) })
-
+  /** (Re)loads the first page; the current wallpaper is pinned first when the tab holds it. */
   const load = useCallback(() => {
-    listThumbnails()
-      .then((list) => {
-        setThumbs(list)
+    const gen = ++generation.current
+    moreInFlight.current = false
+    setLoadingMore(false)
+    listTab(tab, 0)
+      .then((page) => {
+        if (gen !== generation.current) return
+        setThumbs(page.items)
+        setHasMore(page.hasMore)
         setLoadError(null)
-        const shown = list.filter((t) => t.path !== pending.current?.path)
+        const shown = page.items.filter((t) => t.path !== pending.current?.path)
         setActive(Math.max(0, shown.findIndex((t) => t.isCurrent)))
       })
-      .catch((err: unknown) => setLoadError(errorMessage(err)))
-      .finally(() => setLoading(false))
-  }, [])
+      .catch((err: unknown) => {
+        if (gen === generation.current) setLoadError(errorMessage(err))
+      })
+      .finally(() => {
+        if (gen === generation.current) setLoading(false)
+      })
+  }, [tab])
+
+  /** Appends the next page (40 entries) after the ones already loaded. */
+  const loadMore = useCallback(() => {
+    if (moreInFlight.current) return
+    moreInFlight.current = true
+    setLoadingMore(true)
+    const gen = generation.current
+    listTab(tab, thumbsRef.current.length)
+      .then((page) => {
+        if (gen !== generation.current) return
+        // Files can appear between pages and shift the listing: skip what is already shown.
+        setThumbs((prev) => {
+          const have = new Set(prev.map((t) => t.path))
+          return prev.concat(page.items.filter((t) => !have.has(t.path)))
+        })
+        setHasMore(page.hasMore)
+      })
+      .catch((err: unknown) => {
+        if (gen !== generation.current) return
+        // Stop paging; the strip keeps what it has.
+        setHasMore(false)
+        say(errorMessage(err))
+      })
+      .finally(() => {
+        if (gen !== generation.current) return
+        moreInFlight.current = false
+        setLoadingMore(false)
+      })
+  }, [tab, say])
 
   /** Sends the pending trash now, if the deleted wallpaper is still current. */
   const flushTrash = useCallback(async () => {
@@ -90,8 +151,7 @@ export default function ThumbnailStrip({ vertical = false }: StripProps) {
     switch (outcome.kind) {
       case 'trashed':
         setThumbs((prev) => prev.filter((t) => t.path !== p.path))
-        clearTimeout(noticeTimer.current)
-        setNotice((n) => (n?.undo ? null : n))
+        dismissUndo()
         load()
         break
       case 'changed':
@@ -101,7 +161,7 @@ export default function ThumbnailStrip({ vertical = false }: StripProps) {
         say(errorMessage(outcome.error))
         break
     }
-  }, [load, say])
+  }, [load, say, dismissUndo])
 
   const undo = useCallback(() => {
     const p = pending.current
@@ -113,12 +173,6 @@ export default function ThumbnailStrip({ vertical = false }: StripProps) {
     listRef.current?.focus()
   }, [say])
 
-  const close = useCallback(() => {
-    setMenu(null)
-    void flushTrash()
-    void hidePicker()
-  }, [flushTrash])
-
   const trash = (thumb: Thumbnail) => {
     if (!thumb.isCurrent) {
       say(MESSAGES.notCurrent)
@@ -127,7 +181,7 @@ export default function ThumbnailStrip({ vertical = false }: StripProps) {
     void flushTrash()
     pending.current = { path: thumb.path, timer: setTimeout(() => void flushTrash(), UNDO_MS) }
     setPendingPath(thumb.path)
-    say(MESSAGES.trashed, true)
+    say(MESSAGES.trashed, undo)
   }
 
   const set = (thumb: Thumbnail) => {
@@ -152,6 +206,7 @@ export default function ThumbnailStrip({ vertical = false }: StripProps) {
   const run = (action: KeyAction) => {
     if (action.kind === 'move') {
       setActive(action.to)
+      if (hasMore && action.to >= visible.length - NEAR_END) loadMore()
       return
     }
     if (!activeThumb) return
@@ -163,17 +218,31 @@ export default function ThumbnailStrip({ vertical = false }: StripProps) {
 
   const onListKeyDown = (e: React.KeyboardEvent) => {
     const action = keyAction(e, vertical, activeIndex, visible.length)
-    // Esc and undo are window-wide (below), so they also work from the toast.
-    if (!action || action.kind === 'close' || action.kind === 'undo') return
-    e.preventDefault()
-    run(action)
+    if (!action) return
+    switch (action.kind) {
+      // Window-wide: Esc and undo (below and in the App) also work from the toast, and the tab
+      // keys (App) also work from an empty tab.
+      case 'close':
+      case 'undo':
+      case 'tab':
+      case 'tabIndex':
+      case 'filter':
+        return
+      default:
+        e.preventDefault()
+        run(action)
+    }
   }
 
   // The list is `hidden` while loading, so it can only take focus once the options are in.
   const ready = !loading && loadError === null && visible.length > 0
   useEffect(() => {
-    if (ready && !listRef.current?.contains(document.activeElement)) listRef.current?.focus()
+    const list = listRef.current
+    if (ready && list && focusIsFree(list) && !list.contains(document.activeElement)) list.focus()
   }, [ready])
+
+  // The last slot of the list: scrolling it into view loads the next page.
+  useSentinel(sentinelRef, { onVisible: loadMore, busy: !ready || !hasMore || loadingMore })
 
   // Live: the highlight follows the daemon (rotation, tray Next, the CLI); a wallpaper the
   // list doesn't have yet, or a reconnect, reloads it.
@@ -195,19 +264,22 @@ export default function ThumbnailStrip({ vertical = false }: StripProps) {
     // The window is hidden, not closed: refresh and refocus each time it is shown.
     const onFocus = () => {
       load()
-      if (!listRef.current?.contains(document.activeElement)) listRef.current?.focus()
+      const list = listRef.current
+      if (list && focusIsFree(list) && !list.contains(document.activeElement)) list.focus()
     }
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
   }, [load])
 
   useEffect(() => {
+    // The App hides the picker on Esc; this sends a pending trash first. Neither handler
+    // claims Esc (no preventDefault), so the order they run in doesn't matter.
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return
       const action = keyAction(e, vertical, 0, 0)
       if (action?.kind === 'close') {
-        e.preventDefault()
-        close()
+        setMenu(null)
+        void flushTrash()
       } else if (action?.kind === 'undo' && pending.current) {
         e.preventDefault()
         undo()
@@ -215,7 +287,7 @@ export default function ThumbnailStrip({ vertical = false }: StripProps) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [vertical, close, undo])
+  }, [vertical, flushTrash, undo])
 
   // A pending trash is sent when the picker goes away (hidden by blur, the tray or unmount),
   // never dropped, and never left to a timer the hidden webview may pause.
@@ -227,7 +299,6 @@ export default function ThumbnailStrip({ vertical = false }: StripProps) {
     return () => {
       document.removeEventListener('visibilitychange', onVisibility)
       void flushTrash()
-      clearTimeout(noticeTimer.current)
     }
   }, [flushTrash])
 
@@ -272,20 +343,11 @@ export default function ThumbnailStrip({ vertical = false }: StripProps) {
   } else if (loadError !== null) {
     body = <p className="state">Couldn’t load wallpapers: {loadError}</p>
   } else if (visible.length === 0) {
-    body = <p className="state">No wallpapers yet. Start the daemon, or add a local folder in Settings.</p>
+    body = <p className="state">{EMPTY_TEXT[tab]}</p>
   }
 
   return (
     <>
-      <div
-        className="grip"
-        data-tauri-drag-region
-        role="img"
-        aria-label="Move picker"
-        title="Move picker"
-      >
-        <Icon name={vertical ? 'gripHorizontal' : 'gripVertical'} />
-      </div>
       {body}
       <div
         ref={listRef}
@@ -315,6 +377,7 @@ export default function ThumbnailStrip({ vertical = false }: StripProps) {
             }}
           />
         ))}
+        {hasMore && <div ref={sentinelRef} className="sentinel" aria-hidden="true" />}
       </div>
       {menu && activeThumb && (
         <ContextMenu
@@ -328,24 +391,6 @@ export default function ThumbnailStrip({ vertical = false }: StripProps) {
           }}
         />
       )}
-      {drop.over && (
-        <div className="drop-overlay" aria-hidden="true">
-          <Icon name="image" />
-          <span>Drop an image to set it</span>
-        </div>
-      )}
-      <div className="toast-region" role="status" aria-live="polite">
-        {notice && (
-          <div className="toast">
-            <span>{notice.text}</span>
-            {notice.undo && (
-              <button type="button" className="toast-action" onClick={undo}>
-                Undo
-              </button>
-            )}
-          </div>
-        )}
-      </div>
     </>
   )
 }

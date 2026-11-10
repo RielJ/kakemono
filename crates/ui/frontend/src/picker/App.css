@@ -457,3 +457,23 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/* ── Tab panel ───────────────────────────────────────────────────────────── */
+/* Wraps the strip (or a tab's message); the strip lays out inside it as it did in `.app`. */
+.panel {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.app-vertical .panel {
+  flex-direction: column;
+}
+
+/* The last slot of a paged strip; scrolling it into view loads the next page. */
+.sentinel {
+  flex: none;
+  width: 1px;
+  height: 1px;
+}

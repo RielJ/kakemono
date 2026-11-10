@@ -11,7 +11,8 @@ vi.mock('../shared/api', async (importOriginal) => {
     ...real,
     getConfig: vi.fn(),
     getAppInfo: vi.fn(),
-    listThumbnails: vi.fn(),
+    listTab: vi.fn(),
+    onPickerShown: vi.fn(),
     setFile: vi.fn(),
     favoriteWallpaper: vi.fn(),
     trashWallpaper: vi.fn(),
@@ -30,6 +31,9 @@ vi.mock('../shared/useDaemonEvents', () => ({
   },
 }))
 
+// The `picker-shown` handler App registers, so tests can play a show.
+const shown = vi.hoisted(() => ({ handler: null as null | (() => void) }))
+
 const THUMBS: Thumbnail[] = [
   { path: '/w/a.jpg', source: 'unsplash', title: 'Alps', isCurrent: false, imageUrl: 'thumb://localhost/a' },
   { path: '/w/b.jpg', source: 'local', title: 'Beach', isCurrent: true, imageUrl: 'thumb://localhost/b' },
@@ -45,7 +49,11 @@ function mockConfig(position: string, orientation?: string) {
 function mockApi(position = 'bottom', orientation?: string) {
   mockConfig(position, orientation)
   vi.mocked(api.getAppInfo).mockResolvedValue({ os: 'macos', config_path: '', legacy_config: false, version: '0' })
-  vi.mocked(api.listThumbnails).mockResolvedValue(THUMBS.map((t) => ({ ...t })))
+  vi.mocked(api.listTab).mockImplementation(async () => page(THUMBS))
+  vi.mocked(api.onPickerShown).mockImplementation(async (handler) => {
+    shown.handler = handler
+    return () => {}
+  })
   vi.mocked(api.setFile).mockResolvedValue(undefined)
   vi.mocked(api.favoriteWallpaper).mockResolvedValue(undefined)
   vi.mocked(api.trashWallpaper).mockResolvedValue(undefined)
@@ -53,8 +61,15 @@ function mockApi(position = 'bottom', orientation?: string) {
   vi.mocked(api.resetPickerPosition).mockResolvedValue(undefined)
 }
 
+/** One `listTab` page holding `items` (copied, so a test can't mutate the fixtures). */
+function page(items: Thumbnail[], hasMore = false): api.TabListing {
+  return { items: items.map((t) => ({ ...t })), currentIndex: items[0]?.isCurrent ? 0 : null, hasMore }
+}
+
+/** Opens the picker and switches to the Downloaded tab (it opens on Sources). */
 async function renderPicker() {
   render(<App />)
+  fireEvent.click(await screen.findByRole('tab', { name: 'Downloaded' }))
   const list = await screen.findByRole('listbox', { name: 'Wallpapers' })
   await screen.findAllByRole('option')
   return list
@@ -302,17 +317,18 @@ describe('live updates', () => {
     await renderPicker()
     act(() => live.handlers.onChanged?.({ ...WALLPAPER, path: '/w/a.jpg' }))
     expect(selected()).toEqual(['true', 'false', 'false'])
-    expect(api.listThumbnails).toHaveBeenCalledTimes(1)
+    expect(api.listTab).toHaveBeenCalledTimes(1)
   })
 
   it('reloads the list for a wallpaper it does not have, and on reconnect', async () => {
     await renderPicker()
     await act(async () => live.handlers.onChanged?.({ ...WALLPAPER, path: '/w/new.jpg' }))
-    expect(api.listThumbnails).toHaveBeenCalledTimes(2)
+    expect(api.listTab).toHaveBeenCalledTimes(2)
     await act(async () => live.handlers.onConnection?.({ state: 'connected', status: null }))
-    expect(api.listThumbnails).toHaveBeenCalledTimes(3)
+    expect(api.listTab).toHaveBeenCalledTimes(3)
     await act(async () => live.handlers.onConnection?.({ state: 'not_running' }))
-    expect(api.listThumbnails).toHaveBeenCalledTimes(3)
+    expect(api.listTab).toHaveBeenCalledTimes(3)
+    expect(api.listTab).toHaveBeenLastCalledWith('downloaded', 0)
   })
 })
 
@@ -361,3 +377,167 @@ const WALLPAPER = {
   height: 0,
   set_at: '',
 }
+
+/** A stand-in for `IntersectionObserver` (jsdom has none) that a test can trigger. */
+class FakeObserver {
+  static instances: FakeObserver[] = []
+  readonly targets = new Set<Element>()
+  disconnected = false
+  constructor(readonly callback: IntersectionObserverCallback) {
+    FakeObserver.instances.push(this)
+  }
+  observe(target: Element) {
+    this.targets.add(target)
+  }
+  unobserve(target: Element) {
+    this.targets.delete(target)
+  }
+  disconnect() {
+    this.disconnected = true
+    this.targets.clear()
+  }
+  takeRecords(): IntersectionObserverEntry[] {
+    return []
+  }
+  /** Reports every live observer's targets as scrolled into view. */
+  static showAll() {
+    for (const o of FakeObserver.instances.filter((i) => !i.disconnected)) {
+      const entries = [...o.targets].map((target) => ({ target, isIntersecting: true }) as IntersectionObserverEntry)
+      o.callback(entries, o as unknown as IntersectionObserver)
+    }
+  }
+}
+
+describe('tabs', () => {
+  const tab = (name: string) => screen.getByRole('tab', { name })
+  const many = (n: number, from = 0): Thumbnail[] =>
+    Array.from({ length: n }, (_, i) => ({
+      path: `/w/${from + i}.jpg`,
+      source: 'local',
+      title: `W${from + i}`,
+      isCurrent: from + i === 0,
+      imageUrl: '',
+    }))
+
+  beforeEach(() => {
+    FakeObserver.instances = []
+    vi.stubGlobal('IntersectionObserver', FakeObserver)
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('opens on Sources inside the tab panel and lists nothing from disk', async () => {
+    render(<App />)
+    expect((await screen.findByRole('tab', { name: 'Sources' })).getAttribute('aria-selected')).toBe('true')
+    const panel = screen.getByRole('tabpanel')
+    expect(panel.id).toBe('picker-panel')
+    expect(panel.getAttribute('aria-labelledby')).toBe('picker-tab-sources')
+    expect(api.listTab).not.toHaveBeenCalled()
+  })
+
+  it('Downloaded lists its first page with the current wallpaper first, and the sentinel loads offset 40', async () => {
+    vi.mocked(api.listTab).mockImplementation(async (_tab, offset) =>
+      offset === 0 ? page(many(40), true) : page(many(5, 40)),
+    )
+    render(<App />)
+    fireEvent.click(await screen.findByRole('tab', { name: 'Downloaded' }))
+    const list = await screen.findByRole('listbox', { name: 'Wallpapers' })
+    await vi.waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(40))
+    expect(api.listTab).toHaveBeenCalledExactlyOnceWith('downloaded', 0)
+    expect(activeLabel(list)).toBe('W0 — local')
+    expect(screen.getAllByRole('option')[0].getAttribute('aria-selected')).toBe('true')
+
+    act(() => FakeObserver.showAll())
+    await vi.waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(45))
+    expect(api.listTab).toHaveBeenLastCalledWith('downloaded', 40)
+    // The last page said there is no more: the sentinel is gone.
+    act(() => FakeObserver.showAll())
+    expect(api.listTab).toHaveBeenCalledTimes(2)
+  })
+
+  it('moving the keyboard near the end loads the next page', async () => {
+    vi.mocked(api.listTab).mockImplementation(async (_tab, offset) =>
+      offset === 0 ? page(many(40), true) : page(many(5, 40)),
+    )
+    const user = userEvent.setup()
+    render(<App />)
+    fireEvent.click(await screen.findByRole('tab', { name: 'Downloaded' }))
+    await screen.findByRole('listbox', { name: 'Wallpapers' })
+    await vi.waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(40))
+    await user.keyboard('{End}')
+    await vi.waitFor(() => expect(api.listTab).toHaveBeenLastCalledWith('downloaded', 40))
+  })
+
+  it('picker-shown goes back to Sources; window focus reloads the active tab without switching', async () => {
+    await renderPicker()
+    expect(api.listTab).toHaveBeenCalledExactlyOnceWith('downloaded', 0)
+    act(() => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    await vi.waitFor(() => expect(api.listTab).toHaveBeenCalledTimes(2))
+    expect(api.listTab).toHaveBeenLastCalledWith('downloaded', 0)
+    expect(tab('Downloaded').getAttribute('aria-selected')).toBe('true')
+
+    await vi.waitFor(() => expect(shown.handler).not.toBeNull())
+    act(() => shown.handler?.())
+    expect(tab('Sources').getAttribute('aria-selected')).toBe('true')
+    expect(screen.queryByRole('listbox', { name: 'Wallpapers' })).toBeNull()
+  })
+
+  it('switches with ↑/↓ and 1–5 from the strip, and still from an empty tab', async () => {
+    vi.mocked(api.listTab).mockImplementation(async (t) => (t === 'downloaded' ? page(THUMBS) : page([])))
+    const user = userEvent.setup()
+    await renderPicker()
+    await user.keyboard('{ArrowDown}')
+    expect(tab('Local').getAttribute('aria-selected')).toBe('true')
+    expect(await screen.findByText(/No local images/)).toBeTruthy()
+    await user.keyboard('{ArrowDown}')
+    expect(tab('Favorites').getAttribute('aria-selected')).toBe('true')
+    await user.keyboard('{ArrowUp}{ArrowUp}')
+    expect(tab('Downloaded').getAttribute('aria-selected')).toBe('true')
+    await user.keyboard('5')
+    expect(tab('Cache').getAttribute('aria-selected')).toBe('true')
+    await user.keyboard('1')
+    expect(tab('Sources').getAttribute('aria-selected')).toBe('true')
+    await user.keyboard('{ArrowUp}')
+    expect(tab('Cache').getAttribute('aria-selected')).toBe('true')
+    expect(api.listTab).toHaveBeenCalledWith('cache', 0)
+  })
+
+  it('switches with ←/→ in a vertical picker', async () => {
+    mockApi('left')
+    const user = userEvent.setup()
+    render(<App />)
+    await vi.waitFor(() => expect(document.querySelector('main.app-vertical')).not.toBeNull())
+    // The vertical picker keeps its grip row above the tab row.
+    expect(screen.getByRole('img', { name: 'Move picker' }).className).toBe('grip')
+    await user.keyboard('{ArrowRight}')
+    expect(tab('Downloaded').getAttribute('aria-selected')).toBe('true')
+    await user.keyboard('{ArrowLeft}{ArrowLeft}')
+    expect(tab('Cache').getAttribute('aria-selected')).toBe('true')
+  })
+
+  it('gives each on-disk tab its own empty state', async () => {
+    vi.mocked(api.listTab).mockImplementation(async () => page([]))
+    render(<App />)
+    const texts: string[] = []
+    for (const name of ['Downloaded', 'Local', 'Favorites', 'Cache']) {
+      fireEvent.click(await screen.findByRole('tab', { name }))
+      await vi.waitFor(() => expect(api.listTab).toHaveBeenLastCalledWith(name.toLowerCase(), 0))
+      const text = await vi.waitFor(() => {
+        const state = screen.getByRole('tabpanel').querySelector('.state')
+        if (!state || state.textContent === 'Loading wallpapers…') throw new Error('still loading')
+        return state.textContent ?? ''
+      })
+      texts.push(text)
+    }
+    expect(new Set(texts).size).toBe(4)
+  })
+
+  it('Esc hides the picker from any tab', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    await screen.findByRole('tab', { name: 'Sources' })
+    await user.keyboard('{Escape}')
+    expect(api.hidePicker).toHaveBeenCalledOnce()
+  })
+})
