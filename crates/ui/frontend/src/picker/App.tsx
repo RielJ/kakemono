@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getAppInfo, getConfig, hidePicker, onPickerShown } from '../shared/api'
 import { useImageDrop } from '../shared/useImageDrop'
+import BrowseStrip from './components/BrowseStrip'
 import Icon from './components/Icon'
 import TabBar, { PANEL_ID } from './components/TabBar'
 import ThumbnailStrip, { type Notices } from './components/ThumbnailStrip'
@@ -22,6 +23,7 @@ function isFormControl(target: EventTarget | null): boolean {
 
 export default function App() {
   const [layout, setLayout] = useState(DEFAULT_LAYOUT)
+  const [blurNsfw, setBlurNsfw] = useState(true)
   const [tab, setTab] = useState<PickerTabId>(DEFAULT_TAB)
   // Bumped on every show: the strip remounts, so it starts again at the first page, scrolled
   // to the start.
@@ -36,7 +38,10 @@ export default function App() {
     const loadLayout = () => {
       getConfig()
         .then((cfg) => {
-          if (current) setLayout(toLayout(cfg.picker))
+          if (!current) return
+          setLayout(toLayout(cfg.picker))
+          // Older configs have no key: the default is to blur.
+          setBlurNsfw(cfg.picker.blur_nsfw !== false)
         })
         .catch(() => {})
     }
@@ -122,7 +127,7 @@ export default function App() {
 
   let panel: React.ReactNode
   if (tab === 'sources') {
-    panel = <p className="state">Browsing sources isn’t available yet.</p>
+    panel = <BrowseStrip key={`sources:${shows}`} vertical={vertical} notices={notices} blurNsfw={blurNsfw} />
   } else {
     panel = <ThumbnailStrip key={`${tab}:${shows}`} tab={tab} vertical={vertical} notices={notices} />
   }

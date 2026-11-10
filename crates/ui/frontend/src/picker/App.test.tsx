@@ -12,6 +12,7 @@ vi.mock('../shared/api', async (importOriginal) => {
     getConfig: vi.fn(),
     getAppInfo: vi.fn(),
     listTab: vi.fn(),
+    browsePage: vi.fn(),
     onPickerShown: vi.fn(),
     setFile: vi.fn(),
     favoriteWallpaper: vi.fn(),
@@ -40,6 +41,18 @@ const THUMBS: Thumbnail[] = [
   { path: '/w/c.jpg', source: 'wallhaven', title: '', isCurrent: false, imageUrl: '' },
 ]
 
+const REMOTE: api.RemoteThumb = {
+  sourceId: 'wh',
+  kind: 'wallhaven',
+  remoteId: 'r1',
+  title: 'Dunes',
+  author: 'Ann',
+  width: null,
+  height: null,
+  nsfw: false,
+  imageUrl: null,
+}
+
 function mockConfig(position: string, orientation?: string) {
   vi.mocked(api.getConfig).mockResolvedValue({ picker: { position, orientation } } as unknown as Awaited<
     ReturnType<typeof api.getConfig>
@@ -50,6 +63,14 @@ function mockApi(position = 'bottom', orientation?: string) {
   mockConfig(position, orientation)
   vi.mocked(api.getAppInfo).mockResolvedValue({ os: 'macos', config_path: '', legacy_config: false, version: '0' })
   vi.mocked(api.listTab).mockImplementation(async () => page(THUMBS))
+  vi.mocked(api.browsePage).mockResolvedValue({
+    session: 's1',
+    page: 0,
+    restarted: false,
+    done: true,
+    items: [REMOTE],
+    sources: [{ source_id: 'wh', kind: 'wallhaven', state: { state: 'active' } }],
+  })
   vi.mocked(api.onPickerShown).mockImplementation(async (handler) => {
     shown.handler = handler
     return () => {}
@@ -425,13 +446,36 @@ describe('tabs', () => {
   })
   afterEach(() => vi.unstubAllGlobals())
 
-  it('opens on Sources inside the tab panel and lists nothing from disk', async () => {
+  it('opens on Sources inside the tab panel, browsing remote previews and nothing from disk', async () => {
     render(<App />)
     expect((await screen.findByRole('tab', { name: 'Sources' })).getAttribute('aria-selected')).toBe('true')
     const panel = screen.getByRole('tabpanel')
     expect(panel.id).toBe('picker-panel')
     expect(panel.getAttribute('aria-labelledby')).toBe('picker-tab-sources')
+    const list = await within(panel).findByRole('listbox', { name: 'Previews' })
+    expect(within(list).getByRole('option', { name: 'Dunes by Ann — wallhaven' })).toBeTruthy()
+    // Page 0 of a new session, or of the one an earlier test left (younger than 10 min).
+    expect(api.browsePage).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ page: 0, source: null }))
     expect(api.listTab).not.toHaveBeenCalled()
+  })
+
+  it('passes [picker] blur_nsfw to the Sources strip', async () => {
+    const nsfw = { ...REMOTE, nsfw: true }
+    const listing = { session: 's1', page: 0, restarted: false, done: true, items: [nsfw, { ...nsfw, remoteId: 'r2' }], sources: [] }
+    vi.mocked(api.browsePage).mockResolvedValue(listing)
+    render(<App />)
+    let options = await within(await screen.findByRole('listbox', { name: 'Previews' })).findAllByRole('option')
+    // The second card is not the keyboard's, so it stays blurred.
+    expect(options[1].hasAttribute('data-blurred')).toBe(true)
+    cleanup()
+
+    vi.mocked(api.getConfig).mockResolvedValue({ picker: { position: 'bottom', blur_nsfw: false } } as unknown as Awaited<
+      ReturnType<typeof api.getConfig>
+    >)
+    render(<App />)
+    await vi.waitFor(() => expect(api.getConfig).toHaveBeenCalled())
+    options = await within(await screen.findByRole('listbox', { name: 'Previews' })).findAllByRole('option')
+    await vi.waitFor(() => expect(options[1].hasAttribute('data-blurred')).toBe(false))
   })
 
   it('Downloaded lists its first page with the current wallpaper first, and the sentinel loads offset 40', async () => {
@@ -478,9 +522,13 @@ describe('tabs', () => {
     expect(tab('Downloaded').getAttribute('aria-selected')).toBe('true')
 
     await vi.waitFor(() => expect(shown.handler).not.toBeNull())
+    vi.mocked(api.browsePage).mockClear()
     act(() => shown.handler?.())
     expect(tab('Sources').getAttribute('aria-selected')).toBe('true')
     expect(screen.queryByRole('listbox', { name: 'Wallpapers' })).toBeNull()
+    // The browse session from the first show is younger than 10 min: page 0 of it again.
+    await screen.findByRole('listbox', { name: 'Previews' })
+    expect(api.browsePage).toHaveBeenCalledExactlyOnceWith({ session: 's1', page: 0, source: null })
   })
 
   it('switches with ↑/↓ and 1–5 from the strip, and still from an empty tab', async () => {
