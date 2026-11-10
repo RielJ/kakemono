@@ -1,14 +1,17 @@
 //! [`Deps`]: what the engine needs from outside, with test seams.
 
 use std::fmt;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::{DateTime, FixedOffset, Local};
 use kakemono_config::Config;
 use kakemono_platform::api::Platform;
 use kakemono_platform::exec::{CommandRunner, TokioRunner};
-use kakemono_sources::SourceSet;
+use kakemono_sources::{GuardConfig, SourceSet};
 use reqwest::Client;
+
+use crate::browse::{BrowseLimits, PreviewLimits};
 
 /// Wall-clock source. Used for `WallpaperInfo.set_at` and `state.last_changed`.
 pub type Clock = Arc<dyn Fn() -> DateTime<FixedOffset> + Send + Sync>;
@@ -32,6 +35,58 @@ pub struct Deps {
     pub runner: Arc<dyn CommandRunner>,
     /// Wall clock. Default: local time.
     pub now: Clock,
+    /// What browsing the online sources needs. `None` (the default): `browse` and
+    /// `browse_use` fail with [`BrowseError::NotAvailable`](crate::engine::BrowseError).
+    pub browse: Option<BrowseDeps>,
+}
+
+/// What `browse` and `browse_use` need: the SSRF-guarded client and the preview folder.
+#[derive(Clone, Debug)]
+pub struct BrowseDeps {
+    /// The guarded client for previews and full-image downloads. Build it with
+    /// [`kakemono_sources::guarded_client`] from `guard` and the union of every provider's
+    /// [`media_hosts`](kakemono_sources::Provider::media_hosts).
+    pub http: Client,
+    /// The guard `http` was built with; every first URL is checked with it.
+    /// [`GuardConfig::strict`] outside tests.
+    pub guard: GuardConfig,
+    /// The folder previews are stored under (`<cache_dir>/previews`). Made absolute against
+    /// the working directory if it is not.
+    pub preview_root: PathBuf,
+    /// Preview download limits.
+    pub preview_limits: PreviewLimits,
+    /// Session limits.
+    pub limits: BrowseLimits,
+}
+
+impl BrowseDeps {
+    /// Browsing over `http` (built with `guard`), storing previews under `preview_root`, with
+    /// default limits.
+    #[must_use]
+    pub fn new(http: Client, guard: GuardConfig, preview_root: PathBuf) -> Self {
+        Self {
+            http,
+            guard,
+            preview_root,
+            preview_limits: PreviewLimits::default(),
+            limits: BrowseLimits::default(),
+        }
+    }
+
+    /// Use `limits` for sessions.
+    #[must_use]
+    pub fn with_limits(self, limits: BrowseLimits) -> Self {
+        Self { limits, ..self }
+    }
+
+    /// Use `preview_limits` for preview downloads.
+    #[must_use]
+    pub fn with_preview_limits(self, preview_limits: PreviewLimits) -> Self {
+        Self {
+            preview_limits,
+            ..self
+        }
+    }
 }
 
 impl Deps {
@@ -43,7 +98,15 @@ impl Deps {
             sources: Arc::new(SourceSet::from_config),
             runner: Arc::new(TokioRunner),
             now: Arc::new(|| Local::now().fixed_offset()),
+            browse: None,
         }
+    }
+
+    /// Enable browsing with `browse`.
+    #[must_use]
+    pub fn with_browse(mut self, browse: BrowseDeps) -> Self {
+        self.browse = Some(browse);
+        self
     }
 
     /// Use `factory` to build the online sources (on construction and every reload).

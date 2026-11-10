@@ -102,6 +102,26 @@ pub enum SourceOpError {
     Unsupported,
 }
 
+/// Why `browse` or `browse_use` failed. Crosses IPC as its `Display` string, shown as is.
+#[derive(Debug, thiserror::Error)]
+pub enum BrowseError {
+    /// `[daemon] internet` is off.
+    #[error("Internet access is off")]
+    InternetOff,
+    /// The engine was built without [`BrowseDeps`](crate::engine::BrowseDeps).
+    #[error("browsing is not available in this daemon")]
+    NotAvailable,
+    /// The source filter or item names an id that isn't an enabled online `[[sources]]` row.
+    #[error("no enabled online source {0:?}")]
+    UnknownSource(String),
+    /// A page past the next one of the session. `produced` pages exist (`0..produced`).
+    #[error("browse page {page} is out of range: the session has {produced} page(s)")]
+    PageOutOfRange { page: u32, produced: u32 },
+    /// `browse_use` for an item no longer in the item index (evicted, or never browsed).
+    #[error("That preview expired — scroll or reopen to refresh.")]
+    ItemExpired,
+}
+
 /// The download failures' texts joined with `"; "`.
 fn join_failures(failures: &[DownloadFailure]) -> String {
     failures
