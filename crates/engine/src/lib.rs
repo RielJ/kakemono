@@ -17,7 +17,7 @@ pub mod rotation;
 pub mod state;
 
 pub use engine::{
-    Clock, Deps, Engine, EngineError, FALLBACK_SCREEN, SourceOpError, SourcesFactory,
+    Clock, Deps, Engine, EngineError, FALLBACK_SCREEN, Provenance, SourceOpError, SourcesFactory,
 };
 pub use events::EngineEvent;
 pub use facts::{FactsCache, ImageFacts};
