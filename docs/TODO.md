@@ -19,18 +19,6 @@ because each platform needs its own watcher.
 - **Fetching:** send each image URL to the daemon's `fetch` request, which already checks the
   type, caps the size at 64 MB, saves into `manual_dir`, and sets the wallpaper.
 
-## Screen size on Linux and Windows for the size filter
-
-The "at least N% of the screen" filter (`[filters] min_size_*`) needs the screen size. The
-engine gets it from the platform backend, which reports it only on macOS. On other platforms the
-filter assumes 1920×1080 (`FALLBACK_SCREEN` in `crates/engine/src/engine.rs`), which is wrong for
-larger screens.
-
-- **Where:** `SystemSignals::screen_size` in `crates/platform/src/api.rs` defaults to `None`; only
-  `macos/signals.rs` overrides it.
-- **Linux:** Wayland `wl_output` modes (or `wlr-randr`), X11 RandR. Use the largest screen.
-- **Windows:** `EnumDisplayMonitors` with `GetMonitorInfoW`.
-
 ## Listing cache for large local folders
 
 Each wallpaper change lists the files of every enabled local source and reads image headers

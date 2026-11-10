@@ -213,6 +213,7 @@ pub async fn resume_events(conn: &zbus::Connection) -> zbus::Result<BoxStream<'s
 struct Shared {
     hub: SignalHub,
     origin: ThemeOrigin,
+    screen: crate::screen::ScreenCache,
 }
 
 /// Linux signals. Cheap to share through `Arc`; the watcher tasks stop after the last
@@ -264,6 +265,7 @@ impl LinuxSignals {
             shared: Arc::new(Shared {
                 hub: SignalHub::new(theme),
                 origin,
+                screen: crate::screen::ScreenCache::default(),
             }),
         }
     }
@@ -327,6 +329,16 @@ impl SystemSignals for LinuxSignals {
 
     fn subscribe(&self) -> broadcast::Receiver<Signal> {
         self.shared.hub.subscribe()
+    }
+
+    /// The largest connected DRM output's preferred mode ([`crate::screen`]).
+    fn screen_size(&self) -> Option<(u32, u32)> {
+        use crate::screen::{TTL, drm_sizes, largest};
+        self.shared
+            .screen
+            .get_with(std::time::Instant::now(), TTL, || {
+                largest(drm_sizes(std::path::Path::new("/sys/class/drm")))
+            })
     }
 }
 

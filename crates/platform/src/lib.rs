@@ -10,6 +10,9 @@ pub mod host;
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows", test))]
 mod hub;
 pub mod open;
+#[cfg(any(target_os = "linux", target_os = "windows", test))]
+#[cfg_attr(not(any(target_os = "linux", target_os = "windows")), allow(dead_code))]
+mod screen;
 pub mod service;
 
 /// Linux backends. `linux::detect` (the env snapshot types and the pure resolver) compiles on

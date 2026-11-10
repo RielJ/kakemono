@@ -236,7 +236,8 @@ pub trait SystemSignals: Send + Sync + 'static {
     /// platform cannot tell. Cheap and non-blocking: implementations return a cached value and
     /// refresh it before emitting [`Signal::DisplaysChanged`].
     ///
-    /// macOS reports it; Linux and Windows use this default (`None`) for now.
+    /// macOS, Linux and Windows report it; the fakes and unconfigured platforms use this
+    /// default (`None`).
     fn screen_size(&self) -> Option<(u32, u32)> {
         None
     }

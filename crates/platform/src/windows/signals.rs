@@ -20,6 +20,10 @@ use std::sync::{Once, OnceLock};
 use ::windows::Win32::Foundation::{
     ERROR_CLASS_ALREADY_EXISTS, GetLastError, HWND, LPARAM, LRESULT, WPARAM,
 };
+use ::windows::Win32::Graphics::Gdi::{
+    DEVMODEW, DISPLAY_DEVICE_ATTACHED_TO_DESKTOP, DISPLAY_DEVICEW, ENUM_CURRENT_SETTINGS,
+    EnumDisplayDevicesW, EnumDisplaySettingsW,
+};
 use ::windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use ::windows::Win32::System::Registry::{
     HKEY, HKEY_CURRENT_USER, KEY_NOTIFY, REG_NOTIFY_CHANGE_LAST_SET, RRF_RT_REG_DWORD, RegCloseKey,
@@ -173,6 +177,60 @@ impl SystemSignals for WinSignals {
     fn subscribe(&self) -> broadcast::Receiver<Signal> {
         hub().subscribe()
     }
+
+    /// The largest display's current mode in physical pixels ([`crate::screen`]).
+    fn screen_size(&self) -> Option<(u32, u32)> {
+        screen_cache().get_with(std::time::Instant::now(), crate::screen::TTL, || {
+            crate::screen::largest(display_modes())
+        })
+    }
+}
+
+/// The process-wide screen-size cache. The window proc clears it on `WM_DISPLAYCHANGE`, before
+/// the `DisplaysChanged` signal goes out, so a reader after the signal sees the new size.
+fn screen_cache() -> &'static crate::screen::ScreenCache {
+    static CACHE: OnceLock<crate::screen::ScreenCache> = OnceLock::new();
+    CACHE.get_or_init(crate::screen::ScreenCache::default)
+}
+
+/// The current mode of every display attached to the desktop.
+fn display_modes() -> Vec<(u32, u32)> {
+    let mut sizes = Vec::new();
+    for index in 0.. {
+        let mut device = DISPLAY_DEVICEW {
+            cb: u32::try_from(std::mem::size_of::<DISPLAY_DEVICEW>()).unwrap_or(u32::MAX),
+            ..Default::default()
+        };
+        // SAFETY: `device` is a live DISPLAY_DEVICEW whose `cb` holds its size, as the API
+        // requires; a null device name enumerates the display adapters' outputs.
+        let found = unsafe { EnumDisplayDevicesW(PCWSTR::null(), index, &mut device, 0) };
+        if !found.as_bool() {
+            break;
+        }
+        if !device
+            .StateFlags
+            .contains(DISPLAY_DEVICE_ATTACHED_TO_DESKTOP)
+        {
+            continue;
+        }
+        let mut mode = DEVMODEW {
+            dmSize: u16::try_from(std::mem::size_of::<DEVMODEW>()).unwrap_or(u16::MAX),
+            ..Default::default()
+        };
+        // SAFETY: `DeviceName` is the NUL-terminated name EnumDisplayDevicesW just filled in,
+        // and `mode` is a live DEVMODEW whose `dmSize` holds its size.
+        let ok = unsafe {
+            EnumDisplaySettingsW(
+                PCWSTR(device.DeviceName.as_ptr()),
+                ENUM_CURRENT_SETTINGS,
+                &mut mode,
+            )
+        };
+        if ok.as_bool() {
+            sizes.push((mode.dmPelsWidth, mode.dmPelsHeight));
+        }
+    }
+    sizes
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -255,6 +313,9 @@ impl Drop for SignalWindow {
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if let Some(signal) = signal_for_message(msg, wparam.0) {
         tracing::debug!(?signal, "window message");
+        if signal == Signal::DisplaysChanged {
+            screen_cache().clear();
+        }
         hub().send(signal);
     }
     // SAFETY: forwards the unmodified arguments of the message Windows delivered to this proc.
