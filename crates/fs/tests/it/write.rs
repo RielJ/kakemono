@@ -113,6 +113,40 @@ fn read_only_flag_is_kept() {
     assert!(!fs::metadata(&path).unwrap().permissions().readonly());
 }
 
+/// Windows refuses to replace a file that a handle without `FILE_SHARE_DELETE` has open (a virus
+/// scanner, an indexer, another writer's rename). The write waits for that handle to close
+/// instead of failing with "access denied".
+#[cfg(windows)]
+#[test]
+fn a_briefly_locked_target_is_replaced_once_released() {
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::time::Duration;
+
+    const FILE_SHARE_READ: u32 = 1;
+
+    within_deadline(|| {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "old").unwrap();
+        let holder = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(&path)
+            .unwrap();
+
+        std::thread::scope(|s| {
+            s.spawn(move || {
+                std::thread::sleep(Duration::from_millis(200));
+                drop(holder);
+            });
+            atomic_write(&path, b"new").unwrap();
+        });
+
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        assert_eq!(names_in(dir.path()), ["config.toml"]);
+    });
+}
+
 #[cfg(unix)]
 #[test]
 fn a_symlink_stays_a_symlink() {

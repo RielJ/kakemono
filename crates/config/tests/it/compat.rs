@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::tilde_expanded;
 use kakemono_config::load::{load_or_default_with_home, load_with_home, parse_str};
 use kakemono_config::{
     Backend, CommandSpec, Config, Fit, ManagedBy, PickerPlacement, PickerPosition, ThemeOverride,
@@ -160,7 +161,10 @@ location = "~"
     );
     assert_eq!(cfg.favorites.dir, Path::new("/home/golden/fav"));
     let locations: Vec<_> = cfg.sources.iter().map(|s| s.location.as_str()).collect();
-    assert_eq!(locations, ["/home/golden/a", "/abs", "/home/golden"]);
+    assert_eq!(
+        locations,
+        [tilde_expanded(home(), "a").as_str(), "/abs", "/home/golden"]
+    );
 }
 
 #[test]

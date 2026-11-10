@@ -3,6 +3,7 @@
 
 use std::path::Path;
 
+use crate::tilde_expanded;
 use kakemono_config::edit::apply_json;
 use kakemono_config::{BrightnessFilter, SourceType, parse_str};
 use serde_json::json;
@@ -37,7 +38,7 @@ fn array_of_objects_onto_a_missing_key_writes_array_of_tables() {
     let cfg = parse_str(&text, home()).expect("loads");
     assert_eq!(cfg.sources.len(), 2);
     assert_eq!(cfg.sources[1].kind, SourceType::Folder);
-    assert_eq!(cfg.sources[1].location, "/home/u/Pictures");
+    assert_eq!(cfg.sources[1].location, tilde_expanded(home(), "Pictures"));
 }
 
 #[test]
