@@ -103,6 +103,24 @@ fn env_map(inv: &Invocation) -> HashMap<String, String> {
     inv.env.iter().cloned().collect()
 }
 
+/// An absolute path on the host.
+#[cfg(not(windows))]
+const ABSOLUTE_PATH: &str = "/tmp/a.png";
+#[cfg(windows)]
+const ABSOLUTE_PATH: &str = r"C:\tmp\a.png";
+
+/// An absolute path on the host with spaces and shell syntax, and its `file://` URI.
+#[cfg(not(windows))]
+const SPECIAL_PATH: (&str, &str) = (
+    "/tmp/my pics/a b;$(x).png",
+    "file:///tmp/my%20pics/a%20b;$(x).png",
+);
+#[cfg(windows)]
+const SPECIAL_PATH: (&str, &str) = (
+    r"C:\tmp\my pics\a b;$(x).png",
+    "file:///C:/tmp/my%20pics/a%20b;$(x).png",
+);
+
 fn info(path: &str) -> WallpaperInfo {
     WallpaperInfo {
         path: path.to_owned(),
@@ -202,25 +220,12 @@ fn hooks_events_map_onto_the_subscribe_protocol() {
 #[test]
 fn hooks_invocation_renders_placeholders_without_splitting() {
     let spec = argv(&["hook", "{path}", "{uri}", "--fit={fit}", "{theme}", "{}"]);
-    let inv = hooks::invocation(
-        &spec,
-        &info("/tmp/my pics/a b;$(x).png"),
-        Theme::Dark,
-        Fit::Center,
-        |_| None,
-    )
-    .unwrap();
+    let (path, uri) = SPECIAL_PATH;
+    let inv = hooks::invocation(&spec, &info(path), Theme::Dark, Fit::Center, |_| None).unwrap();
 
     assert_eq!(
         inv.argv,
-        argv(&[
-            "hook",
-            "/tmp/my pics/a b;$(x).png",
-            "file:///tmp/my%20pics/a%20b;$(x).png",
-            "--fit=center",
-            "dark",
-            "{}",
-        ])
+        argv(&["hook", path, uri, "--fit=center", "dark", "{}"])
     );
     assert_eq!(inv.timeout, HOOK_TIMEOUT);
     assert_eq!(HOOK_TIMEOUT, Duration::from_secs(10));
@@ -236,7 +241,7 @@ fn hooks_invocation_env_is_cleared_with_pass_through_and_kakemono_vars() {
         ("AWS_SECRET_ACCESS_KEY", "nope"),
     ]
     .into();
-    let wp = info("/tmp/a.png");
+    let wp = info(ABSOLUTE_PATH);
     let inv = hooks::invocation(&argv(&["hook"]), &wp, Theme::Light, Fit::Fill, |name| {
         parent.get(name).map(|v| (*v).to_owned())
     })
@@ -250,7 +255,7 @@ fn hooks_invocation_env_is_cleared_with_pass_through_and_kakemono_vars() {
             [
                 ("HOME", "/home/test"),
                 ("PATH", "/usr/bin:/bin"),
-                ("KAKEMONO_PATH", "/tmp/a.png"),
+                ("KAKEMONO_PATH", ABSOLUTE_PATH),
                 ("KAKEMONO_SOURCE", "bing"),
                 ("KAKEMONO_TITLE", "Title with \"quotes\" and $(rm -rf ~)"),
                 ("KAKEMONO_AUTHOR", "Ann Author"),
@@ -273,7 +278,7 @@ fn hooks_invocation_makes_a_relative_path_absolute() {
         |_| None,
     )
     .unwrap();
-    let expected = std::env::current_dir().unwrap().join("rel/a.png");
+    let expected = std::env::current_dir().unwrap().join("rel").join("a.png");
     assert_eq!(inv.argv[1], expected.to_str().unwrap());
     assert_eq!(env_map(&inv)["KAKEMONO_PATH"], expected.to_str().unwrap());
 }

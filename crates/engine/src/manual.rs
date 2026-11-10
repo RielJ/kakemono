@@ -24,6 +24,7 @@ use kakemono_protocol::types::WallpaperInfo;
 use kakemono_sources::download::MAX_IMAGE_BYTES;
 use kakemono_sources::local::list_images;
 use kakemono_sources::{build_online, is_image_file};
+use percent_encoding::percent_decode_str;
 use reqwest::Url;
 use tokio::task::JoinError;
 
@@ -378,22 +379,17 @@ impl ImageFormat {
     }
 }
 
-/// The URL's last path segment, percent-decoded (`image` when there is none).
+/// The URL's last path segment, percent-decoded (`image` when there is none). A decoded `/`
+/// (`%2F`) splits the segment like the path separator it encodes; the part after it is kept.
 fn url_file_name(url: &Url) -> String {
     url.path_segments()
         .and_then(|mut s| s.next_back())
-        .map(percent_decode)
+        .map(|segment| {
+            let decoded = percent_decode_str(segment).decode_utf8_lossy();
+            decoded.rsplit('/').next().unwrap_or_default().to_owned()
+        })
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "image".to_owned())
-}
-
-fn percent_decode(s: &str) -> String {
-    // `Url::to_file_path` decodes; reuse it on a throwaway file URL.
-    Url::parse(&format!("file:///{s}"))
-        .ok()
-        .and_then(|u| u.to_file_path().ok())
-        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-        .unwrap_or_else(|| s.to_owned())
 }
 
 /// `name` made safe, with an extension that fits `format`: `photo` → `photo.png`,
@@ -582,10 +578,26 @@ mod tests {
         assert_eq!(file_name_for(".png", png), ("png".into(), "png".into()));
     }
 
+    /// An absolute path on the host, a `file://` URL and the path it names.
+    #[cfg(not(windows))]
+    const ABSOLUTE: &str = "/tmp/a.jpg";
+    #[cfg(not(windows))]
+    const FILE_URL: &str = "file:///tmp/a%20b.jpg";
+    #[cfg(not(windows))]
+    const FILE_URL_PATH: &str = "/tmp/a b.jpg";
+    #[cfg(windows)]
+    const ABSOLUTE: &str = r"C:\tmp\a.jpg";
+    #[cfg(windows)]
+    const FILE_URL: &str = "file:///C:/tmp/a%20b.jpg";
+    #[cfg(windows)]
+    const FILE_URL_PATH: &str = r"C:\tmp\a b.jpg";
+
     #[test]
     fn url_file_names_are_decoded() {
         let url = |s: &str| Url::parse(s).unwrap();
         assert_eq!(url_file_name(&url("https://x/a%20b.jpg?k=1")), "a b.jpg");
+        assert_eq!(url_file_name(&url("https://x/caf%C3%A9.png")), "café.png");
+        assert_eq!(url_file_name(&url("https://x/d/a%2Fb.jpg")), "b.jpg");
         assert_eq!(url_file_name(&url("https://x/")), "image");
         assert_eq!(url_file_name(&url("https://x")), "image");
     }
@@ -600,9 +612,9 @@ mod tests {
             parse_input("HTTP://x/a.jpg"),
             Ok(Input::Remote(_))
         ));
-        assert!(matches!(parse_input("/tmp/a.jpg"), Ok(Input::Local(_))));
+        assert!(matches!(parse_input(ABSOLUTE), Ok(Input::Local(_))));
         assert!(
-            matches!(parse_input("file:///tmp/a%20b.jpg"), Ok(Input::Local(p)) if p == Path::new("/tmp/a b.jpg"))
+            matches!(parse_input(FILE_URL), Ok(Input::Local(p)) if p == Path::new(FILE_URL_PATH))
         );
         for bad in ["a.jpg", "ftp://x/a.jpg", "", "data:image/png;base64,AA"] {
             assert!(parse_input(bad).is_err(), "{bad}");
