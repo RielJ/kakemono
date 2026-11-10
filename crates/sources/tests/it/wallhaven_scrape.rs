@@ -8,9 +8,9 @@ use std::time::Duration;
 
 use common::{Case, Replay};
 use kakemono_config::schema::WallhavenConfig;
-use kakemono_sources::Provider;
 use kakemono_sources::wallhaven::scrape::MAX_PAGES;
 use kakemono_sources::wallhaven::{DEFAULT_SCRAPE_DELAY, Wallhaven};
+use kakemono_sources::{Provider, ProviderError};
 
 fn provider(case: &Case, replay: &Replay, delay: Duration) -> Wallhaven {
     Wallhaven::with_base_url(
@@ -211,4 +211,22 @@ async fn scrape_search_page_error_has_go_text() {
         .fetch(&case.query)
         .await;
     replay.verify(outcome).await;
+}
+
+/// A 429 on the search page that outlasts the retries is `RateLimited` (audit M1).
+#[tokio::test]
+async fn scrape_rate_limit_is_the_rate_limited_variant() {
+    let dir = tempfile::tempdir().unwrap();
+    let case = scrape_case(&dir, 429, "", &[], &[SEARCH_URL], r#"{"results": []}"#);
+    let replay = case.serve().await;
+    let err = provider(&case, &replay, Duration::ZERO)
+        .fetch(&case.query)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, ProviderError::RateLimited(_)), "{err:?}");
+    assert_eq!(
+        err.to_string(),
+        "wallhaven scrape: search page: rate limited (status 429)"
+    );
+    replay.assert_requests().await;
 }

@@ -4,6 +4,7 @@
 use serde::Deserialize;
 
 use super::Wallhaven;
+use crate::de;
 use crate::http;
 use crate::provider::{ProviderError, WallpaperResult};
 
@@ -11,29 +12,33 @@ use crate::provider::{ProviderError, WallpaperResult};
 const CONTEXT: &str = "wallhaven api";
 
 /// Path of the search endpoint under the base URL.
-pub const SEARCH_PATH: &str = "/api/v1/search";
+pub(crate) const SEARCH_PATH: &str = "/api/v1/search";
 
-#[derive(Debug, Deserialize)]
+/// Search response. Missing or `null` fields decode as empty, like Go.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
 struct SearchResponse {
-    #[serde(default)]
+    #[serde(deserialize_with = "de::null_default")]
     data: Vec<ApiWallpaper>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
 struct ApiWallpaper {
     /// Page URL.
-    #[serde(default)]
+    #[serde(deserialize_with = "de::null_default")]
     url: String,
     /// Direct image URL.
-    #[serde(default)]
+    #[serde(deserialize_with = "de::null_default")]
     path: String,
-    #[serde(default)]
-    uploader: Option<Uploader>,
+    #[serde(deserialize_with = "de::null_default")]
+    uploader: Uploader,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
 struct Uploader {
-    #[serde(default)]
+    #[serde(deserialize_with = "de::null_default")]
     username: String,
 }
 
@@ -45,8 +50,7 @@ impl Wallhaven {
     ) -> Result<Vec<WallpaperResult>, ProviderError> {
         let mut params = self.search_params(query);
         params.push((super::API_KEY_PARAM, self.api_key.as_str()));
-        let url = http::url_with_query(&format!("{}{SEARCH_PATH}", self.base_url), &params)
-            .map_err(|e| ProviderError::Other(format!("{CONTEXT}: build request: {e}")))?;
+        let url = http::endpoint(&self.base_url, SEARCH_PATH, &params);
 
         let response = self
             .get_ok(url)
@@ -63,7 +67,7 @@ impl Wallhaven {
                 source_url: w.url,
                 image_url: w.path,
                 title: String::new(),
-                author: w.uploader.map(|u| u.username).unwrap_or_default(),
+                author: w.uploader.username,
                 source: "wallhaven".to_owned(),
             })
             .collect())

@@ -5,8 +5,8 @@ use crate::common;
 
 use common::Case;
 use kakemono_config::schema::BingConfig;
-use kakemono_sources::Provider;
 use kakemono_sources::bing::Bing;
+use kakemono_sources::{Provider, ProviderError};
 
 /// Every `*.case.json` in `fixtures/bing`; `every_fixture_case_has_a_test` keeps this in sync.
 const CASES: &[&str] = &[
@@ -186,6 +186,29 @@ async fn persistent_503_is_retried_then_reported() {
         r#"{"error": "bing: unexpected status 503"}"#,
     ))
     .await;
+}
+
+/// A 429 that outlasts the retries is `RateLimited`, so the engine applies its rate-limit
+/// backoff (audit M1: Bing used to report it as a plain status error).
+#[tokio::test]
+async fn rate_limit_is_the_rate_limited_variant() {
+    let (case, _dir) = custom_case(
+        r#"{"enabled": true, "market": "en-US"}"#,
+        429,
+        "",
+        DEFAULT_REQUEST,
+        r#"{"results": []}"#,
+    );
+    let replay = case.serve().await;
+    let bing = Bing::with_base_url(
+        case.config::<BingConfig>(),
+        replay.client(),
+        replay.base_url(),
+    );
+    let err = bing.fetch("").await.unwrap_err();
+    assert!(matches!(err, ProviderError::RateLimited(_)), "{err:?}");
+    assert_eq!(err.to_string(), "bing: rate limited (status 429)");
+    replay.assert_requests().await;
 }
 
 #[test]

@@ -24,7 +24,7 @@ use crate::provider::{ProviderError, WallpaperResult};
 pub const MAX_PAGES: usize = 3;
 
 /// Path of the HTML search page under the base URL.
-pub const SEARCH_PATH: &str = "/search";
+pub(crate) const SEARCH_PATH: &str = "/search";
 
 /// Error-text prefix, as in Go.
 const CONTEXT: &str = "wallhaven scrape";
@@ -48,11 +48,7 @@ impl Wallhaven {
         &self,
         query: &str,
     ) -> Result<Vec<WallpaperResult>, ProviderError> {
-        let search_url = http::url_with_query(
-            &format!("{}{SEARCH_PATH}", self.base_url),
-            &self.search_params(query),
-        )
-        .map_err(|e| ProviderError::Other(format!("{CONTEXT}: build request: {e}")))?;
+        let search_url = http::endpoint(&self.base_url, SEARCH_PATH, &self.search_params(query));
 
         let context = format!("{CONTEXT}: search page");
         let response = self

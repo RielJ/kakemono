@@ -3,6 +3,7 @@
 
 pub mod apod;
 pub mod bing;
+mod de;
 pub mod download;
 #[cfg(any(test, feature = "fake"))]
 pub mod fake;

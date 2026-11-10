@@ -3,7 +3,7 @@
 use crate::common;
 
 use common::Case;
-use kakemono_sources::reddit::Reddit;
+use kakemono_sources::reddit::{Reddit, Subreddit};
 use kakemono_sources::{Provider, ProviderError};
 
 /// Every case file in `tests/fixtures/reddit/`; one `#[tokio::test]` each below.
@@ -23,7 +23,7 @@ struct CaseConfig {
     subreddits: Vec<String>,
 }
 
-fn subreddit(case: &Case) -> String {
+fn subreddit(case: &Case) -> Subreddit {
     let cfg = case.config::<CaseConfig>();
     assert_eq!(
         cfg.subreddits.len(),
@@ -31,7 +31,7 @@ fn subreddit(case: &Case) -> String {
         "{}: one subreddit per row",
         case.id
     );
-    cfg.subreddits[0].clone()
+    cfg.subreddits[0].parse().expect("valid subreddit")
 }
 
 async fn run(name: &str) {
@@ -79,22 +79,21 @@ async fn webp_included() {
 
 #[tokio::test]
 async fn name_is_reddit() {
-    let reddit = Reddit::for_subreddit("EarthPorn", reqwest::Client::new());
+    let reddit = Reddit::for_subreddit("EarthPorn".parse().unwrap(), reqwest::Client::new());
     assert_eq!(reddit.name(), "reddit");
 }
 
-/// An empty subreddit name: error, and no request is sent (Go `TestReddit_NoSubreddits`).
-#[tokio::test]
-async fn empty_subreddit_is_an_error() {
-    let reddit = Reddit::for_subreddit_with_base_url(
-        "",
-        reqwest::Client::new(),
-        // Unroutable: the test fails if a request is attempted.
-        "http://127.0.0.1:1",
-    );
-    let err = reddit.fetch("").await.unwrap_err();
-    assert!(matches!(err, ProviderError::Other(_)), "{err:?}");
-    assert_eq!(err.to_string(), "reddit: no subreddit configured");
+/// An empty or unsafe subreddit name cannot build a provider, so no request can be sent for it
+/// (Go `TestReddit_NoSubreddits` returned an error from `fetch`).
+#[test]
+fn invalid_subreddit_names_are_rejected() {
+    for bad in ["", "a/b", "../x", "a?b", "a b", &"x".repeat(51)] {
+        let err = bad.parse::<Subreddit>().unwrap_err();
+        assert_eq!(err.to_string(), format!("{bad:?} is not a subreddit name"));
+    }
+    for good in ["EarthPorn", "a_b", "pics+wallpapers", &"x".repeat(50)] {
+        assert_eq!(good.parse::<Subreddit>().unwrap().as_str(), good);
+    }
 }
 
 /// Every fetch asks for the row's subreddit and nothing else.
@@ -129,4 +128,35 @@ async fn fetches_only_its_subreddit() {
         assert_eq!(r.url.path(), "/r/wallpapers/hot.json");
         assert_eq!(r.url.query(), Some("limit=100"));
     }
+}
+
+/// A 429 that outlasts the retries is `RateLimited`, so the engine applies its rate-limit
+/// backoff (audit M1: Reddit used to report it as a plain status error).
+#[tokio::test]
+async fn rate_limit_is_the_rate_limited_variant() {
+    let json = r#"{
+        "go_test": "hand-written",
+        "provider": "reddit",
+        "config": {"subreddits": ["wallpapers"]},
+        "query": "",
+        "routes": [
+            {"method": "GET", "host": "www.reddit.com", "path": "/r/wallpapers/hot.json",
+             "status": 429, "content_type": "text/plain", "body_file": "forbidden.txt"}
+        ],
+        "requests": [{"method": "GET", "user_agent": "",
+                      "url": "https://www.reddit.com/r/wallpapers/hot.json?limit=100"}],
+        "expected": {"results": []}
+    }"#;
+    let case = Case::parse(
+        "reddit/rate_limited",
+        common::fixtures_dir().join("reddit"),
+        json,
+    );
+    let replay = case.serve().await;
+    let reddit =
+        Reddit::for_subreddit_with_base_url(subreddit(&case), replay.client(), replay.base_url());
+    let err = reddit.fetch("").await.unwrap_err();
+    assert!(matches!(err, ProviderError::RateLimited(_)), "{err:?}");
+    assert_eq!(err.to_string(), "reddit: rate limited (status 429)");
+    replay.assert_requests().await;
 }

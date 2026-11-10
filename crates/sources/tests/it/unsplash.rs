@@ -92,7 +92,7 @@ async fn blank_access_key_is_not_configured() {
         },
         reqwest::Client::new(),
         // Unroutable: the test fails if a request is attempted.
-        "http://127.0.0.1:1",
+        "http://127.0.0.1:1".parse().unwrap(),
     );
     let err = unsplash.fetch("forest").await.unwrap_err();
     assert_eq!(err.to_string(), "unsplash requires access_key");
@@ -168,4 +168,19 @@ async fn non_array_body_is_a_decode_error() {
 fn name_is_unsplash() {
     let unsplash = Unsplash::new(UnsplashConfig::default(), reqwest::Client::new());
     assert_eq!(unsplash.name(), "unsplash");
+}
+
+/// A transport error never shows the access key (it travels in the query as `client_id`).
+#[tokio::test]
+async fn transport_error_hides_the_key() {
+    let unsplash = Unsplash::with_base_url(
+        UnsplashConfig {
+            access_key: "testkey".into(),
+        },
+        reqwest::Client::new(),
+        common::hang_up_server().await,
+    );
+    let err = unsplash.fetch("forest").await.unwrap_err();
+    assert!(matches!(err, ProviderError::Request { .. }), "{err:?}");
+    common::assert_key_absent(&err, "testkey");
 }

@@ -2564,10 +2564,7 @@ name = "kakemono-sources"
 version = "2.0.0-alpha.0"
 dependencies = [
  "async-trait",
- "chrono",
- "futures",
  "httpdate",
- "insta",
  "kakemono-config",
  "rand",
  "reqwest",

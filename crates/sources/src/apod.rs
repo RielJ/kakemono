@@ -5,10 +5,11 @@
 
 use async_trait::async_trait;
 use kakemono_config::schema::ApodConfig;
-use reqwest::{Client, StatusCode};
+use reqwest::Client;
 use serde::Deserialize;
 
-use crate::http;
+use crate::de;
+use crate::http::{self, BadStatus};
 use crate::provider::{Provider, ProviderError, WallpaperResult};
 
 /// Production base URL of the NASA API.
@@ -32,22 +33,20 @@ const RATE_LIMITED: &str =
 pub struct Apod {
     api_key: String,
     client: Client,
-    base_url: String,
+    base_url: url::Url,
 }
 
 impl Apod {
-    /// A provider against the production NASA API.
+    /// A provider against the production NASA API ([`BASE_URL`]).
+    #[must_use]
     pub fn new(cfg: ApodConfig, client: Client) -> Self {
-        Self::with_base_url(cfg, client, BASE_URL)
+        Self::with_base_url(cfg, client, http::default_base_url(BASE_URL))
     }
 
-    /// A provider against `base_url` (`scheme://host`, no path). Tests point it at a mock.
-    /// A trailing `/` is removed. An empty `api_key` becomes [`DEMO_KEY`].
-    pub fn with_base_url(cfg: ApodConfig, client: Client, base_url: impl Into<String>) -> Self {
-        let mut base_url = base_url.into();
-        while base_url.ends_with('/') {
-            base_url.pop();
-        }
+    /// A provider against `base_url` (usually `scheme://host`). Tests point it at a mock.
+    /// An empty `api_key` becomes [`DEMO_KEY`].
+    #[must_use]
+    pub fn with_base_url(cfg: ApodConfig, client: Client, base_url: url::Url) -> Self {
         let api_key = if cfg.api_key.is_empty() {
             DEMO_KEY.to_owned()
         } else {
@@ -68,29 +67,25 @@ impl Provider for Apod {
     }
 
     async fn fetch(&self, _query: &str) -> Result<Vec<WallpaperResult>, ProviderError> {
-        let base = format!("{}{API_PATH}", self.base_url);
-        let url = http::url_with_query(&base, &[("api_key", &self.api_key), ("count", COUNT)])
-            .map_err(|e| ProviderError::Other(format!("apod: build request: {e}")))?;
+        let url = http::endpoint(
+            &self.base_url,
+            API_PATH,
+            &[("api_key", &self.api_key), ("count", COUNT)],
+        );
 
         // The URL holds the API key, so it is kept out of the error text (Go: `apod: GET: ...`).
         let response = http::get_with_retry(&self.client, url)
             .await
             .map_err(|e| ProviderError::request("apod: GET", e.without_url()))?;
 
-        let status = response.status();
-        match status {
-            StatusCode::OK => {}
-            StatusCode::TOO_MANY_REQUESTS => {
-                return Err(ProviderError::RateLimited(RATE_LIMITED.to_owned()));
-            }
-            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
-                return Err(ProviderError::NotConfigured(format!(
-                    "apod: invalid API key (status {})",
-                    status.as_u16()
-                )));
-            }
-            _ => return Err(ProviderError::status("apod", status)),
-        }
+        let response = http::check_status(response).map_err(|bad| match bad {
+            BadStatus::RateLimited => ProviderError::RateLimited(RATE_LIMITED.to_owned()),
+            BadStatus::Unauthorized(status) => ProviderError::NotConfigured(format!(
+                "apod: invalid API key (status {})",
+                status.as_u16()
+            )),
+            BadStatus::Other(status) => ProviderError::status("apod", status),
+        })?;
 
         let entries: Vec<ApodEntry> = http::read_json(response, "apod").await?;
         Ok(entries.into_iter().filter_map(to_result).collect())
@@ -98,36 +93,36 @@ impl Provider for Apod {
 }
 
 /// One APOD entry. Missing or `null` fields decode as empty, like Go.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
 struct ApodEntry {
-    #[serde(default)]
-    title: Option<String>,
-    #[serde(default)]
-    date: Option<String>,
-    #[serde(default)]
-    media_type: Option<String>,
-    #[serde(default)]
-    url: Option<String>,
-    #[serde(default)]
-    hdurl: Option<String>,
-    #[serde(default)]
-    copyright: Option<String>,
+    #[serde(deserialize_with = "de::null_default")]
+    title: String,
+    #[serde(deserialize_with = "de::null_default")]
+    date: String,
+    #[serde(deserialize_with = "de::null_default")]
+    media_type: String,
+    #[serde(deserialize_with = "de::null_default")]
+    url: String,
+    #[serde(deserialize_with = "de::null_default")]
+    hdurl: String,
+    #[serde(deserialize_with = "de::null_default")]
+    copyright: String,
 }
 
 /// An image entry as a result; `None` for videos and entries without any image URL.
 fn to_result(entry: ApodEntry) -> Option<WallpaperResult> {
-    if entry.media_type.as_deref() != Some("image") {
+    if entry.media_type != "image" {
         return None;
     }
     let image_url = [entry.hdurl, entry.url]
         .into_iter()
-        .flatten()
         .find(|u| !u.is_empty())?;
     Some(WallpaperResult {
-        source_url: page_url(entry.date.as_deref().unwrap_or_default()),
+        source_url: page_url(&entry.date),
         image_url,
-        title: entry.title.unwrap_or_default(),
-        author: entry.copyright.unwrap_or_default(),
+        title: entry.title,
+        author: entry.copyright,
         source: "apod".to_owned(),
     })
 }
@@ -167,6 +162,6 @@ mod tests {
         };
         let apod = Apod::new(cfg, Client::new());
         assert_eq!(apod.api_key, DEMO_KEY);
-        assert_eq!(apod.base_url, BASE_URL);
+        assert_eq!(apod.base_url.as_str(), "https://api.nasa.gov/");
     }
 }

@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use kakemono_config::schema::WallhavenConfig;
 use reqwest::{Client, Response, StatusCode};
 
-use crate::http;
+use crate::http::{self, BadStatus};
 use crate::provider::{Provider, ProviderError, WallpaperResult};
 
 pub mod api;
@@ -28,16 +28,16 @@ pub const DEFAULT_BASE_URL: &str = "https://wallhaven.cc";
 pub const DEFAULT_SCRAPE_DELAY: Duration = Duration::from_millis(1000);
 
 /// Default `purity` when the config value is empty (SFW only).
-pub const DEFAULT_PURITY: &str = "100";
+pub(crate) const DEFAULT_PURITY: &str = "100";
 /// Default `sorting` when the config value is empty.
 pub const DEFAULT_SORTING: &str = "random";
 /// Default `categories` when the config value is empty (general, anime, people).
 pub const DEFAULT_CATEGORIES: &str = "111";
 
 /// Query parameter that carries the API key.
-pub const API_KEY_PARAM: &str = "apikey";
+pub(crate) const API_KEY_PARAM: &str = "apikey";
 
-pub use crate::http::{REDACTED, redact_url};
+use crate::http::{REDACTED, redact_url};
 
 /// Per-instance search options that replace the `[wallhaven]` values, taken from a pasted
 /// `wallhaven.cc` URL. `None` (or an empty string) keeps the config value.
@@ -58,27 +58,25 @@ pub struct Wallhaven {
     purity: String,
     sorting: String,
     categories: String,
-    base_url: String,
+    base_url: url::Url,
     scrape_delay: Duration,
     client: Client,
 }
 
 impl Wallhaven {
     /// Provider against [`DEFAULT_BASE_URL`] with [`DEFAULT_SCRAPE_DELAY`].
+    #[must_use]
     pub fn new(cfg: WallhavenConfig, client: Client) -> Self {
-        Self::with_base_url(cfg, client, DEFAULT_BASE_URL)
+        Self::with_base_url(cfg, client, http::default_base_url(DEFAULT_BASE_URL))
     }
 
-    /// Provider against `base_url` (`scheme://host`, no trailing slash), for tests.
+    /// Provider against `base_url` (`scheme://host`), for tests.
     ///
     /// Empty `purity`, `sorting` and `categories` fall back to `"100"`, `"random"` and `"111"`,
     /// as in Go. The scrape delay stays [`DEFAULT_SCRAPE_DELAY`]; use
     /// [`Wallhaven::with_scrape_delay`] to change it (Go's `NewWithSearchURL` set it to 0).
-    pub fn with_base_url(
-        cfg: WallhavenConfig,
-        client: Client,
-        base_url: impl Into<String>,
-    ) -> Self {
+    #[must_use]
+    pub fn with_base_url(cfg: WallhavenConfig, client: Client, base_url: url::Url) -> Self {
         let or_default = |value: String, default: &str| {
             if value.is_empty() {
                 default.to_owned()
@@ -91,20 +89,10 @@ impl Wallhaven {
             purity: or_default(cfg.purity, DEFAULT_PURITY),
             sorting: or_default(cfg.sorting, DEFAULT_SORTING),
             categories: or_default(cfg.categories, DEFAULT_CATEGORIES),
-            base_url: base_url.into().trim_end_matches('/').to_owned(),
+            base_url,
             scrape_delay: DEFAULT_SCRAPE_DELAY,
             client,
         }
-    }
-
-    /// Provider against [`DEFAULT_BASE_URL`] whose `categories`, `purity` and `sorting` come from
-    /// `overrides` where set, and from `cfg` otherwise. Used for one `[[sources]]` row.
-    pub fn with_overrides(
-        cfg: WallhavenConfig,
-        client: Client,
-        overrides: &WallhavenOverrides,
-    ) -> Self {
-        Self::new(cfg, client).apply_overrides(overrides)
     }
 
     /// Replaces `categories`, `purity` and `sorting` with the non-empty values in `overrides`.
@@ -157,14 +145,13 @@ impl Wallhaven {
         let response = http::send_with_retry(self.client.get(url.clone()))
             .await
             .map_err(GetError::Request)?;
-        match response.status() {
-            StatusCode::OK => Ok(response),
-            StatusCode::TOO_MANY_REQUESTS => Err(GetError::RateLimited),
-            status => Err(GetError::Status {
+        http::check_status(response).map_err(|bad| match bad {
+            BadStatus::RateLimited => GetError::RateLimited,
+            BadStatus::Unauthorized(status) | BadStatus::Other(status) => GetError::Status {
                 status,
                 url: redact_url(&url),
-            }),
-        }
+            },
+        })
     }
 }
 
@@ -180,7 +167,7 @@ impl std::fmt::Debug for Wallhaven {
             .field("purity", &self.purity)
             .field("sorting", &self.sorting)
             .field("categories", &self.categories)
-            .field("base_url", &self.base_url)
+            .field("base_url", &self.base_url.as_str())
             .field("scrape_delay", &self.scrape_delay)
             .finish_non_exhaustive()
     }
@@ -218,10 +205,7 @@ impl GetError {
     fn into_provider_error(self, context: &str) -> ProviderError {
         match self {
             Self::Request(e) => ProviderError::request(context, e),
-            Self::RateLimited => ProviderError::RateLimited(format!(
-                "{context}: rate limited (status {})",
-                StatusCode::TOO_MANY_REQUESTS.as_u16()
-            )),
+            Self::RateLimited => http::rate_limited(context),
             Self::Status { status, url } => ProviderError::Other(format!(
                 "{context}: unexpected status {} for {url}",
                 status.as_u16()

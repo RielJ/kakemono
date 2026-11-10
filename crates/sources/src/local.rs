@@ -13,7 +13,7 @@ const MAX_LISTED: usize = 50_000;
 ///
 /// - Hidden entries (name starts with `.`) are skipped, files and directories alike. That covers
 ///   the downloader's `.kakemono-seen` ledger. `dir` itself may be hidden.
-/// - The walk is iterative and stops at [`MAX_LISTED`] results.
+/// - The walk is iterative and stops at 50,000 results.
 /// - Symlinks are followed, to files and to directories, but each directory is entered at most
 ///   once (by canonical path), so a link loop ends. Dangling links are skipped.
 /// - A missing, unreadable or non-directory `dir` gives an empty list; unreadable entries are

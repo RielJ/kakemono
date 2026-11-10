@@ -23,8 +23,9 @@ use reqwest::Client;
 
 use crate::apod::Apod;
 use crate::bing::Bing;
+use crate::http::default_base_url;
 use crate::provider::{Provider, ProviderError};
-use crate::reddit::Reddit;
+use crate::reddit::{Reddit, Subreddit};
 use crate::unsplash::Unsplash;
 use crate::wallhaven::{Wallhaven, WallhavenOverrides};
 
@@ -54,7 +55,7 @@ impl std::fmt::Debug for OnlineSource {
 
 /// A Wallhaven `location` parsed into a query and per-instance option overrides.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct WallhavenSearch {
+pub(crate) struct WallhavenSearch {
     /// The `q` parameter; empty for "anything".
     pub query: String,
     /// Options that replace the `[wallhaven]` values for this instance.
@@ -120,21 +121,21 @@ pub fn build_online(
 
 /// API origins per provider; production by default, mock servers in tests.
 struct Origins {
-    wallhaven: String,
-    unsplash: String,
-    reddit: String,
-    bing: String,
-    apod: String,
+    wallhaven: url::Url,
+    unsplash: url::Url,
+    reddit: url::Url,
+    bing: url::Url,
+    apod: url::Url,
 }
 
 impl Default for Origins {
     fn default() -> Self {
         Self {
-            wallhaven: crate::wallhaven::DEFAULT_BASE_URL.to_owned(),
-            unsplash: crate::unsplash::BASE_URL.to_owned(),
-            reddit: crate::reddit::BASE_URL.to_owned(),
-            bing: crate::bing::BASE_URL.to_owned(),
-            apod: crate::apod::BASE_URL.to_owned(),
+            wallhaven: default_base_url(crate::wallhaven::DEFAULT_BASE_URL),
+            unsplash: default_base_url(crate::unsplash::BASE_URL),
+            reddit: default_base_url(crate::reddit::BASE_URL),
+            bing: default_base_url(crate::bing::BASE_URL),
+            apod: default_base_url(crate::apod::BASE_URL),
         }
     }
 }
@@ -150,7 +151,7 @@ fn build_online_at(
         SourceType::Wallhaven => {
             let search = wallhaven_location(location)?;
             let provider =
-                Wallhaven::with_base_url(cfg.wallhaven.clone(), http, &origins.wallhaven)
+                Wallhaven::with_base_url(cfg.wallhaven.clone(), http, origins.wallhaven.clone())
                     .apply_overrides(&search.overrides);
             (Arc::new(provider), search.query)
         }
@@ -160,7 +161,7 @@ fn build_online_at(
                 Arc::new(Unsplash::with_base_url(
                     cfg.unsplash.clone(),
                     http,
-                    &origins.unsplash,
+                    origins.unsplash.clone(),
                 )),
                 query,
             )
@@ -171,17 +172,25 @@ fn build_online_at(
                 Arc::new(Reddit::for_subreddit_with_base_url(
                     subreddit,
                     http,
-                    &origins.reddit,
+                    origins.reddit.clone(),
                 )),
                 String::new(),
             )
         }
         SourceType::Bing => (
-            Arc::new(Bing::with_base_url(cfg.bing.clone(), http, &origins.bing)),
+            Arc::new(Bing::with_base_url(
+                cfg.bing.clone(),
+                http,
+                origins.bing.clone(),
+            )),
             String::new(),
         ),
         SourceType::Apod => (
-            Arc::new(Apod::with_base_url(cfg.apod.clone(), http, &origins.apod)),
+            Arc::new(Apod::with_base_url(
+                cfg.apod.clone(),
+                http,
+                origins.apod.clone(),
+            )),
             String::new(),
         ),
         SourceType::Folder
@@ -208,7 +217,7 @@ fn build_online_at(
 /// `[A-Za-z0-9_+]{1,50}` (`+` joins subreddits, as Reddit allows).
 ///
 /// Errors: [`ProviderError::NotConfigured`] (`reddit: ...`) for anything else.
-pub fn reddit_location(location: &str) -> Result<String, ProviderError> {
+pub(crate) fn reddit_location(location: &str) -> Result<Subreddit, ProviderError> {
     let loc = location.trim();
     let err = || {
         ProviderError::NotConfigured(format!(
@@ -239,11 +248,7 @@ pub fn reddit_location(location: &str) -> Result<String, ProviderError> {
             rest.trim_end_matches('/').to_owned()
         }
     };
-    let valid = (1..=50).contains(&name.len())
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'+');
-    if valid { Ok(name) } else { Err(err()) }
+    name.parse().map_err(|_| err())
 }
 
 /// Hosts accepted without a scheme, e.g. `www.reddit.com/r/x`.
@@ -265,7 +270,7 @@ const UNSPLASH_HOSTS: &[&str] = &["unsplash.com", "www.unsplash.com"];
 ///   `toplist`, `hot` and `random`.
 ///
 /// Errors: [`ProviderError::NotConfigured`] (`wallhaven: ...`) for any other URL.
-pub fn wallhaven_location(location: &str) -> Result<WallhavenSearch, ProviderError> {
+pub(crate) fn wallhaven_location(location: &str) -> Result<WallhavenSearch, ProviderError> {
     let loc = location.trim();
     let err = || {
         ProviderError::NotConfigured(format!(
@@ -331,7 +336,7 @@ pub fn wallhaven_location(location: &str) -> Result<WallhavenSearch, ProviderErr
 ///
 /// Errors: [`ProviderError::NotConfigured`] (`unsplash: only search URLs are supported`) for
 /// any other URL.
-pub fn unsplash_location(location: &str) -> Result<String, ProviderError> {
+pub(crate) fn unsplash_location(location: &str) -> Result<String, ProviderError> {
     let loc = location.trim();
     let err = || ProviderError::NotConfigured("unsplash: only search URLs are supported".into());
     let Some(url) = url_like(loc, UNSPLASH_HOSTS).map_err(|()| err())? else {
@@ -423,29 +428,46 @@ mod tests {
     #[test]
     fn reddit_url_gives_the_subreddit() {
         assert_eq!(
-            reddit_location("https://www.reddit.com/r/EarthPorn/top/?t=week").unwrap(),
+            reddit_location("https://www.reddit.com/r/EarthPorn/top/?t=week")
+                .unwrap()
+                .as_str(),
             "EarthPorn"
         );
         assert_eq!(
-            reddit_location("https://old.reddit.com/r/wallpapers").unwrap(),
+            reddit_location("https://old.reddit.com/r/wallpapers")
+                .unwrap()
+                .as_str(),
             "wallpapers"
         );
         assert_eq!(
-            reddit_location("http://reddit.com/r/pics/").unwrap(),
+            reddit_location("http://reddit.com/r/pics/")
+                .unwrap()
+                .as_str(),
             "pics"
         );
         assert_eq!(
-            reddit_location("www.reddit.com/r/EarthPorn/").unwrap(),
+            reddit_location("www.reddit.com/r/EarthPorn/")
+                .unwrap()
+                .as_str(),
             "EarthPorn"
         );
     }
 
     #[test]
     fn reddit_name_forms() {
-        assert_eq!(reddit_location("r/earthporn").unwrap(), "earthporn");
-        assert_eq!(reddit_location("/r/earthporn/").unwrap(), "earthporn");
-        assert_eq!(reddit_location("earthporn").unwrap(), "earthporn");
-        assert_eq!(reddit_location("  earthporn  ").unwrap(), "earthporn");
+        assert_eq!(
+            reddit_location("r/earthporn").unwrap().as_str(),
+            "earthporn"
+        );
+        assert_eq!(
+            reddit_location("/r/earthporn/").unwrap().as_str(),
+            "earthporn"
+        );
+        assert_eq!(reddit_location("earthporn").unwrap().as_str(), "earthporn");
+        assert_eq!(
+            reddit_location("  earthporn  ").unwrap().as_str(),
+            "earthporn"
+        );
     }
 
     #[test]
@@ -676,7 +698,7 @@ mod tests {
         cfg.wallhaven.purity = "100".into();
         cfg.wallhaven.sorting = "random".into();
         let origins = Origins {
-            wallhaven: server.uri(),
+            wallhaven: server.uri().parse().unwrap(),
             ..Origins::default()
         };
         let row = entry(
@@ -708,7 +730,7 @@ mod tests {
             .await;
 
         let origins = Origins {
-            reddit: server.uri(),
+            reddit: server.uri().parse().unwrap(),
             ..Origins::default()
         };
         let row = entry(

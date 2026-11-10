@@ -26,7 +26,7 @@ pub enum DownloadError {
     /// `url` is not an absolute URL.
     #[error("download: invalid url {url}: {source}")]
     InvalidUrl {
-        /// The URL as given.
+        /// The URL as given, without its query (it cannot be parsed to redact single values).
         url: String,
         /// The parse error.
         #[source]
@@ -35,7 +35,7 @@ pub enum DownloadError {
     /// The request or the body read failed.
     #[error("download: GET {url}: {source}")]
     Request {
-        /// The URL as given.
+        /// The URL, with secret query values redacted ([`http::redact_url`]).
         url: String,
         /// The transport error.
         #[source]
@@ -44,15 +44,15 @@ pub enum DownloadError {
     /// The server answered with a status other than 200.
     #[error("download: GET {url} returned status {status}")]
     Status {
-        /// The URL as given.
+        /// The URL, with secret query values redacted ([`http::redact_url`]).
         url: String,
         /// HTTP status code.
         status: u16,
     },
-    /// The `Content-Type` is not an image type (see [`is_image_content_type`]).
+    /// The `Content-Type` is not an accepted image type (JPEG, PNG, WebP, GIF, BMP or TIFF).
     #[error("download: {url} returned non-image content-type {content_type:?}")]
     NotImage {
-        /// The URL as given.
+        /// The URL, with secret query values redacted ([`http::redact_url`]).
         url: String,
         /// The `Content-Type` header, empty when missing.
         content_type: String,
@@ -60,10 +60,18 @@ pub enum DownloadError {
     /// The body is smaller than [`MIN_IMAGE_BYTES`].
     #[error("download: {url} is too small ({bytes} bytes)")]
     TooSmall {
-        /// The URL as given.
+        /// The URL, with secret query values redacted ([`http::redact_url`]).
         url: String,
         /// Bytes received.
         bytes: u64,
+    },
+    /// The body is, or announces to be, larger than `limit` ([`MAX_IMAGE_BYTES`]).
+    #[error("download: {url} is larger than {limit} bytes")]
+    TooLarge {
+        /// The URL, with secret query values redacted ([`http::redact_url`]).
+        url: String,
+        /// The size cap that was exceeded.
+        limit: u64,
     },
     /// Creating the dir, writing or renaming the file failed.
     #[error("download: {path}: {source}", path = path.display())]
@@ -94,13 +102,22 @@ pub enum DownloadError {
 ///   file is picked up by [`is_image_file`]. Go kept such names bare.
 /// - The body streams into a hidden `.part` file in `dir`, then is renamed into place. On any
 ///   error the `.part` file is removed.
-/// - Fewer than [`MIN_IMAGE_BYTES`] bytes is an error.
+/// - Fewer than [`MIN_IMAGE_BYTES`] or more than [`MAX_IMAGE_BYTES`] bytes is an error. A
+///   `Content-Length` over the cap is rejected before the body is read.
 /// - If the name is taken, a suffix is added: `a.jpg`, `a-1.jpg`, `a-2.jpg`, ... Go overwrote.
 pub async fn download(client: &Client, url: &str, dir: &Path) -> Result<PathBuf, DownloadError> {
     let parsed = url::Url::parse(url).map_err(|source| DownloadError::InvalidUrl {
-        url: url.to_owned(),
+        url: url.split_once('?').map_or(url, |(base, _)| base).to_owned(),
         source,
     })?;
+    // Every error below names the URL; none may carry a secret (signed CDN URLs, API keys).
+    // A URL without secrets is shown exactly as given.
+    let redacted = http::redact_url(&parsed);
+    let url = if redacted == parsed {
+        url
+    } else {
+        redacted.as_str()
+    };
 
     let request_err = |source| DownloadError::Request {
         url: url.to_owned(),
@@ -130,6 +147,17 @@ pub async fn download(client: &Client, url: &str, dir: &Path) -> Result<PathBuf,
         });
     };
 
+    let too_large = || DownloadError::TooLarge {
+        url: url.to_owned(),
+        limit: MAX_IMAGE_BYTES,
+    };
+    if response
+        .content_length()
+        .is_some_and(|n| n > MAX_IMAGE_BYTES)
+    {
+        return Err(too_large());
+    }
+
     tokio::fs::create_dir_all(dir)
         .await
         .map_err(|source| DownloadError::Io {
@@ -150,6 +178,7 @@ pub async fn download(client: &Client, url: &str, dir: &Path) -> Result<PathBuf,
             remove_quietly(&part).await;
             return Err(match e {
                 StreamError::Request(source) => request_err(source),
+                StreamError::TooLarge => too_large(),
                 StreamError::Io(source) => DownloadError::Io {
                     path: part.clone(),
                     source,
@@ -204,7 +233,8 @@ pub fn is_image_file(path: impl AsRef<Path>) -> bool {
 
 /// Whether a `Content-Type` value is an accepted image type (parameters ignored,
 /// case-insensitive). Port of Go `isImageContentType`.
-pub fn is_image_content_type(content_type: &str) -> bool {
+#[cfg(test)]
+fn is_image_content_type(content_type: &str) -> bool {
     image_extension_for(content_type).is_some()
 }
 
@@ -255,17 +285,23 @@ fn file_name_for(url: &url::Url, ext: &str) -> String {
 enum StreamError {
     Request(reqwest::Error),
     Io(std::io::Error),
+    /// The body grew past [`MAX_IMAGE_BYTES`].
+    TooLarge,
 }
 
-/// Streams the body into a new file at `path` and returns the byte count.
+/// Streams the body into a new file at `path` and returns the byte count. Stops with
+/// [`StreamError::TooLarge`] before writing the chunk that would pass [`MAX_IMAGE_BYTES`].
 async fn stream_to_file(response: &mut reqwest::Response, path: &Path) -> Result<u64, StreamError> {
     let mut file = tokio::fs::File::create(path)
         .await
         .map_err(StreamError::Io)?;
     let mut written: u64 = 0;
     while let Some(chunk) = response.chunk().await.map_err(StreamError::Request)? {
+        written = written.saturating_add(chunk.len() as u64);
+        if written > MAX_IMAGE_BYTES {
+            return Err(StreamError::TooLarge);
+        }
         file.write_all(&chunk).await.map_err(StreamError::Io)?;
-        written += chunk.len() as u64;
     }
     file.flush().await.map_err(StreamError::Io)?;
     file.sync_all().await.map_err(StreamError::Io)?;

@@ -5,9 +5,10 @@
 
 use async_trait::async_trait;
 use kakemono_config::schema::BingConfig;
-use reqwest::{Client, StatusCode};
+use reqwest::Client;
 use serde::Deserialize;
 
+use crate::de;
 use crate::http;
 use crate::provider::{Provider, ProviderError, WallpaperResult};
 
@@ -31,22 +32,20 @@ const UHD_SUFFIX: &str = "_UHD.jpg";
 pub struct Bing {
     cfg: BingConfig,
     client: Client,
-    base_url: String,
+    base_url: url::Url,
 }
 
 impl Bing {
-    /// A provider against the production host.
+    /// A provider against the production host ([`BASE_URL`]).
+    #[must_use]
     pub fn new(cfg: BingConfig, client: Client) -> Self {
-        Self::with_base_url(cfg, client, BASE_URL)
+        Self::with_base_url(cfg, client, http::default_base_url(BASE_URL))
     }
 
-    /// A provider against `base_url` (`scheme://host`, no path). Tests point it at a mock.
-    /// A trailing `/` is removed.
-    pub fn with_base_url(cfg: BingConfig, client: Client, base_url: impl Into<String>) -> Self {
-        let mut base_url = base_url.into();
-        while base_url.ends_with('/') {
-            base_url.pop();
-        }
+    /// A provider against `base_url` (`scheme://host`). Tests point it at a mock. Image URLs
+    /// in the feed are relative to it.
+    #[must_use]
+    pub fn with_base_url(cfg: BingConfig, client: Client, base_url: url::Url) -> Self {
         Self {
             cfg,
             client,
@@ -64,20 +63,22 @@ impl Bing {
 
     /// Turns one feed entry into a result, or `None` when it has no `url`.
     fn result(&self, img: BingImage) -> Option<WallpaperResult> {
-        let rel = img.url.filter(|u| !u.is_empty())?;
-        let raw = format!("{}{rel}", self.base_url);
+        if img.url.is_empty() {
+            return None;
+        }
+        // Plain concatenation, like Go: the feed's paths stay byte for byte as sent.
+        let origin = self.base_url.as_str().trim_end_matches('/');
+        let raw = format!("{origin}{}", img.url);
         let mut image_url = replace_resolution(&raw);
         // No resolution token in the URL: build the UHD URL from `urlbase` instead.
-        if image_url == raw
-            && let Some(base) = img.urlbase.filter(|b| !b.is_empty())
-        {
-            image_url = format!("{}{base}{UHD_SUFFIX}", self.base_url);
+        if image_url == raw && !img.urlbase.is_empty() {
+            image_url = format!("{origin}{}{UHD_SUFFIX}", img.urlbase);
         }
         Some(WallpaperResult {
-            source_url: img.copyrightlink.unwrap_or_default(),
+            source_url: img.copyrightlink,
             image_url,
-            title: img.title.unwrap_or_default(),
-            author: img.copyright.unwrap_or_default(),
+            title: img.title,
+            author: img.copyright,
             source: "bing".to_owned(),
         })
     }
@@ -90,30 +91,26 @@ impl Provider for Bing {
     }
 
     async fn fetch(&self, _query: &str) -> Result<Vec<WallpaperResult>, ProviderError> {
-        let base = format!("{}{API_PATH}", self.base_url);
-        let url = http::url_with_query(
-            &base,
+        let url = http::endpoint(
+            &self.base_url,
+            API_PATH,
             &[
                 ("format", "js"),
                 ("idx", "0"),
                 ("n", "8"),
                 ("mkt", self.market()),
             ],
-        )
-        .map_err(|e| ProviderError::Other(format!("bing: build request: {e}")))?;
+        );
 
         let response = http::get_with_retry(&self.client, url.clone())
             .await
             // reqwest's text repeats the URL; Go's had it once, in the prefix.
             .map_err(|e| ProviderError::request(format!("bing: GET {url}"), e.without_url()))?;
-        if response.status() != StatusCode::OK {
-            return Err(ProviderError::status("bing", response.status()));
-        }
+        let response = http::check_status(response).map_err(|s| s.into_provider_error("bing"))?;
 
         let feed: BingResponse = http::read_json(response, "bing").await?;
         let results: Vec<WallpaperResult> = feed
             .images
-            .unwrap_or_default()
             .into_iter()
             .filter_map(|img| self.result(img))
             .collect();
@@ -125,31 +122,33 @@ impl Provider for Bing {
 }
 
 /// Top-level feed JSON. Missing or `null` fields decode as empty, like Go.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
 struct BingResponse {
-    #[serde(default)]
-    images: Option<Vec<BingImage>>,
+    #[serde(deserialize_with = "de::null_default")]
+    images: Vec<BingImage>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
 struct BingImage {
-    #[serde(default)]
-    url: Option<String>,
-    #[serde(default)]
-    urlbase: Option<String>,
-    #[serde(default)]
-    title: Option<String>,
-    #[serde(default)]
-    copyright: Option<String>,
-    #[serde(default)]
-    copyrightlink: Option<String>,
+    #[serde(deserialize_with = "de::null_default")]
+    url: String,
+    #[serde(deserialize_with = "de::null_default")]
+    urlbase: String,
+    #[serde(deserialize_with = "de::null_default")]
+    title: String,
+    #[serde(deserialize_with = "de::null_default")]
+    copyright: String,
+    #[serde(deserialize_with = "de::null_default")]
+    copyrightlink: String,
 }
 
 /// Replaces every resolution token `_<digits>x<digits>.jpg` with `_UHD.jpg`, then drops anything
 /// after the first `_UHD.jpg&` (extra query parameters some Bing URLs carry).
 ///
 /// Port of Go `replaceResolution` (regex `_\d+x\d+\.jpg`), without a regex dependency.
-pub fn replace_resolution(url: &str) -> String {
+pub(crate) fn replace_resolution(url: &str) -> String {
     let mut out = String::with_capacity(url.len());
     let mut rest = url;
     while let Some(pos) = rest.find('_') {

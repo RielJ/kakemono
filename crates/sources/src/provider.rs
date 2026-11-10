@@ -73,6 +73,15 @@ pub enum ProviderError {
         source: reqwest::Error,
     },
 
+    /// The response body was larger than `limit` bytes ([`crate::http::MAX_API_BODY_BYTES`]).
+    #[error("{context}: response larger than {limit} bytes")]
+    TooLarge {
+        /// Prefix such as `"reddit"`.
+        context: String,
+        /// The size cap that was exceeded.
+        limit: u64,
+    },
+
     /// The response body was not the JSON the provider expected.
     #[error("{context}: decode: {source}")]
     Decode {

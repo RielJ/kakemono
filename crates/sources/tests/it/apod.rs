@@ -172,3 +172,14 @@ fn name_is_apod() {
     let apod = Apod::new(ApodConfig::default(), reqwest::Client::new());
     assert_eq!(apod.name(), "apod");
 }
+
+/// A transport error never shows the API key (it travels in the query).
+#[tokio::test]
+async fn transport_error_hides_the_key() {
+    let cfg: ApodConfig =
+        serde_json::from_str(r#"{"enabled": true, "api_key": "testkey"}"#).unwrap();
+    let apod = Apod::with_base_url(cfg, reqwest::Client::new(), common::hang_up_server().await);
+    let err = apod.fetch("").await.unwrap_err();
+    assert!(matches!(err, ProviderError::Request { .. }), "{err:?}");
+    common::assert_key_absent(&err, "testkey");
+}

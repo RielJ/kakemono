@@ -12,13 +12,13 @@ publish.workspace = true
 # Test doubles (`fake::StaticProvider`) for downstream crates' tests.
 fake = []
 # Live provider smoke tests: `cargo test -p kakemono-sources --features live -- --ignored`.
+# No code is gated on it yet; CI's nightly job passes it.
 live = []
 
 [dependencies]
 kakemono-config.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
-futures.workspace = true
 reqwest.workspace = true
 scraper.workspace = true
 serde.workspace = true
@@ -26,7 +26,6 @@ serde_json.workspace = true
 url.workspace = true
 httpdate.workspace = true
 rand.workspace = true
-chrono.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
@@ -34,7 +33,6 @@ tracing.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 wiremock.workspace = true
 tempfile.workspace = true
-insta.workspace = true
 
 [lints]
 workspace = true

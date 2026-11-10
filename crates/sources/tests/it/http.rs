@@ -12,7 +12,7 @@ use std::time::{Duration, SystemTime};
 use async_trait::async_trait;
 use common::Case;
 use kakemono_config::schema as cfg;
-use kakemono_sources::download::{DownloadError, MIN_IMAGE_BYTES, download};
+use kakemono_sources::download::{DownloadError, MAX_IMAGE_BYTES, MIN_IMAGE_BYTES, download};
 use kakemono_sources::http::{self, get_with_retry};
 use kakemono_sources::{Provider, ProviderError, WallpaperResult};
 use reqwest::StatusCode;
@@ -165,6 +165,34 @@ async fn http_client_sends_user_agent() {
 
     let reqs = server.received_requests().await.unwrap();
     assert_eq!(reqs[0].headers.get("user-agent").unwrap(), http::USER_AGENT);
+}
+
+/// A JSON or HTML body over `MAX_API_BODY_BYTES` is rejected instead of buffered.
+#[tokio::test]
+async fn http_read_json_rejects_body_over_cap() {
+    let server = MockServer::start().await;
+    let cap = usize::try_from(http::MAX_API_BODY_BYTES).unwrap();
+    let mut body = vec![b' '; cap];
+    body.extend_from_slice(b"{}");
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+        .mount(&server)
+        .await;
+    let client = http::client().unwrap();
+
+    let response = get_with_retry(&client, server.uri()).await.unwrap();
+    let err = http::read_json::<serde_json::Value>(response, "echo")
+        .await
+        .unwrap_err();
+    assert!(matches!(err, ProviderError::TooLarge { .. }), "{err:?}");
+    assert_eq!(
+        err.to_string(),
+        format!("echo: response larger than {cap} bytes")
+    );
+
+    let response = get_with_retry(&client, server.uri()).await.unwrap();
+    let err = http::read_text(response, "echo").await.unwrap_err();
+    assert!(matches!(err, ProviderError::TooLarge { .. }), "{err:?}");
 }
 
 // ---- download -------------------------------------------------------------------------------
@@ -383,13 +411,132 @@ async fn download_creates_missing_dir() {
     assert_eq!(got, dir.join("a.jpg"));
 }
 
+/// `DownloadError` redacts secret query values itself (audit: callers had to patch the text).
+#[tokio::test]
+async fn download_errors_redact_secret_query_values() {
+    let server = MockServer::start().await;
+    Mock::given(path("/404.jpg"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+    Mock::given(path("/page.jpg"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(vec![b'x'; BIG], "text/html"))
+        .mount(&server)
+        .await;
+    Mock::given(path("/tiny.jpg"))
+        .respond_with(jpeg(10))
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let client = http::client().unwrap();
+
+    for name in ["404.jpg", "page.jpg", "tiny.jpg"] {
+        let url = format!("{}/{name}?w=1&X-Amz-Signature=s3cret", server.uri());
+        let err = download(&client, &url, dir.path()).await.unwrap_err();
+        let text = format!("{err} {err:?}");
+        assert!(!text.contains("s3cret"), "{name}: {text}");
+        assert!(
+            err.to_string()
+                .contains(&format!("/{name}?w=1&X-Amz-Signature=REDACTED")),
+            "{name}: {err}"
+        );
+    }
+
+    // An unparsable URL loses its whole query.
+    let err = download(&client, "not a url?sig=s3cret", dir.path())
+        .await
+        .unwrap_err();
+    assert!(matches!(err, DownloadError::InvalidUrl { .. }), "{err:?}");
+    assert!(!format!("{err} {err:?}").contains("s3cret"), "{err:?}");
+}
+
+/// One-shot `image/jpeg` server on a port it keeps bound. It sends `content_length` (if any)
+/// in the head, then `body_len` bytes, then closes. Without a length the body ends at close.
+async fn raw_jpeg_server(content_length: Option<u64>, body_len: u64) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        let mut buf = [0u8; 1024];
+        while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+            match socket.read(&mut buf).await {
+                Ok(0) | Err(_) => return,
+                Ok(n) => request.extend_from_slice(&buf[..n]),
+            }
+        }
+        let length = content_length.map_or(String::new(), |n| format!("Content-Length: {n}\r\n"));
+        let head = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\n{length}Connection: close\r\n\r\n"
+        );
+        if socket.write_all(head.as_bytes()).await.is_err() {
+            return;
+        }
+        let chunk = vec![0xAB; 64 * 1024];
+        let mut sent = 0;
+        while sent < body_len {
+            let n = chunk.len().min(usize::try_from(body_len - sent).unwrap());
+            if socket.write_all(&chunk[..n]).await.is_err() {
+                return; // the client gave up
+            }
+            sent += n as u64;
+        }
+    });
+    format!("http://{addr}/big.jpg")
+}
+
+/// An endless (here: just over the cap) body with no `Content-Length` is cut off at
+/// `MAX_IMAGE_BYTES` and leaves nothing on disk.
+#[tokio::test]
+async fn download_stops_streaming_at_size_cap() {
+    let url = raw_jpeg_server(None, MAX_IMAGE_BYTES + 64 * 1024).await;
+    let dir = tempfile::tempdir().unwrap();
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(60),
+        download(&http::client().unwrap(), &url, dir.path()),
+    )
+    .await
+    .expect("test deadline");
+
+    let err = result.expect_err("an image over the cap must be rejected");
+    assert!(
+        matches!(err, DownloadError::TooLarge { limit, .. } if limit == MAX_IMAGE_BYTES),
+        "{err}"
+    );
+    assert!(files_in(dir.path()).is_empty(), "partial file removed");
+}
+
+/// A `Content-Length` over the cap is rejected from the head, before any body byte is read:
+/// the server here never sends the body it announced.
+#[tokio::test]
+async fn download_rejects_announced_size_over_cap() {
+    let url = raw_jpeg_server(Some(MAX_IMAGE_BYTES + 1), 0).await;
+    let dir = tempfile::tempdir().unwrap();
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(10),
+        download(&http::client().unwrap(), &url, dir.path()),
+    )
+    .await
+    .expect("test deadline");
+
+    let err = result.expect_err("an announced size over the cap must be rejected");
+    assert!(
+        matches!(err, DownloadError::TooLarge { limit, .. } if limit == MAX_IMAGE_BYTES),
+        "{err}"
+    );
+    assert!(files_in(dir.path()).is_empty());
+}
+
 // ---- case-replay helper self-test -----------------------------------------------------------
 
 /// Minimal provider shaped like the real ones: base URL injected, one JSON call, 429 handled
 /// by the retry helper, links built from the body.
 struct EchoProvider {
     client: reqwest::Client,
-    base: String,
+    base: url::Url,
 }
 
 #[derive(serde::Deserialize)]
@@ -404,11 +551,7 @@ impl Provider for EchoProvider {
         "echo"
     }
     async fn fetch(&self, query: &str) -> Result<Vec<WallpaperResult>, ProviderError> {
-        let url = http::url_with_query(
-            &format!("{}/api/v1/search", self.base),
-            &[("q", query), ("n", "1")],
-        )
-        .map_err(|e| ProviderError::Other(format!("echo: {e}")))?;
+        let url = http::endpoint(&self.base, "/api/v1/search", &[("q", query), ("n", "1")]);
         let resp = http::get_with_retry(&self.client, url)
             .await
             .map_err(|e| ProviderError::request("echo", e))?;

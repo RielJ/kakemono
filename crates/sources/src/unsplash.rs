@@ -6,10 +6,11 @@
 
 use async_trait::async_trait;
 use kakemono_config::schema::UnsplashConfig;
-use reqwest::{Client, StatusCode};
-use serde::{Deserialize, Deserializer};
+use reqwest::Client;
+use serde::Deserialize;
 
-use crate::http;
+use crate::de;
+use crate::http::{self, BadStatus};
 use crate::provider::{Provider, ProviderError, WallpaperResult};
 
 /// Production API origin.
@@ -32,21 +33,23 @@ const CONTEXT: &str = "unsplash api";
 pub struct Unsplash {
     cfg: UnsplashConfig,
     client: Client,
-    base_url: String,
+    base_url: url::Url,
 }
 
 impl Unsplash {
     /// Provider against [`BASE_URL`].
+    #[must_use]
     pub fn new(cfg: UnsplashConfig, client: Client) -> Self {
-        Self::with_base_url(cfg, client, BASE_URL)
+        Self::with_base_url(cfg, client, http::default_base_url(BASE_URL))
     }
 
-    /// Provider against another origin (`scheme://host`, no trailing slash), for tests.
-    pub fn with_base_url(cfg: UnsplashConfig, client: Client, base_url: impl Into<String>) -> Self {
+    /// Provider against another origin (`scheme://host`), for tests.
+    #[must_use]
+    pub fn with_base_url(cfg: UnsplashConfig, client: Client, base_url: url::Url) -> Self {
         Self {
             cfg,
             client,
-            base_url: base_url.into(),
+            base_url,
         }
     }
 }
@@ -72,30 +75,23 @@ impl Provider for Unsplash {
         if !query.is_empty() {
             params.push(("query", query));
         }
-        let url = http::url_with_query(&format!("{}/photos/random", self.base_url), &params)
-            .map_err(|e| ProviderError::Other(format!("{CONTEXT}: build request: {e}")))?;
+        let url = http::endpoint(&self.base_url, "/photos/random", &params);
 
         // `without_url`: the URL carries the access key, keep it out of error texts.
         let response = http::get_with_retry(&self.client, url)
             .await
             .map_err(|e| ProviderError::request(format!("{CONTEXT}: GET"), e.without_url()))?;
 
-        let status = response.status();
-        match status {
-            StatusCode::OK => {}
-            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
-                return Err(ProviderError::NotConfigured(format!(
-                    "{CONTEXT}: invalid or revoked access key (status {})",
-                    status.as_u16()
-                )));
+        let response = http::check_status(response).map_err(|bad| match bad {
+            BadStatus::RateLimited => {
+                ProviderError::RateLimited(format!("{CONTEXT}: rate limit exceeded"))
             }
-            StatusCode::TOO_MANY_REQUESTS => {
-                return Err(ProviderError::RateLimited(format!(
-                    "{CONTEXT}: rate limit exceeded"
-                )));
-            }
-            _ => return Err(ProviderError::status(CONTEXT, status)),
-        }
+            BadStatus::Unauthorized(status) => ProviderError::NotConfigured(format!(
+                "{CONTEXT}: invalid or revoked access key (status {})",
+                status.as_u16()
+            )),
+            BadStatus::Other(status) => ProviderError::status(CONTEXT, status),
+        })?;
 
         // With count > 1 the API always returns an array.
         let photos: Vec<Photo> = http::read_json(response, CONTEXT).await?;
@@ -137,48 +133,39 @@ fn to_result(photo: Photo) -> Option<WallpaperResult> {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct Photo {
-    #[serde(deserialize_with = "null_default")]
+    #[serde(deserialize_with = "de::null_default")]
     description: String,
-    #[serde(deserialize_with = "null_default")]
+    #[serde(deserialize_with = "de::null_default")]
     alt_description: String,
-    #[serde(deserialize_with = "null_default")]
+    #[serde(deserialize_with = "de::null_default")]
     links: Links,
-    #[serde(deserialize_with = "null_default")]
+    #[serde(deserialize_with = "de::null_default")]
     urls: Urls,
-    #[serde(deserialize_with = "null_default")]
+    #[serde(deserialize_with = "de::null_default")]
     user: User,
 }
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct Links {
-    #[serde(deserialize_with = "null_default")]
+    #[serde(deserialize_with = "de::null_default")]
     html: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct Urls {
-    #[serde(deserialize_with = "null_default")]
+    #[serde(deserialize_with = "de::null_default")]
     raw: String,
-    #[serde(deserialize_with = "null_default")]
+    #[serde(deserialize_with = "de::null_default")]
     full: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct User {
-    #[serde(deserialize_with = "null_default")]
+    #[serde(deserialize_with = "de::null_default")]
     name: String,
-}
-
-/// Decodes `null` as `T::default()`.
-fn null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Deserialize<'de> + Default,
-{
-    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 #[cfg(test)]

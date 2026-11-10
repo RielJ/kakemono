@@ -4,9 +4,10 @@
 //! `preview` images), so there is nothing to HTML-unescape.
 
 use async_trait::async_trait;
-use reqwest::{Client, StatusCode};
-use serde::{Deserialize, Deserializer};
+use reqwest::Client;
+use serde::Deserialize;
 
+use crate::de;
 use crate::http;
 use crate::provider::{Provider, ProviderError, WallpaperResult};
 
@@ -17,44 +18,84 @@ pub const BASE_URL: &str = "https://www.reddit.com";
 const PAGE_ORIGIN: &str = "https://www.reddit.com";
 
 /// Posts with a lower score are skipped.
-pub const MIN_SCORE: i64 = 100;
+pub(crate) const MIN_SCORE: i64 = 100;
 
 /// Posts requested per listing.
 const LIMIT: &str = "100";
 
+/// A valid subreddit name: 1 to 50 of `A-Z a-z 0-9 _ +` (`+` joins subreddits, as Reddit
+/// allows). The name goes into the request path, so nothing else can be held here.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Subreddit(String);
+
+/// Why a string is not a [`Subreddit`].
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{0:?} is not a subreddit name")]
+pub struct InvalidSubreddit(pub String);
+
+impl Subreddit {
+    /// The name, without `r/`.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::str::FromStr for Subreddit {
+    type Err = InvalidSubreddit;
+
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        let valid = (1..=50).contains(&name.len())
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'+');
+        if valid {
+            Ok(Self(name.to_owned()))
+        } else {
+            Err(InvalidSubreddit(name.to_owned()))
+        }
+    }
+}
+
+impl std::fmt::Display for Subreddit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// The Reddit provider.
 #[derive(Debug, Clone)]
 pub struct Reddit {
-    subreddit: String,
+    subreddit: Subreddit,
     client: Client,
-    base_url: String,
+    base_url: url::Url,
 }
 
 impl Reddit {
-    /// Provider for one subreddit (`name`, without `r/`), against [`BASE_URL`].
-    pub fn for_subreddit(name: impl Into<String>, client: Client) -> Self {
-        Self::for_subreddit_with_base_url(name, client, BASE_URL)
+    /// Provider for one subreddit, against [`BASE_URL`].
+    #[must_use]
+    pub fn for_subreddit(subreddit: Subreddit, client: Client) -> Self {
+        Self::for_subreddit_with_base_url(subreddit, client, http::default_base_url(BASE_URL))
     }
 
-    /// [`Reddit::for_subreddit`] against another origin (`scheme://host`, no trailing slash), for
-    /// tests.
+    /// [`Reddit::for_subreddit`] against another origin (`scheme://host`), for tests.
+    #[must_use]
     pub fn for_subreddit_with_base_url(
-        name: impl Into<String>,
+        subreddit: Subreddit,
         client: Client,
-        base_url: impl Into<String>,
+        base_url: url::Url,
     ) -> Self {
         Self {
-            subreddit: name.into(),
+            subreddit,
             client,
-            base_url: base_url.into(),
+            base_url,
         }
     }
 
     /// `{base}/r/{subreddit}/hot.json?limit=100`.
-    fn feed_url(&self, subreddit: &str) -> Result<url::Url, ProviderError> {
-        let base = format!("{}/r/{subreddit}/hot.json", self.base_url);
-        http::url_with_query(&base, &[("limit", LIMIT)])
-            .map_err(|e| ProviderError::Other(format!("reddit: request error: {e}")))
+    fn feed_url(&self) -> url::Url {
+        let path = format!("/r/{}/hot.json", self.subreddit);
+        http::endpoint(&self.base_url, &path, &[("limit", LIMIT)])
     }
 }
 
@@ -64,25 +105,14 @@ impl Provider for Reddit {
         "reddit"
     }
 
-    /// Fetches the hot listing of the subreddit; `query` is ignored. An empty subreddit name is
-    /// an error and sends no request.
+    /// Fetches the hot listing of the subreddit; `query` is ignored.
     async fn fetch(&self, _query: &str) -> Result<Vec<WallpaperResult>, ProviderError> {
-        let subreddit = self.subreddit.as_str();
-        if subreddit.is_empty() {
-            return Err(ProviderError::Other(
-                "reddit: no subreddit configured".into(),
-            ));
-        }
-
-        let url = self.feed_url(subreddit)?;
-        let response = http::get_with_retry(&self.client, url)
+        let response = http::get_with_retry(&self.client, self.feed_url())
             .await
             .map_err(|e| ProviderError::request("reddit: HTTP error", e))?;
-        if response.status() != StatusCode::OK {
-            return Err(ProviderError::status("reddit", response.status()));
-        }
+        let response = http::check_status(response).map_err(|s| s.into_provider_error("reddit"))?;
         let listing: Listing = http::read_json(response, "reddit").await?;
-        Ok(filter_image_posts(listing, subreddit))
+        Ok(filter_image_posts(listing, self.subreddit.as_str()))
     }
 }
 
@@ -117,7 +147,7 @@ fn filter_image_posts(listing: Listing, subreddit: &str) -> Vec<WallpaperResult>
 /// A direct image URL for a post URL, or `None` when the post does not link to a supported
 /// image. Direct `.jpg/.jpeg/.png/.webp` links pass through; `imgur.com/<id>` pages become
 /// `https://i.imgur.com/<id>.jpg`; other imgur links (not albums) pass through.
-pub fn resolve_image_url(post_url: &str) -> Option<String> {
+pub(crate) fn resolve_image_url(post_url: &str) -> Option<String> {
     let lower = post_url.to_lowercase();
 
     if [".jpg", ".jpeg", ".png", ".webp"]
@@ -143,21 +173,21 @@ pub fn resolve_image_url(post_url: &str) -> Option<String> {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct Listing {
-    #[serde(deserialize_with = "null_default")]
+    #[serde(deserialize_with = "de::null_default")]
     data: ListingData,
 }
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct ListingData {
-    #[serde(deserialize_with = "null_default")]
+    #[serde(deserialize_with = "de::null_default")]
     children: Vec<Child>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct Child {
-    #[serde(deserialize_with = "null_default")]
+    #[serde(deserialize_with = "de::null_default")]
     data: Post,
 }
 
@@ -165,27 +195,18 @@ struct Child {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct Post {
-    #[serde(deserialize_with = "null_default")]
+    #[serde(deserialize_with = "de::null_default")]
     id: String,
-    #[serde(deserialize_with = "null_default")]
+    #[serde(deserialize_with = "de::null_default")]
     title: String,
-    #[serde(deserialize_with = "null_default")]
+    #[serde(deserialize_with = "de::null_default")]
     author: String,
-    #[serde(deserialize_with = "null_default")]
+    #[serde(deserialize_with = "de::null_default")]
     url: String,
-    #[serde(deserialize_with = "null_default")]
+    #[serde(deserialize_with = "de::null_default")]
     permalink: String,
-    #[serde(deserialize_with = "null_default")]
+    #[serde(deserialize_with = "de::null_default")]
     score: i64,
-}
-
-/// Decodes `null` as `T::default()`.
-fn null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Deserialize<'de> + Default,
-{
-    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 #[cfg(test)]

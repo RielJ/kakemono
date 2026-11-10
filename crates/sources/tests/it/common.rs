@@ -48,6 +48,37 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use wiremock::{Match, Mock, MockServer, Request, Respond, ResponseTemplate};
 
+/// Base URL (`http://127.0.0.1:<port>`) of a server that closes every connection without an
+/// answer, so any request to it fails with a transport error.
+///
+/// The listener stays bound for the rest of the test's runtime. Binding port 0 and dropping
+/// the listener to get a "closed" port races: another process can take the port meanwhile.
+pub async fn hang_up_server() -> url::Url {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Ok((socket, _)) = listener.accept().await {
+            drop(socket);
+        }
+    });
+    format!("http://{addr}").parse().unwrap()
+}
+
+/// Fails when `key` appears in `err`'s `Display` or `Debug`, or in any error of its source
+/// chain.
+pub fn assert_key_absent(err: &dyn std::error::Error, key: &str) {
+    let mut texts = vec![err.to_string(), format!("{err:?}")];
+    let mut source = err.source();
+    while let Some(e) = source {
+        texts.push(e.to_string());
+        texts.push(format!("{e:?}"));
+        source = e.source();
+    }
+    for text in texts {
+        assert!(!text.contains(key), "key leaked: {text}");
+    }
+}
+
 /// `tests/fixtures` of this crate.
 pub fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
@@ -214,7 +245,7 @@ impl Replay {
     }
 
     /// `http://<host>` for the case's only host. Panics if the case has several hosts.
-    pub fn base_url(&self) -> String {
+    pub fn base_url(&self) -> url::Url {
         let hosts = self.case.hosts();
         assert_eq!(
             hosts.len(),
@@ -223,16 +254,18 @@ impl Replay {
             self.case.id
         );
         format!("http://{}", hosts[0])
+            .parse()
+            .expect("route host URL")
     }
 
     /// `http://<host>` for one of the case's hosts.
-    pub fn base_url_for(&self, host: &str) -> String {
+    pub fn base_url_for(&self, host: &str) -> url::Url {
         assert!(
             self.case.hosts().iter().any(|h| h == host),
             "{}: {host} is not a route host",
             self.case.id
         );
-        format!("http://{host}")
+        format!("http://{host}").parse().expect("route host URL")
     }
 
     /// [`Replay::assert_outcome`] then [`Replay::assert_requests`].

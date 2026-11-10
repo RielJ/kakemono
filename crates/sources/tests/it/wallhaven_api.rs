@@ -61,42 +61,22 @@ async fn api_errors_never_contain_the_key() {
     assert_eq!(case.config["api_key"], "testkey");
     let replay = case.serve().await;
     let err = provider(&case, &replay).fetch("").await.unwrap_err();
-    assert_key_absent(&err);
+    common::assert_key_absent(&err, "testkey");
     assert!(err.to_string().contains("apikey=REDACTED"), "{err}");
 
-    // Transport failure: nothing listens on the port, so reqwest's error carries the URL.
-    let port = {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.local_addr().unwrap().port()
-    };
+    // Transport failure: the server hangs up unanswered, so reqwest's error carries the URL.
+    let base_url = common::hang_up_server().await;
     let cfg = WallhavenConfig {
         api_key: "testkey".to_owned(),
         ..WallhavenConfig::default()
     };
-    let err = Wallhaven::with_base_url(
-        cfg,
-        reqwest::Client::new(),
-        format!("http://127.0.0.1:{port}"),
-    )
-    .fetch("")
-    .await
-    .unwrap_err();
+    let err = Wallhaven::with_base_url(cfg, reqwest::Client::new(), base_url)
+        .fetch("")
+        .await
+        .unwrap_err();
     assert!(matches!(err, ProviderError::Request { .. }), "{err:?}");
-    assert_key_absent(&err);
+    common::assert_key_absent(&err, "testkey");
     assert!(err.to_string().contains("apikey=REDACTED"), "{err}");
-}
-
-fn assert_key_absent(err: &ProviderError) {
-    let mut texts = vec![err.to_string(), format!("{err:?}")];
-    let mut source = std::error::Error::source(err);
-    while let Some(e) = source {
-        texts.push(e.to_string());
-        texts.push(format!("{e:?}"));
-        source = e.source();
-    }
-    for text in texts {
-        assert!(!text.contains("testkey"), "key leaked: {text}");
-    }
 }
 
 #[tokio::test]
@@ -154,6 +134,36 @@ async fn api_empty_config_values_use_go_defaults_and_skip_pathless_entries() {
         {"source_url":"https://wallhaven.cc/w/c","image_url":"https://w.wallhaven.cc/full/c.png","title":"","author":"u","source":"wallhaven"}
     ]}"#;
     let case = api_case(&dir, 200, body, expected);
+    let replay = case.serve().await;
+    let wallhaven = provider(&case, &replay);
+    replay.verify(wallhaven.fetch(&case.query).await).await;
+}
+
+/// `null` decodes as empty, like Go and the other providers (audit M10): one null field used
+/// to fail the whole batch with `invalid type: null`.
+#[tokio::test]
+async fn api_null_fields_decode_as_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let body = r#"{"data":[
+        {"id":"a","url":"https://wallhaven.cc/w/a","path":null,"uploader":{"username":"x"}},
+        {"id":"b","url":null,"path":"https://w.wallhaven.cc/full/b.jpg","uploader":{"username":null}},
+        {"id":"c","url":"https://wallhaven.cc/w/c","path":"https://w.wallhaven.cc/full/c.png","uploader":null}
+    ]}"#;
+    let expected = r#"{"results": [
+        {"source_url":"","image_url":"https://w.wallhaven.cc/full/b.jpg","title":"","author":"","source":"wallhaven"},
+        {"source_url":"https://wallhaven.cc/w/c","image_url":"https://w.wallhaven.cc/full/c.png","title":"","author":"","source":"wallhaven"}
+    ]}"#;
+    let case = api_case(&dir, 200, body, expected);
+    let replay = case.serve().await;
+    let wallhaven = provider(&case, &replay);
+    replay.verify(wallhaven.fetch(&case.query).await).await;
+}
+
+/// `{"data": null}` is an empty page, not a decode error.
+#[tokio::test]
+async fn api_null_data_is_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let case = api_case(&dir, 200, r#"{"data":null}"#, r#"{"results": []}"#);
     let replay = case.serve().await;
     let wallhaven = provider(&case, &replay);
     replay.verify(wallhaven.fetch(&case.query).await).await;
