@@ -143,18 +143,22 @@ export function useBrowse({ memory = sharedMemory }: UseBrowseOptions = {}): Bro
       setMoreError(null)
       setLoading(true)
       setLoadingMore(false)
+      // `loading` clears in the same tick as the result, not in a later `.finally`, so React
+      // never commits the first page while still loading.
+      const settle = () => {
+        inFlight.current = false
+        setLoading(false)
+      }
       browsePage({ session: from, page: 0, source })
         .then((listing) => {
           if (gen !== generation.current) return
           apply(listing)
+          settle()
         })
         .catch((err: unknown) => {
-          if (gen === generation.current) setError(toError(err))
-        })
-        .finally(() => {
           if (gen !== generation.current) return
-          inFlight.current = false
-          setLoading(false)
+          setError(toError(err))
+          settle()
         })
     },
     [apply],

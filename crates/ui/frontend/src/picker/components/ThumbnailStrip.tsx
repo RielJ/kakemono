@@ -103,12 +103,14 @@ export default function ThumbnailStrip({ tab, vertical, notices }: StripProps) {
         setLoadError(null)
         const shown = page.items.filter((t) => t.path !== pending.current?.path)
         setActive(Math.max(0, shown.findIndex((t) => t.isCurrent)))
+        // Same tick as the items: a later `.finally` would let React commit the items while
+        // still loading, leaving the sentinel unobserved for that commit.
+        setLoading(false)
       })
       .catch((err: unknown) => {
-        if (gen === generation.current) setLoadError(errorMessage(err))
-      })
-      .finally(() => {
-        if (gen === generation.current) setLoading(false)
+        if (gen !== generation.current) return
+        setLoadError(errorMessage(err))
+        setLoading(false)
       })
   }, [tab])
 
