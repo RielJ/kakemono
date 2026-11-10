@@ -25,6 +25,10 @@ force_x11: boolean,
  */
 close_on_blur: boolean, 
 /**
+ * Blur NSFW browse previews in the picker until hover or focus. New; default `true`.
+ */
+blur_nsfw: boolean, 
+/**
  * `edge` (default) or `custom` (user dragged it; see `custom`). New.
  */
 placement: PickerPlacement, 

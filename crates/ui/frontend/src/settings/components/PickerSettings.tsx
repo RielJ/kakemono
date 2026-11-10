@@ -157,6 +157,13 @@ export default function PickerSettings({
         >
           <LineText>Close when it loses focus</LineText>
         </CheckLine>
+        <CheckLine
+          checked={picker.blur_nsfw}
+          onChange={(v) => set('blur_nsfw', v)}
+          hint="Online previews marked NSFW stay blurred until you hover or focus them."
+        >
+          <LineText>Blur NSFW previews</LineText>
+        </CheckLine>
         {os === 'linux' && (
           <CheckLine
             checked={picker.force_x11}

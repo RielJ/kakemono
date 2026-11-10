@@ -113,6 +113,8 @@ position = "bottom"
 # orientation = "auto"
 # Close the picker when it loses focus
 # close_on_blur = true
+# Blur NSFW previews (e.g. Wallhaven sketchy/nsfw) until you hover or focus them
+# blur_nsfw = true
 # Wayland: run the picker under XWayland so it can be positioned (experimental)
 # force_x11 = false
 
