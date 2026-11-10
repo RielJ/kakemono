@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# C compiler for x86_64-pc-windows-msvc on macOS, used by scripts/gate.sh when cargo-xwin is
+# not installed. For clippy only: the C code is built for windows-gnu, which is enough for build
+# scripts to finish. Drops cc-rs's `--target=` (zig takes `-target`).
+args=()
+for a in "$@"; do
+  [[ "$a" == --target=* ]] || args+=("$a")
+done
+exec zig cc -target x86_64-windows-gnu "${args[@]}"

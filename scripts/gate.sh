@@ -6,6 +6,12 @@
 #                                      the named crates are also clippy-checked for the Linux
 #                                      and Windows targets (only crates with cfg'd OS code)
 #
+# Cross clippy and C dependencies: crates that pull in reqwest build aws-lc-sys, which needs a C
+# compiler for the target. For Linux the gate uses `x86_64-linux-gnu-gcc` if installed, else zig
+# (scripts/cross/zig-cc-linux). For Windows it uses `cargo xwin` if installed, else zig
+# (scripts/cross/zig-cc-windows). Without either, the step is skipped and the gate says so
+# (CI's native Linux and Windows clippy jobs still cover it).
+#
 # Crate names are short (`config`, `engine`, `ui`) or full (`kakemono-config`).
 #
 # Environment:
@@ -45,6 +51,14 @@ step() {
   "${run[@]}" "$@"
 }
 
+# True when the named crates build C code (aws-lc-sys, ring, or anything with a `cc` build dep)
+# for this target.
+needs_c() {
+  cargo tree "${pkg_flags[@]}" --target "$1" -e normal,build,dev --prefix none 2>/dev/null |
+    grep -qE '^(aws-lc-sys|ring|cc) '
+}
+skipped=()
+
 if ! command -v cargo-nextest >/dev/null; then
   echo "cargo-nextest not found: brew install cargo-nextest (or cargo install cargo-nextest --locked)" >&2
   exit 2
@@ -66,9 +80,38 @@ case "$mode" in
     step cargo test --workspace --all-features --doc
     if ((${#pkg_flags[@]} > 0)); then
       for target in x86_64-unknown-linux-gnu x86_64-pc-windows-msvc; do
-        step cargo clippy "${pkg_flags[@]}" --all-targets --all-features --target "$target" -- -D warnings
+        clippy=(cargo clippy)
+        if needs_c "$target"; then
+          case "$target" in
+            *linux*)
+              if ! command -v x86_64-linux-gnu-gcc >/dev/null; then
+                if ! command -v zig >/dev/null; then
+                  skipped+=("$target: needs x86_64-linux-gnu-gcc or zig (brew install zig)")
+                  continue
+                fi
+                export CC_x86_64_unknown_linux_gnu="$PWD/scripts/cross/zig-cc-linux"
+                export AR_x86_64_unknown_linux_gnu="$PWD/scripts/cross/zig-ar"
+              fi
+              ;;
+            *windows*)
+              if command -v cargo-xwin >/dev/null; then
+                clippy=(cargo xwin clippy)
+              elif command -v zig >/dev/null; then
+                export CC_x86_64_pc_windows_msvc="$PWD/scripts/cross/zig-cc-windows"
+                export AR_x86_64_pc_windows_msvc="$PWD/scripts/cross/zig-lib"
+              else
+                skipped+=("$target: needs cargo-xwin or zig (brew install zig); covered by CI")
+                continue
+              fi
+              ;;
+          esac
+        fi
+        step "${clippy[@]}" "${pkg_flags[@]}" --all-targets --all-features --target "$target" -- -D warnings
       done
     fi
+    for s in "${skipped[@]+"${skipped[@]}"}"; do
+      printf '\n==> skipped cross clippy for %s\n' "$s"
+    done
     printf '\n==> gate passed\n'
     ;;
   *)

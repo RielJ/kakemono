@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Archiver paired with zig-cc-linux.
+exec zig ar "$@"
