@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use kakemono_protocol::client::{Client, ClientError};
-use kakemono_protocol::endpoint::Endpoint;
+use kakemono_protocol::endpoint::{Endpoint, test_socket_path};
 use kakemono_protocol::types::Request;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
@@ -14,7 +14,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 #[tokio::test]
 async fn request_with_timeout_gives_timeout_when_the_server_is_silent() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let endpoint = Endpoint::new(dir.path().join("run/k.sock")).expect("endpoint");
+    let endpoint = Endpoint::new(test_socket_path(dir.path(), "k.sock")).expect("endpoint");
     let listener = endpoint.bind().expect("bind");
     let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
     let server = tokio::spawn(async move {

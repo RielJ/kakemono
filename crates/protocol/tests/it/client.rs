@@ -6,7 +6,7 @@ use std::path::Path;
 use futures::StreamExt;
 use interprocess::local_socket::tokio::prelude::*;
 use kakemono_protocol::client::{self, Client, ClientError};
-use kakemono_protocol::endpoint::Endpoint;
+use kakemono_protocol::endpoint::{Endpoint, test_socket_path};
 use kakemono_protocol::types::{Command, Event, Request, Response, StatusData};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::task::JoinHandle;
@@ -25,7 +25,7 @@ struct Server {
 
 fn server() -> (Server, LocalSocketListener) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let endpoint = Endpoint::new(dir.path().join("run/k.sock")).expect("endpoint");
+    let endpoint = Endpoint::new(test_socket_path(dir.path(), "k.sock")).expect("endpoint");
     let listener = endpoint.bind().expect("bind");
     (
         Server {
@@ -231,7 +231,7 @@ const HINT_PREFIX: &str =
 #[tokio::test]
 async fn missing_socket_is_daemon_not_running() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("absent.sock");
+    let path = test_socket_path(dir.path(), "absent.sock");
     let endpoint = Endpoint::new(&path).expect("endpoint");
     let err = Client::connect(&endpoint).await.expect_err("no daemon");
     let msg = err.to_string();
@@ -264,11 +264,14 @@ async fn stale_socket_file_is_daemon_not_running() {
 #[tokio::test]
 async fn bind_creates_dir_0700_and_socket_0600() {
     use std::os::unix::fs::PermissionsExt;
-    let (srv, _listener) = server();
+    let dir = tempfile::tempdir().expect("tempdir");
+    // `run/` does not exist yet: `bind` creates it.
+    let endpoint = Endpoint::new(dir.path().join("run/k.sock")).expect("endpoint");
+    let _listener = endpoint.bind().expect("bind");
     let mode = |p: &Path| std::fs::metadata(p).expect("meta").permissions().mode() & 0o777;
-    assert_eq!(mode(srv.endpoint.path()), 0o600);
-    assert_eq!(mode(srv.endpoint.path().parent().expect("parent")), 0o700);
-    assert!(client::is_running(&srv.endpoint).await);
+    assert_eq!(mode(endpoint.path()), 0o600);
+    assert_eq!(mode(&dir.path().join("run")), 0o700);
+    assert!(client::is_running(&endpoint).await);
 }
 
 /// A request abandoned mid-round-trip (timed out or cancelled) leaves its reply in flight. The

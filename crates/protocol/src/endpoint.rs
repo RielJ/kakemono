@@ -397,7 +397,8 @@ mod tests {
 
         let long = format!("/{}", "h".repeat(103 - suffix));
         let err = run(Os::Mac, None, &[], Some(&long)).expect_err("104 bytes is too long");
-        let want_path = PathBuf::from(format!("{long}/kakemono.sock"));
+        // Built with `join`, as `resolve` builds it, so the separator matches on a Windows host.
+        let want_path = Path::new(&long).join(SOCKET_FILE);
         assert_eq!(
             err,
             EndpointError::PathTooLong {

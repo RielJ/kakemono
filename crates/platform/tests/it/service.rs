@@ -47,7 +47,7 @@ fn out(code: i32, stdout: &str) -> Output {
     }
 }
 
-/// Argvs with the temp root replaced by `<tmp>`, for stable snapshots.
+/// Argvs with the temp root replaced by `<tmp>` and separators as `/`, for stable snapshots.
 fn argvs(runner: &RecordingRunner, root: &Path) -> Vec<Vec<String>> {
     let root = root.to_string_lossy();
     runner
@@ -55,10 +55,21 @@ fn argvs(runner: &RecordingRunner, root: &Path) -> Vec<Vec<String>> {
         .into_iter()
         .map(|argv| {
             argv.into_iter()
-                .map(|a| a.replace(&*root, "<tmp>"))
+                .map(|a| slashes(&a.replace(&*root, "<tmp>")))
                 .collect()
         })
         .collect()
+}
+
+/// `s` with Windows path separators shown as `/`. Every backend runs on every host, and on a
+/// Windows host `Path::join` puts `\` between the components the backend adds, so a snapshot
+/// of a macOS or Linux definition would otherwise differ per host. A no-op elsewhere.
+fn slashes(s: &str) -> String {
+    if cfg!(windows) {
+        s.replace('\\', "/")
+    } else {
+        s.to_owned()
+    }
 }
 
 fn fixed_env(os: Os) -> ServiceEnv {
@@ -69,7 +80,10 @@ fn fixed_env(os: Os) -> ServiceEnv {
 
 #[test]
 fn launchd_plist_snapshot() {
-    insta::assert_snapshot!("launchd_plist", launchd::plist(&fixed_env(Os::MacOs)));
+    insta::assert_snapshot!(
+        "launchd_plist",
+        slashes(&launchd::plist(&fixed_env(Os::MacOs)))
+    );
 }
 
 #[test]
