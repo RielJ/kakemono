@@ -2494,6 +2494,7 @@ dependencies = [
  "kakemono-protocol",
  "kakemono-sources",
  "kamadak-exif",
+ "percent-encoding",
  "rand",
  "regex",
  "reqwest",

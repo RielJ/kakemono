@@ -379,8 +379,9 @@ async fn fetch_url_copies_an_absolute_path_into_manual_dir() {
 async fn fetch_url_accepts_a_file_url() {
     let f = fixture(Vec::new(), |_, _| {});
     let original = write(&f.root.join("in/a b.png"), &png_bytes());
-    let url = format!("file://{}", original.to_str().unwrap().replace(' ', "%20"));
-    let info = f.engine.fetch_url(&url).await.unwrap();
+    let url = reqwest::Url::from_file_path(&original).unwrap();
+    assert!(url.as_str().ends_with("/in/a%20b.png"), "{url}");
+    let info = f.engine.fetch_url(url.as_str()).await.unwrap();
     assert_eq!(Path::new(&info.path), f.manual().join("a b.png"));
 }
 
