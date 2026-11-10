@@ -5,6 +5,8 @@
 //! - API mode ([`api`]): `GET /api/v1/search` with the key.
 //! - Scrape mode ([`scrape`]): no key; parses the public `/search` HTML, then up to
 //!   [`scrape::MAX_PAGES`] wallpaper pages, waiting `scrape_delay` (plus jitter) before each one.
+//!   Scrape browse reads only the search page; `resolve_image` fetches the one wallpaper page
+//!   the user picks.
 //!
 //! Every `fetch` request goes through [`http::send_with_retry`] (429/503 back-off on the tokio
 //! clock). `browse` requests go through [`http::send_fail_fast`]: the picker is waiting, so a
@@ -16,7 +18,7 @@ use async_trait::async_trait;
 use kakemono_config::schema::WallhavenConfig;
 use reqwest::{Client, Response, StatusCode};
 
-use crate::browse::{BrowseBatch, BrowseCursor, BrowseSupport};
+use crate::browse::{BrowseBatch, BrowseCursor, BrowseSupport, ImageRef, RemoteItem};
 use crate::http::{self, BadStatus};
 use crate::provider::{Provider, ProviderError, WallpaperResult};
 
@@ -238,7 +240,14 @@ impl Provider for Wallhaven {
         if self.uses_api() {
             self.browse_api(query, cursor).await
         } else {
-            Err(ProviderError::Unsupported(self.name().into()))
+            self.browse_scrape(query, cursor).await
+        }
+    }
+
+    async fn resolve_image(&self, item: &RemoteItem) -> Result<String, ProviderError> {
+        match &item.image {
+            ImageRef::Direct(url) => Ok(url.clone()),
+            ImageRef::Page(page) => self.resolve_page(page).await,
         }
     }
 }
