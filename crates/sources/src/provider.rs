@@ -4,6 +4,8 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use crate::browse::{BrowseBatch, BrowseCursor, BrowseSupport, ImageRef, RemoteItem};
+
 /// One wallpaper candidate returned by a [`Provider`]. Port of Go `providers.WallpaperResult`.
 ///
 /// Serde names match the Go fixture keys (`source_url`, `image_url`, ...), so a fixture's
@@ -33,6 +35,48 @@ pub trait Provider: Send + Sync {
     /// Fetches a batch of candidates. `query` may be empty; providers without search ignore it.
     /// An empty `Ok(vec![])` is a valid answer ("nothing matched").
     async fn fetch(&self, query: &str) -> Result<Vec<WallpaperResult>, ProviderError>;
+
+    /// How [`Provider::browse`] pages. The default, [`BrowseSupport::Unsupported`], matches the
+    /// default `browse`.
+    fn browse_support(&self) -> BrowseSupport {
+        BrowseSupport::Unsupported
+    }
+
+    /// Host suffixes that preview and full-size image URLs may use, e.g. `wallhaven.cc` (which
+    /// also covers `w.wallhaven.cc`). The SSRF guard rejects any other host. Empty by default,
+    /// so a provider that does not browse can fetch nothing through the guard.
+    fn media_hosts(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// One batch of browsable images: the first when `cursor` is `None`, otherwise the batch
+    /// that `cursor` (from an earlier [`BrowseBatch::next`]) points at. `query` may be empty.
+    ///
+    /// # Errors
+    ///
+    /// [`ProviderError::Unsupported`] by default; providers that browse return their usual
+    /// errors, with 429/503 as [`ProviderError::RateLimited`] and no retry.
+    async fn browse(
+        &self,
+        _query: &str,
+        _cursor: Option<&BrowseCursor>,
+    ) -> Result<BrowseBatch, ProviderError> {
+        Err(ProviderError::Unsupported(self.name().into()))
+    }
+
+    /// The URL of the full-size image of `item`. The default returns an
+    /// [`ImageRef::Direct`] URL as is.
+    ///
+    /// # Errors
+    ///
+    /// [`ProviderError::Unsupported`] for an [`ImageRef::Page`] unless the provider overrides
+    /// this to fetch and parse the page.
+    async fn resolve_image(&self, item: &RemoteItem) -> Result<String, ProviderError> {
+        match &item.image {
+            ImageRef::Direct(url) => Ok(url.clone()),
+            ImageRef::Page(_) => Err(ProviderError::Unsupported(self.name().into())),
+        }
+    }
 }
 
 /// Why a provider fetch failed.
@@ -52,6 +96,11 @@ pub enum ProviderError {
     /// The source refused because of a rate limit. The message is shown as is.
     #[error("{0}")]
     RateLimited(String),
+
+    /// The provider cannot do what was asked (browse, or resolve a page link). Holds the
+    /// provider name; displays as `{name} cannot browse`.
+    #[error("{0} cannot browse")]
+    Unsupported(String),
 
     /// The source answered with a status the provider does not handle.
     /// Displays as `{context}: unexpected status {status}`.
