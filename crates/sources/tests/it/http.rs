@@ -687,3 +687,99 @@ async fn http_case_replay_helper_loads_go_fixtures() {
         }
     }
 }
+
+/// A server answering every request with `status` and `Retry-After: 60`, expecting `expect`
+/// requests.
+async fn fail_fast_server(status: u16, expect: u64) -> MockServer {
+    let server = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(status).insert_header("Retry-After", "60"))
+        .expect(expect)
+        .mount(&server)
+        .await;
+    server
+}
+
+// Real clock on purpose: a paused clock would hide a sleep instead of failing.
+#[tokio::test]
+async fn http_send_fail_fast_returns_429_at_once_with_hint() {
+    let server = fail_fast_server(429, 1).await;
+    let start = std::time::Instant::now();
+    let err = http::send_fail_fast(paused_client().get(server.uri()), "unsplash api")
+        .await
+        .unwrap_err();
+    assert!(
+        start.elapsed() < Duration::from_secs(1),
+        "{:?}",
+        start.elapsed()
+    );
+    assert!(
+        matches!(
+            &err,
+            ProviderError::RateLimitedFor { message, retry_after_secs: Some(60) }
+                if message == "unsplash api: rate limited (status 429)"
+        ),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
+async fn http_send_fail_fast_maps_503_to_rate_limited() {
+    let server = fail_fast_server(503, 1).await;
+    let err = http::send_fail_fast(paused_client().get(server.uri()), "bing")
+        .await
+        .unwrap_err();
+    assert_eq!(err.to_string(), "bing: rate limited (status 503)");
+}
+
+#[tokio::test]
+async fn http_send_fail_fast_without_header_has_no_hint() {
+    let server = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(429))
+        .mount(&server)
+        .await;
+    let err = http::send_fail_fast(paused_client().get(server.uri()), "bing")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            ProviderError::RateLimitedFor { message, retry_after_secs: None }
+                if message == "bing: rate limited (status 429)"
+        ),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
+async fn http_send_fail_fast_passes_other_statuses_through() {
+    let server = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(500))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let response = http::send_fail_fast(paused_client().get(server.uri()), "bing")
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn http_send_fail_fast_transport_error_is_request_with_redacted_url() {
+    let base = common::hang_up_server().await;
+    let url = format!("{base}/x?apikey=s3cret");
+    let err = http::send_fail_fast(paused_client().get(url), "wallhaven")
+        .await
+        .unwrap_err();
+    assert!(matches!(err, ProviderError::Request { .. }), "{err:?}");
+    common::assert_key_absent(&err, "s3cret");
+}
+
+#[tokio::test]
+async fn http_retry_after_secs_reads_response_header() {
+    let server = fail_fast_server(429, 1).await;
+    let response = paused_client().get(server.uri()).send().await.unwrap();
+    assert_eq!(http::retry_after_secs(response.headers()), Some(60));
+}

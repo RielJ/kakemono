@@ -4,6 +4,8 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use crate::browse::{BrowseBatch, BrowseCursor, BrowseSupport, ImageRef, RemoteItem};
+
 /// One wallpaper candidate returned by a [`Provider`]. Port of Go `providers.WallpaperResult`.
 ///
 /// Serde names match the Go fixture keys (`source_url`, `image_url`, ...), so a fixture's
@@ -33,6 +35,49 @@ pub trait Provider: Send + Sync {
     /// Fetches a batch of candidates. `query` may be empty; providers without search ignore it.
     /// An empty `Ok(vec![])` is a valid answer ("nothing matched").
     async fn fetch(&self, query: &str) -> Result<Vec<WallpaperResult>, ProviderError>;
+
+    /// How [`Provider::browse`] pages. The default, [`BrowseSupport::Unsupported`], matches the
+    /// default `browse`.
+    fn browse_support(&self) -> BrowseSupport {
+        BrowseSupport::Unsupported
+    }
+
+    /// Host suffixes that preview and full-size image URLs may use, e.g. `wallhaven.cc` (which
+    /// also covers `w.wallhaven.cc`). The SSRF guard rejects any other host. Empty by default,
+    /// so a provider that does not browse can fetch nothing through the guard.
+    fn media_hosts(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// One batch of browsable images: the first when `cursor` is `None`, otherwise the batch
+    /// that `cursor` (from an earlier [`BrowseBatch::next`]) points at. `query` may be empty.
+    ///
+    /// # Errors
+    ///
+    /// [`ProviderError::Unsupported`] by default; providers that browse return their usual
+    /// errors, with 429/503 as [`ProviderError::RateLimitedFor`] and no retry
+    /// ([`crate::http::send_fail_fast`]).
+    async fn browse(
+        &self,
+        _query: &str,
+        _cursor: Option<&BrowseCursor>,
+    ) -> Result<BrowseBatch, ProviderError> {
+        Err(ProviderError::Unsupported(self.name().into()))
+    }
+
+    /// The URL of the full-size image of `item`. The default returns an
+    /// [`ImageRef::Direct`] URL as is.
+    ///
+    /// # Errors
+    ///
+    /// [`ProviderError::Unsupported`] for an [`ImageRef::Page`] unless the provider overrides
+    /// this to fetch and parse the page.
+    async fn resolve_image(&self, item: &RemoteItem) -> Result<String, ProviderError> {
+        match &item.image {
+            ImageRef::Direct(url) => Ok(url.clone()),
+            ImageRef::Page(_) => Err(ProviderError::Unsupported(self.name().into())),
+        }
+    }
 }
 
 /// Why a provider fetch failed.
@@ -52,6 +97,26 @@ pub enum ProviderError {
     /// The source refused because of a rate limit. The message is shown as is.
     #[error("{0}")]
     RateLimited(String),
+
+    /// Rate limited, with the server's `Retry-After` hint when it sent one. Used by browse
+    /// paths ([`crate::http::send_fail_fast`]); the message is shown as is.
+    ///
+    /// The engine downloader's back-off matches only [`ProviderError::RateLimited`], so fetch
+    /// paths must keep using [`crate::http::send_with_retry`] and never return this variant.
+    /// Use [`ProviderError::is_rate_limited`] to accept both.
+    #[error("{message}")]
+    RateLimitedFor {
+        /// User-facing text, e.g. `unsplash api: rate limited (status 429)`.
+        message: String,
+        /// Seconds the server asked to wait, from `Retry-After`; `None` when absent or
+        /// unparseable.
+        retry_after_secs: Option<u64>,
+    },
+
+    /// The provider cannot do what was asked (browse, or resolve a page link). Holds the
+    /// provider name; displays as `{name} cannot browse`.
+    #[error("{0} cannot browse")]
+    Unsupported(String),
 
     /// The source answered with a status the provider does not handle.
     /// Displays as `{context}: unexpected status {status}`.
@@ -133,6 +198,25 @@ impl ProviderError {
         }
     }
 
+    /// The `Retry-After` hint of [`ProviderError::RateLimitedFor`]; `None` for every other
+    /// variant, including [`ProviderError::RateLimited`].
+    #[must_use]
+    pub fn retry_after_secs(&self) -> Option<u64> {
+        match self {
+            Self::RateLimitedFor {
+                retry_after_secs, ..
+            } => *retry_after_secs,
+            _ => None,
+        }
+    }
+
+    /// Whether this is a rate limit: [`ProviderError::RateLimited`] or
+    /// [`ProviderError::RateLimitedFor`].
+    #[must_use]
+    pub fn is_rate_limited(&self) -> bool {
+        matches!(self, Self::RateLimited(_) | Self::RateLimitedFor { .. })
+    }
+
     /// `ProviderError::Io` from a context and an I/O error.
     pub fn io(context: impl Into<String>, source: std::io::Error) -> Self {
         Self::Io {
@@ -150,6 +234,54 @@ mod tests {
     fn status_error_text_matches_go() {
         let err = ProviderError::status("bing", reqwest::StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(err.to_string(), "bing: unexpected status 500");
+    }
+
+    fn rate_limited_for(retry_after_secs: Option<u64>) -> ProviderError {
+        ProviderError::RateLimitedFor {
+            message: "unsplash api: rate limited (status 429)".into(),
+            retry_after_secs,
+        }
+    }
+
+    #[test]
+    fn rate_limited_for_displays_message_only() {
+        assert_eq!(
+            rate_limited_for(Some(60)).to_string(),
+            "unsplash api: rate limited (status 429)"
+        );
+    }
+
+    #[test]
+    fn retry_after_secs_reads_rate_limited_for_hint() {
+        assert_eq!(rate_limited_for(Some(60)).retry_after_secs(), Some(60));
+    }
+
+    #[test]
+    fn retry_after_secs_is_none_without_hint() {
+        assert_eq!(rate_limited_for(None).retry_after_secs(), None);
+    }
+
+    #[test]
+    fn retry_after_secs_is_none_for_rate_limited() {
+        assert_eq!(
+            ProviderError::RateLimited("retry after 60 s".into()).retry_after_secs(),
+            None
+        );
+    }
+
+    #[test]
+    fn is_rate_limited_for_both_variants() {
+        assert!(ProviderError::RateLimited("r".into()).is_rate_limited());
+        assert!(rate_limited_for(None).is_rate_limited());
+    }
+
+    #[test]
+    fn is_rate_limited_false_for_other_variants() {
+        assert!(
+            !ProviderError::status("x", reqwest::StatusCode::SERVICE_UNAVAILABLE).is_rate_limited()
+        );
+        assert!(!ProviderError::NotConfigured("x".into()).is_rate_limited());
+        assert!(!ProviderError::Unsupported("x".into()).is_rate_limited());
     }
 
     #[test]
