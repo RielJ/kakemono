@@ -183,19 +183,12 @@ jobs:
               test -x "$bundle/macos/kakemono.app/Contents/MacOS/kakemono"
               ;;
             Linux)
-              deb="$(ls "$bundle"/deb/*.deb)"
-              # Entries may or may not start with ./, depending on the tool.
-              files="$(dpkg-deb -c "$deb" | awk '{print $NF}' | sed 's|^\./||')"
-              for bin in usr/bin/kakemono usr/bin/kakemono-ui; do
-                grep -qx "$bin" <<<"$files" || {
-                  echo "$bin is not in $deb:"; echo "$files"; exit 1
-                }
-              done
+              bash scripts/check-deb.sh "$bundle"
               ;;
           esac
 
-      # Without mainBinaryName, the app installs as kakemono.exe and collides
-      # with the sidecar. An administrative install unpacks the MSI's files.
+      # The app and its sidecar CLI must both be installed. An administrative
+      # install unpacks the MSI's files without installing them.
       - name: Check the MSI holds kakemono-ui.exe and kakemono.exe
         if: runner.os == 'Windows'
         shell: pwsh
