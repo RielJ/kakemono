@@ -183,6 +183,47 @@ mod process {
         assert_eq!(err.to_string(), "sh: timed out after 0.3s");
     }
 
+    /// `kill -0 pid` succeeds: the process exists (a zombie counts until it is reaped).
+    fn exists(pid: &str) -> bool {
+        std::process::Command::new("kill")
+            .args(["-0", pid])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success()
+    }
+
+    /// M9: a timeout kills the whole process group, not just `sh`: a hung grandchild of
+    /// `sh -c "a && b"` must not survive.
+    #[tokio::test]
+    async fn exec_timeout_kills_grandchildren() {
+        let dir = tempfile::tempdir().unwrap();
+        let pidfile = dir.path().join("pid");
+        // `sleep` is a grandchild: `sh` stays its parent and waits for it.
+        let script = format!("sleep 30 & echo $! > '{}'; wait", pidfile.display());
+        let inv = Invocation::new(s(&["sh", "-c", &script])).timeout(Duration::from_millis(300));
+
+        let output = TokioRunner.run(&inv).await.unwrap();
+        assert_eq!(
+            output.status,
+            CommandStatus::TimedOut(Duration::from_millis(300))
+        );
+        let pid = std::fs::read_to_string(&pidfile).unwrap();
+        let pid = pid.trim();
+        // The orphaned grandchild is reaped by init/launchd shortly after it dies.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while exists(pid) && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        let survived = exists(pid);
+        if survived {
+            let _ = std::process::Command::new("kill")
+                .args(["-9", pid])
+                .status();
+        }
+        assert!(!survived, "grandchild {pid} survived the timeout");
+    }
+
     #[tokio::test]
     async fn exec_stderr_is_captured_into_set_error() {
         let argv0 = record_argv();

@@ -8,18 +8,14 @@
 //! Code that needs AppKit hops to the main thread with [`on_main`]. The closure gets a
 //! [`MainThreadMarker`], so main-thread-only APIs stay checked by objc2's types.
 
-use std::future::Future;
 use std::time::Duration;
 
 use dispatch2::DispatchQueue;
-use kakemono_config::schema::DesktopConfig;
 use objc2::MainThreadMarker;
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSEvent, NSEventModifierFlags, NSEventType,
 };
 use objc2_foundation::NSPoint;
-
-use crate::api::Platform;
 
 /// A hop to the main thread did not complete.
 #[derive(Debug, thiserror::Error)]
@@ -82,29 +78,13 @@ where
         );
     }
 
-    let result = std::thread::scope(|scope| {
-        let worker = std::thread::Builder::new()
-            .name("kakemono-host".to_owned())
-            .spawn_scoped(scope, move || run_daemon(cfg, f))?;
-        // Returns after `stop_app` runs on the main queue (posted when `run_daemon` finishes).
-        app.run();
-        match worker.join() {
-            Ok(result) => result,
-            Err(panic) => std::panic::resume_unwind(panic),
-        }
-    });
+    // `app.run()` returns after `stop_app` runs on the main queue, posted when the daemon ends.
+    let result =
+        crate::host::run_beside_native_loop(super::open_platform(cfg), StopAppOnDrop, f, || {
+            app.run()
+        });
     super::signals::remove_observers(mtm);
     result
-}
-
-/// The worker side of [`host`]: plain tokio host, then stop the main run loop (also on panic).
-fn run_daemon<F, Fut>(cfg: &DesktopConfig, f: F) -> anyhow::Result<()>
-where
-    F: FnOnce(Platform) -> Fut,
-    Fut: Future<Output = anyhow::Result<()>>,
-{
-    let _stop = StopAppOnDrop;
-    crate::host::default_host(super::open_platform(cfg), f)
 }
 
 /// Stops `NSApplication::run` when dropped. If `run` has not started yet, the queued block runs
@@ -144,6 +124,8 @@ fn stop_app(mtm: MainThreadMarker) {
 
 #[cfg(test)]
 mod tests {
+    use kakemono_config::schema::DesktopConfig;
+
     use super::*;
 
     // Test threads are never the main thread, so `host` must refuse without touching AppKit.

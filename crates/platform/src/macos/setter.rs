@@ -62,7 +62,7 @@ impl MacSetter {
     pub async fn snapshot(&self) -> Result<DesktopSnapshot, SetError> {
         on_main(MAIN_THREAD_TIMEOUT, snapshot_on_main)
             .await
-            .map_err(|e| SetError::Os(e.to_string()))
+            .map_err(|e| SetError::os_from(e.to_string(), e))
     }
 
     /// Put back the images from `snapshot`, screen by screen. Screens without a recorded path,
@@ -73,7 +73,7 @@ impl MacSetter {
             restore_on_main(mtm, &snapshot)
         })
         .await
-        .map_err(|e| SetError::Os(e.to_string()))?
+        .map_err(|e| SetError::os_from(e.to_string(), e))?
     }
 }
 
@@ -83,7 +83,7 @@ impl WallpaperSetter for MacSetter {
         let path = checked_image_path(image).await?;
         on_main(MAIN_THREAD_TIMEOUT, move |mtm| set_on_main(mtm, &path, fit))
             .await
-            .map_err(|e| SetError::Os(e.to_string()))?
+            .map_err(|e| SetError::os_from(e.to_string(), e))?
     }
 
     fn info(&self) -> BackendInfo {
@@ -98,14 +98,14 @@ impl WallpaperSetter for MacSetter {
 /// absolute and name an existing file.
 async fn checked_image_path(image: &Path) -> Result<PathBuf, SetError> {
     if !image.is_absolute() {
-        return Err(SetError::Os(format!(
+        return Err(SetError::os(format!(
             "wallpaper path is not absolute: {}",
             image.display()
         )));
     }
     let meta = tokio::fs::metadata(image).await?;
     if !meta.is_file() {
-        return Err(SetError::Os(format!("not a file: {}", image.display())));
+        return Err(SetError::os(format!("not a file: {}", image.display())));
     }
     Ok(image.to_path_buf())
 }
@@ -155,13 +155,13 @@ fn set_url_on_screen(
 
 fn set_on_main(mtm: MainThreadMarker, path: &Path, fit: Fit) -> Result<(), SetError> {
     let url = NSURL::from_file_path(path)
-        .ok_or_else(|| SetError::Os(format!("not a valid file path: {}", path.display())))?;
+        .ok_or_else(|| SetError::os(format!("not a valid file path: {}", path.display())))?;
     let (scaling, clipping) = fit_options(fit);
     let options = desktop_options(scaling, clipping);
     let workspace = NSWorkspace::sharedWorkspace();
     let screens = NSScreen::screens(mtm);
     if screens.is_empty() {
-        return Err(SetError::Os("no screens are attached".to_owned()));
+        return Err(SetError::os("no screens are attached"));
     }
     let failures: Vec<String> = screens
         .iter()
@@ -175,7 +175,7 @@ fn set_on_main(mtm: MainThreadMarker, path: &Path, fit: Fit) -> Result<(), SetEr
     if failures.is_empty() {
         Ok(())
     } else {
-        Err(SetError::Os(format!(
+        Err(SetError::os(format!(
             "setDesktopImageURL failed: {}",
             failures.join("; ")
         )))
@@ -237,7 +237,7 @@ fn restore_on_main(mtm: MainThreadMarker, snapshot: &DesktopSnapshot) -> Result<
     if failures.is_empty() {
         Ok(())
     } else {
-        Err(SetError::Os(format!(
+        Err(SetError::os(format!(
             "restore failed: {}",
             failures.join("; ")
         )))

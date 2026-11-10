@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::api::{BackendInfo, Fit, SetError, Theme, WallpaperSetter};
-use crate::exec::{self, CommandRunner, Invocation, RenderError, Vars};
+use crate::exec::{self, CommandRunner, Invocation, RenderError, RunOptions, Vars};
 use crate::linux::detect::{BackendKind, Resolution};
 
 use super::presets;
@@ -90,8 +90,7 @@ pub struct CommandSetter {
     name: String,
     template: Template,
     runner: Arc<dyn CommandRunner>,
-    env: Vec<(String, String)>,
-    timeout: Duration,
+    run: RunOptions,
     theme: ThemeSource,
 }
 
@@ -100,8 +99,7 @@ impl fmt::Debug for CommandSetter {
         f.debug_struct("CommandSetter")
             .field("name", &self.name)
             .field("template", &self.template)
-            .field("env", &self.env)
-            .field("timeout", &self.timeout)
+            .field("run", &self.run)
             .finish_non_exhaustive()
     }
 }
@@ -118,8 +116,7 @@ impl CommandSetter {
             name: name.into(),
             template,
             runner,
-            env: Vec::new(),
-            timeout: exec::DEFAULT_TIMEOUT,
+            run: RunOptions::default(),
             theme: Arc::new(|| Theme::Light),
         })
     }
@@ -143,13 +140,14 @@ impl CommandSetter {
     /// Set a variable on every run (e.g. `PATH` in tests).
     #[must_use]
     pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.env.push((key.into(), value.into()));
+        self.run = self.run.with_env(key, value);
         self
     }
 
+    /// Per-run timeout (default [`exec::DEFAULT_TIMEOUT`]).
     #[must_use]
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
+        self.run = self.run.with_timeout(timeout);
         self
     }
 
@@ -174,9 +172,7 @@ impl CommandSetter {
 impl WallpaperSetter for CommandSetter {
     async fn set(&self, image: &Path, fit: Fit) -> Result<(), SetError> {
         let argv = self.render(image, fit)?;
-        let invocation = Invocation::new(argv)
-            .envs(self.env.iter().cloned())
-            .timeout(self.timeout);
+        let invocation = self.run.apply(Invocation::new(argv));
         tracing::debug!(backend = %self.name, argv = ?invocation.argv, "running wallpaper command");
         exec::run_checked(self.runner.as_ref(), &invocation).await?;
         Ok(())

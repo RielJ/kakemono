@@ -237,6 +237,7 @@ mod tests {
             config_home: root.join("home/.config"),
             log_dir: root.join("logs"),
             exe: PathBuf::from("/usr/local/bin/kakemono"),
+            uid: 501,
         };
         let manager =
             ServiceManager::with_parts(env, Arc::new(runner.clone()), Arc::new(key.clone()));
@@ -322,19 +323,16 @@ mod tests {
     #[tokio::test]
     async fn status_human() {
         let f = fixture(Os::MacOs);
-        f.runner.push_output(out(0, "501\n"));
         f.runner.push_output(out(113, ""));
         let (_, not_installed) = call(&f, STATUS, false).await;
 
         let path = launchd::plist_path(&f.root.join("home"));
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "x").unwrap();
-        f.runner.push_output(out(0, "501\n"));
         f.runner
             .push_output(out(0, "x = {\n\tstate = running\n\tpid = 77\n}\n"));
         let (_, running) = call(&f, STATUS, false).await;
 
-        f.runner.push_output(out(0, "501\n"));
         f.runner.push_output(out(113, ""));
         let (_, not_loaded) = call(&f, STATUS, false).await;
 

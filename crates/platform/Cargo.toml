@@ -9,7 +9,8 @@ rust-version.workspace = true
 publish.workspace = true
 
 [features]
-# Test doubles (`fake::RecordingSetter`, `fake::ManualSignals`) for downstream crates' tests.
+# Test doubles for downstream crates' tests: `fake::RecordingSetter`, `fake::ManualSignals`,
+# `exec::RecordingRunner` and `service::windows::MemoryRunKey`.
 fake = []
 
 # No C-building dependencies here: `cargo check -p kakemono-platform --target <other OS>` must work
@@ -42,15 +43,21 @@ auto-launch.workspace = true
 windows.workspace = true
 auto-launch.workspace = true
 
+# `killpg` for a timed-out command's process group (`exec`), persistent setters (Linux).
+[target.'cfg(unix)'.dependencies]
+# `user`: `getuid` for the launchd domain.
+nix = { workspace = true, features = ["user"] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus.workspace = true
 ashpd.workspace = true
 which.workspace = true
-nix.workspace = true
 # Consumes zbus signal streams (logind `PrepareForSleep`) and dark-light's `stream()`.
 futures.workspace = true
 
 [dev-dependencies]
+# This crate's own integration tests use the `fake` test doubles.
+kakemono-platform = { path = ".", features = ["fake"] }
 tokio = { workspace = true, features = ["test-util"] }
 tempfile.workspace = true
 insta.workspace = true

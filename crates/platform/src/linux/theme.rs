@@ -13,7 +13,6 @@
 
 use std::fmt;
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -25,10 +24,8 @@ use zbus::{MatchRule, MessageStream};
 
 use crate::api::{Signal, SystemSignals, Theme};
 use crate::exec::{CommandRunner, Invocation, TokioRunner};
+use crate::hub::{SignalHub, mode_theme};
 use crate::linux::backends::command::ThemeSource;
-
-/// Broadcast capacity, as in the fake and the other platforms.
-const CAPACITY: usize = 64;
 
 /// How long the first portal read may take (dark-light's D-Bus calls are blocking; the portal
 /// can be slow to activate).
@@ -87,10 +84,7 @@ impl fmt::Display for ThemeOrigin {
 
 /// A portal reading as a theme. `Unspecified` (`color-scheme` 0, "no preference") is light.
 pub fn theme_from_mode(mode: dark_light::Mode) -> Theme {
-    match mode {
-        dark_light::Mode::Dark => Theme::Dark,
-        dark_light::Mode::Light | dark_light::Mode::Unspecified => Theme::Light,
-    }
+    mode_theme(mode).unwrap_or(Theme::Light)
 }
 
 /// Parse `gsettings get org.gnome.desktop.interface color-scheme` output (`'prefer-dark'`,
@@ -190,6 +184,10 @@ pub async fn initial_theme(
 
 /// The match rule for logind's `PrepareForSleep`. No sender: zbus matches senders client-side
 /// against unique names only, and a spoofed signal only causes a re-apply.
+#[allow(
+    clippy::expect_used,
+    reason = "every field is a valid constant, so `build` cannot fail"
+)]
 pub fn prepare_for_sleep_rule() -> MatchRule<'static> {
     MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
@@ -213,30 +211,8 @@ pub async fn resume_events(conn: &zbus::Connection) -> zbus::Result<BoxStream<'s
 }
 
 struct Shared {
-    tx: broadcast::Sender<Signal>,
-    dark: AtomicBool,
+    hub: SignalHub,
     origin: ThemeOrigin,
-}
-
-impl Shared {
-    fn theme(&self) -> Theme {
-        if self.dark.load(Ordering::SeqCst) {
-            Theme::Dark
-        } else {
-            Theme::Light
-        }
-    }
-
-    /// Record `theme`; broadcast `ThemeChanged` only if it differs from the current one.
-    fn update_theme(&self, theme: Theme) -> bool {
-        let was_dark = self.dark.swap(theme == Theme::Dark, Ordering::SeqCst);
-        let changed = was_dark != (theme == Theme::Dark);
-        if changed {
-            tracing::info!(%theme, "system theme changed");
-            let _ = self.tx.send(Signal::ThemeChanged(theme));
-        }
-        changed
-    }
 }
 
 /// Linux signals. Cheap to share through `Arc`; the watcher tasks stop after the last
@@ -248,7 +224,7 @@ pub struct LinuxSignals {
 impl fmt::Debug for LinuxSignals {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("LinuxSignals")
-            .field("theme", &self.shared.theme())
+            .field("theme", &self.shared.hub.theme())
             .field("origin", &self.shared.origin)
             .finish_non_exhaustive()
     }
@@ -284,11 +260,9 @@ impl LinuxSignals {
 
     /// Signals with a fixed theme and nothing attached.
     pub fn new(theme: Theme, origin: ThemeOrigin) -> Self {
-        let (tx, _) = broadcast::channel(CAPACITY);
         Self {
             shared: Arc::new(Shared {
-                tx,
-                dark: AtomicBool::new(theme == Theme::Dark),
+                hub: SignalHub::new(theme),
                 origin,
             }),
         }
@@ -302,7 +276,7 @@ impl LinuxSignals {
     /// The current theme as a `{theme}` source for command setters.
     pub fn theme_source(&self) -> ThemeSource {
         let shared = Arc::clone(&self.shared);
-        Arc::new(move || shared.theme())
+        Arc::new(move || shared.hub.theme())
     }
 
     /// Feed theme readings into these signals (deduplicated). The task ends with the stream or
@@ -317,7 +291,7 @@ impl LinuxSignals {
                 let Some(shared) = shared.upgrade() else {
                     break;
                 };
-                shared.update_theme(theme);
+                shared.hub.update_theme(theme);
             }
             tracing::debug!("theme stream ended");
         })
@@ -339,7 +313,7 @@ impl LinuxSignals {
                     break;
                 };
                 tracing::info!("resumed from sleep");
-                let _ = shared.tx.send(Signal::Resumed);
+                shared.hub.send(Signal::Resumed);
             }
             tracing::debug!("logind signal stream ended");
         }))
@@ -348,11 +322,11 @@ impl LinuxSignals {
 
 impl SystemSignals for LinuxSignals {
     fn theme(&self) -> Theme {
-        self.shared.theme()
+        self.shared.hub.theme()
     }
 
     fn subscribe(&self) -> broadcast::Receiver<Signal> {
-        self.shared.tx.subscribe()
+        self.shared.hub.subscribe()
     }
 }
 
@@ -514,7 +488,7 @@ mod tests {
         let signals = LinuxSignals::new(Theme::Dark, ThemeOrigin::Override);
         let source = signals.theme_source();
         assert_eq!(source(), Theme::Dark);
-        signals.shared.update_theme(Theme::Light);
+        signals.shared.hub.update_theme(Theme::Light);
         assert_eq!(source(), Theme::Light);
         assert_eq!(signals.origin(), ThemeOrigin::Override);
     }

@@ -4,10 +4,6 @@ expression: "argvs(&runner, tmp.path())"
 ---
 [
   [
-    "id",
-    "-u"
-  ],
-  [
     "launchctl",
     "print",
     "gui/501/dev.rielj.kakemono.daemon"
@@ -16,10 +12,6 @@ expression: "argvs(&runner, tmp.path())"
     "launchctl",
     "bootout",
     "gui/501/dev.rielj.kakemono.daemon"
-  ],
-  [
-    "id",
-    "-u"
   ],
   [
     "launchctl",

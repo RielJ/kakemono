@@ -8,7 +8,9 @@
     allow(dead_code, reason = "off Windows only the unit tests use this module")
 )]
 
-use crate::api::{Fit, Signal, Theme};
+use std::path::Path;
+
+use crate::api::{Fit, SetError, Signal, Theme};
 
 /// `DESKTOP_WALLPAPER_POSITION` values (`i32`, the type of the `windows` crate newtype's field).
 pub const DWPOS_CENTER: i32 = 0;
@@ -77,6 +79,23 @@ pub fn signal_for_message(msg: u32, wparam: usize) -> Option<Signal> {
     }
 }
 
+/// `image` if it is absolute. A relative path is rejected, as on macOS and Linux, instead of
+/// being resolved against the daemon's working directory.
+///
+/// # Errors
+///
+/// `SetError::Os` when `image` is relative.
+pub fn absolute_image(image: &Path) -> Result<&Path, SetError> {
+    if image.is_absolute() {
+        Ok(image)
+    } else {
+        Err(SetError::os(format!(
+            "wallpaper path is not absolute: {}",
+            image.display()
+        )))
+    }
+}
+
 /// UTF-16, NUL-terminated, for `PCWSTR` arguments.
 pub fn wide(s: impl AsRef<std::ffi::OsStr>) -> Vec<u16> {
     #[cfg(target_os = "windows")]
@@ -120,6 +139,24 @@ mod tests {
         assert_eq!(legacy_style(Fit::Center), ("0", "0"));
         assert_eq!(legacy_style(Fit::Stretch), ("2", "0"));
         assert_eq!(legacy_style(Fit::Tile), ("0", "1"));
+    }
+
+    #[test]
+    fn relative_image_paths_are_rejected() {
+        let err = absolute_image(Path::new(r"walls\x.png")).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            r"wallpaper path is not absolute: walls\x.png"
+        );
+        let absolute = if cfg!(windows) {
+            r"C:\walls\x.png"
+        } else {
+            "/walls/x.png"
+        };
+        assert_eq!(
+            absolute_image(Path::new(absolute)).unwrap(),
+            Path::new(absolute)
+        );
     }
 
     #[test]

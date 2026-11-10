@@ -13,7 +13,9 @@
 
 use std::io;
 use std::path::Path;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
+#[cfg(any(test, feature = "fake"))]
+use std::sync::{Mutex, PoisonError};
 
 use super::{Installed, Running, ServiceEnv, ServiceError, ServiceStatus, Uninstalled};
 
@@ -40,7 +42,7 @@ pub fn run_command(exe: &Path) -> String {
     format!("{} {}", quoted_program(exe), RUN_ARGS.join(" "))
 }
 
-/// The `kakemono-daemon` Run value. Object-safe so tests can use [`MemoryRunKey`].
+/// The `kakemono-daemon` Run value. Object-safe so tests can use `MemoryRunKey`.
 pub trait RunKey: Send + Sync + 'static {
     /// Set and not disabled in Task Manager's Startup tab.
     fn is_enabled(&self) -> io::Result<bool>;
@@ -50,12 +52,14 @@ pub trait RunKey: Send + Sync + 'static {
     fn disable(&self) -> io::Result<()>;
 }
 
-/// In-memory [`RunKey`] for tests. Clones share state.
+/// In-memory [`RunKey`] for tests (feature `fake`). Clones share state.
+#[cfg(any(test, feature = "fake"))]
 #[derive(Clone, Debug, Default)]
 pub struct MemoryRunKey {
     value: Arc<Mutex<Option<String>>>,
 }
 
+#[cfg(any(test, feature = "fake"))]
 impl MemoryRunKey {
     pub fn new() -> Self {
         Self::default()
@@ -70,6 +74,7 @@ impl MemoryRunKey {
     }
 }
 
+#[cfg(any(test, feature = "fake"))]
 impl RunKey for MemoryRunKey {
     fn is_enabled(&self) -> io::Result<bool> {
         Ok(self.value().is_some())

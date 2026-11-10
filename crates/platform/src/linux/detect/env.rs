@@ -229,9 +229,18 @@ pub const DBUS_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_se
 /// the probe fails or times out.
 #[cfg(target_os = "linux")]
 pub async fn probe_dbus_names() -> Option<BTreeSet<String>> {
+    probe_dbus_names_on(&tokio::sync::OnceCell::new()).await
+}
+
+/// [`probe_dbus_names`] over `bus`, which is connected to the session bus on first use and
+/// kept, so a caller that probes on every re-detection reuses one connection.
+#[cfg(target_os = "linux")]
+pub async fn probe_dbus_names_on(
+    bus: &tokio::sync::OnceCell<zbus::Connection>,
+) -> Option<BTreeSet<String>> {
     let probe = async {
-        let conn = zbus::Connection::session().await?;
-        let proxy = zbus::fdo::DBusProxy::new(&conn).await?;
+        let conn = bus.get_or_try_init(zbus::Connection::session).await?;
+        let proxy = zbus::fdo::DBusProxy::new(conn).await?;
         let names = proxy.list_names().await?;
         Ok::<_, zbus::Error>(
             names
@@ -258,6 +267,12 @@ pub async fn probe_dbus_names() -> Option<BTreeSet<String>> {
 /// [`capture`] (on a blocking thread) plus [`probe_dbus_names`]. Must run inside a tokio runtime.
 #[cfg(target_os = "linux")]
 pub async fn capture_with_dbus() -> Env {
+    capture_with_dbus_on(&tokio::sync::OnceCell::new()).await
+}
+
+/// [`capture_with_dbus`], probing over `bus` (see [`probe_dbus_names_on`]).
+#[cfg(target_os = "linux")]
+pub async fn capture_with_dbus_on(bus: &tokio::sync::OnceCell<zbus::Connection>) -> Env {
     let mut env = match tokio::task::spawn_blocking(capture).await {
         Ok(env) => env,
         Err(err) => {
@@ -265,7 +280,7 @@ pub async fn capture_with_dbus() -> Env {
             Env::default()
         }
     };
-    env.dbus_names = probe_dbus_names().await;
+    env.dbus_names = probe_dbus_names_on(bus).await;
     env
 }
 

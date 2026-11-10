@@ -10,9 +10,9 @@ use std::path::{Path, PathBuf};
 
 use super::{
     Installed, Running, ServiceEnv, ServiceError, ServiceStatus, Uninstalled, remove_file, run_any,
-    run_checked, s, shell_quote, write_file,
+    run_checked, shell_quote, write_file,
 };
-use crate::exec::CommandRunner;
+use crate::exec::{CommandRunner, argv};
 
 /// The unit name.
 pub const UNIT_NAME: &str = "kakemono.service";
@@ -88,9 +88,9 @@ To let the unit see the session, import it first, e.g. in Hyprland:
 }
 
 fn systemctl<const N: usize>(args: [&str; N]) -> Vec<String> {
-    let mut argv = s(["systemctl", "--user"]);
-    argv.extend(args.iter().map(|a| (*a).to_owned()));
-    argv
+    let mut command = argv(&["systemctl", "--user"]);
+    command.extend(args.iter().map(|a| (*a).to_owned()));
+    command
 }
 
 pub(super) async fn install(

@@ -25,7 +25,7 @@ use ::windows::Win32::UI::WindowsAndMessaging::{
 use ::windows::core::PCWSTR;
 use tokio::sync::oneshot;
 
-use super::logic::{DESKTOP_SUBKEY, dwpos, legacy_style, wide};
+use super::logic::{DESKTOP_SUBKEY, absolute_image, dwpos, legacy_style, wide};
 use crate::api::{BackendInfo, Fit, SetError, WallpaperSetter};
 
 /// One `set` call, handled on the desktop thread.
@@ -71,9 +71,9 @@ impl WallpaperSetter for WinSetter {
                 fit,
                 reply,
             })
-            .map_err(|_| SetError::Os("Windows desktop thread is not running".to_owned()))?;
+            .map_err(|_| SetError::os("Windows desktop thread is not running"))?;
         rx.await
-            .map_err(|_| SetError::Os("Windows desktop thread dropped the request".to_owned()))?
+            .map_err(|_| SetError::os("Windows desktop thread dropped the request"))?
     }
 
     fn info(&self) -> BackendInfo {
@@ -149,8 +149,8 @@ fn desktop_thread(rx: mpsc::Receiver<Request>, ready: mpsc::SyncSender<String>) 
 /// Set `image` with `fit` on every monitor: `IDesktopWallpaper` first, else the legacy fallback.
 fn apply(wallpaper: Option<&IDesktopWallpaper>, image: &Path, fit: Fit) -> Result<(), SetError> {
     // Both APIs want an absolute path to an existing file.
-    let path = std::path::absolute(image)?;
-    std::fs::metadata(&path)?;
+    let path = absolute_image(image)?;
+    std::fs::metadata(path)?;
     let wide_path = wide(path.as_os_str());
 
     let primary_err = match wallpaper {
@@ -164,12 +164,13 @@ fn apply(wallpaper: Option<&IDesktopWallpaper>, image: &Path, fit: Fit) -> Resul
         None => None,
     };
     set_with_system_parameters(wide_path, fit).map_err(|fallback| {
-        SetError::Os(match primary_err {
+        let message = match primary_err {
             Some(primary) => {
                 format!("IDesktopWallpaper: {primary}; SystemParametersInfoW: {fallback}")
             }
             None => format!("SystemParametersInfoW: {fallback}"),
-        })
+        };
+        SetError::os_from(message, fallback)
     })
 }
 

@@ -9,11 +9,12 @@
 //!   reads `AppsUseLightTheme` (the app mode, not the shell/taskbar mode). A pinned
 //!   `[desktop] theme` wins and disables the watcher.
 //!
-//! Signals go to one process-wide broadcast channel ([`hub`]): the window proc is a plain
-//! function with no state, and `open_platform` may run before or without the window.
+//! Signals go to one process-wide [`SignalHub`] ([`hub`]), the same type macOS and Linux use.
+//! It stays process-wide on Windows: the window proc is a plain function with no state, the
+//! theme watcher thread runs once per process, and `open_platform` may run before or without the
+//! window.
 
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Once, OnceLock};
 
 use ::windows::Win32::Foundation::{
@@ -38,37 +39,25 @@ use super::logic::{
     PERSONALIZE_SUBKEY, SYSTEM_USES_LIGHT_THEME, signal_for_message, theme_from_dword, wide,
 };
 use crate::api::{Signal, SystemSignals, Theme};
+use crate::hub::SignalHub;
 
-/// Broadcast capacity. Signals are rare; a lagging subscriber re-reads `theme()` (contract).
-const HUB_CAPACITY: usize = 16;
-
-/// The process-wide signal channel fed by the window proc and the theme watcher.
-pub fn hub() -> &'static broadcast::Sender<Signal> {
-    static HUB: OnceLock<broadcast::Sender<Signal>> = OnceLock::new();
-    HUB.get_or_init(|| broadcast::channel(HUB_CAPACITY).0)
+/// The process-wide hub fed by the window proc and the theme watcher. Its theme starts as the
+/// registry's (light if that cannot be read) and is kept current by the watcher.
+pub(crate) fn hub() -> &'static SignalHub {
+    static HUB: OnceLock<SignalHub> = OnceLock::new();
+    HUB.get_or_init(|| SignalHub::new(initial_system_theme()))
 }
 
 // ---------------------------------------------------------------------------------------------
 // Theme
 // ---------------------------------------------------------------------------------------------
 
-/// The last read system theme: 0 = unknown, 1 = light, 2 = dark.
-static SYSTEM_THEME: AtomicU8 = AtomicU8::new(0);
-
-fn store_system_theme(theme: Theme) {
-    let v = match theme {
-        Theme::Light => 1,
-        Theme::Dark => 2,
-    };
-    SYSTEM_THEME.store(v, Ordering::Relaxed);
-}
-
-fn cached_system_theme() -> Option<Theme> {
-    match SYSTEM_THEME.load(Ordering::Relaxed) {
-        1 => Some(Theme::Light),
-        2 => Some(Theme::Dark),
-        _ => None,
-    }
+/// `SystemUsesLightTheme`, or light (with a warning) when it cannot be read.
+fn initial_system_theme() -> Theme {
+    read_system_theme().unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "cannot read SystemUsesLightTheme; theme falls back to light");
+        Theme::Light
+    })
 }
 
 /// Read `SystemUsesLightTheme`. Errors if the value is missing (e.g. Windows before 10 1903).
@@ -104,24 +93,15 @@ impl Drop for RegKey {
     }
 }
 
-/// Start the theme watcher thread once per process. Reads the theme synchronously first so
-/// `theme()` is right as soon as this returns.
+/// Start the theme watcher thread once per process. The hub reads the theme synchronously
+/// first, so `theme()` is right as soon as this returns.
 fn start_theme_watcher() {
     static STARTED: Once = Once::new();
     STARTED.call_once(|| {
-        let initial = match read_system_theme() {
-            Ok(theme) => {
-                store_system_theme(theme);
-                Some(theme)
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "cannot read SystemUsesLightTheme; theme falls back to light");
-                None
-            }
-        };
+        let _ = hub();
         if let Err(e) = std::thread::Builder::new()
             .name("kakemono-theme".to_owned())
-            .spawn(move || watch_theme(initial))
+            .spawn(watch_theme)
         {
             tracing::warn!(error = %e, "cannot start the theme watcher; ThemeChanged is disabled");
         }
@@ -130,7 +110,7 @@ fn start_theme_watcher() {
 
 /// Block on `RegNotifyChangeKeyValue` for the Personalize key, re-read on every change and emit
 /// `ThemeChanged` only when the theme flips. Runs for the life of the process.
-fn watch_theme(mut last: Option<Theme>) {
+fn watch_theme() {
     let subkey = wide(PERSONALIZE_SUBKEY);
     let mut raw = HKEY::default();
     // SAFETY: `subkey` is NUL-terminated UTF-16 that outlives the call; `raw` is a live out-param.
@@ -161,11 +141,7 @@ fn watch_theme(mut last: Option<Theme>) {
         // Any value under Personalize fires this (AppsUseLightTheme, accent colour, ...); dedupe.
         match read_system_theme() {
             Ok(theme) => {
-                store_system_theme(theme);
-                if last != Some(theme) {
-                    last = Some(theme);
-                    let _ = hub().send(Signal::ThemeChanged(theme));
-                }
+                hub().update_theme(theme);
             }
             Err(e) => tracing::warn!(error = %e, "cannot re-read SystemUsesLightTheme"),
         }
@@ -191,9 +167,7 @@ impl WinSignals {
 
 impl SystemSignals for WinSignals {
     fn theme(&self) -> Theme {
-        self.pinned
-            .or_else(cached_system_theme)
-            .unwrap_or(Theme::Light)
+        self.pinned.unwrap_or_else(|| hub().theme())
     }
 
     fn subscribe(&self) -> broadcast::Receiver<Signal> {
@@ -273,11 +247,15 @@ impl Drop for SignalWindow {
 }
 
 /// The window proc: map the message to a signal (if any), then default handling.
+///
+/// # Safety
+///
+/// Called only by the system's message dispatch for the signal window's class, with the
+/// `hwnd`, `msg`, `wparam` and `lparam` of a message sent to that window.
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if let Some(signal) = signal_for_message(msg, wparam.0) {
         tracing::debug!(?signal, "window message");
-        // No receivers is fine (nobody subscribed yet).
-        let _ = hub().send(signal);
+        hub().send(signal);
     }
     // SAFETY: forwards the unmodified arguments of the message Windows delivered to this proc.
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }

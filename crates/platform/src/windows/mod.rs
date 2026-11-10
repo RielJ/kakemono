@@ -20,6 +20,7 @@ use std::sync::Arc;
 use kakemono_config::schema::DesktopConfig;
 
 use crate::api::{Platform, UnconfiguredSetter};
+use crate::deadline::{Deadline, SET_TIMEOUT};
 
 /// Windows `host()` (see `crate::host::host`).
 ///
@@ -40,20 +41,13 @@ where
         })
         .ok();
 
-    let result = std::thread::scope(|scope| {
-        let worker = std::thread::Builder::new()
-            .name("kakemono-host".to_owned())
-            .spawn_scoped(scope, move || {
-                // Ends the message loop below when the daemon returns or panics.
-                let _quit = signals::QuitOnDrop(host_thread);
-                crate::host::default_host(open_platform(cfg), f)
-            })?;
-        signals::run_message_loop();
-        match worker.join() {
-            Ok(result) => result,
-            Err(panic) => std::panic::resume_unwind(panic),
-        }
-    });
+    // `QuitOnDrop` ends the message loop when the daemon returns or panics.
+    let result = crate::host::run_beside_native_loop(
+        open_platform(cfg),
+        signals::QuitOnDrop(host_thread),
+        f,
+        signals::run_message_loop,
+    );
     drop(window);
     result
 }
@@ -72,7 +66,8 @@ pub async fn open_platform(cfg: &DesktopConfig) -> Platform {
     .await;
     match opened {
         Ok((signals, Ok(setter))) => Platform {
-            setter: Arc::new(setter),
+            // H3: a frozen Explorer must not hold the engine's op lock forever.
+            setter: Arc::new(Deadline::new(setter, SET_TIMEOUT)),
             signals: Arc::new(signals),
         },
         Ok((signals, Err(e))) => {

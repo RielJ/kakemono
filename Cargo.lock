@@ -2527,6 +2527,7 @@ dependencies = [
  "futures",
  "insta",
  "kakemono-config",
+ "kakemono-platform",
  "nix",
  "objc2",
  "objc2-app-kit",

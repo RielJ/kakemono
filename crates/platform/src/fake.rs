@@ -48,7 +48,7 @@ impl RecordingSetter {
         Self::default()
     }
 
-    /// Make the next `n` calls fail with `SetError::Os("injected failure")` (not recorded in `calls`).
+    /// Make the next `n` calls fail with `SetError::os("injected failure")` (not recorded in `calls`).
     pub fn fail_next(&self, n: usize) {
         self.fail_remaining.store(n, Ordering::SeqCst);
     }
@@ -78,7 +78,7 @@ impl WallpaperSetter for RecordingSetter {
             .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
             .is_ok();
         if failed {
-            return Err(SetError::Os("injected failure".to_owned()));
+            return Err(SetError::os("injected failure"));
         }
         lock(&self.calls).push((image.to_path_buf(), fit));
         Ok(())
@@ -272,7 +272,7 @@ mod tests {
         setter.fail_next(2);
         for _ in 0..2 {
             let err = dyn_setter.set(Path::new("/b.jpg"), Fit::Fit).await;
-            assert!(matches!(err, Err(SetError::Os(_))));
+            assert!(matches!(err, Err(SetError::Os { .. })));
         }
         dyn_setter
             .set(Path::new("/c.jpg"), Fit::Tile)

@@ -113,8 +113,8 @@ impl fmt::Debug for XfceSetter {
     }
 }
 
-fn dbus_error(method: &str, err: &zbus::Error) -> SetError {
-    SetError::Dbus(format!("{INTERFACE}.{method}: {err}"))
+fn dbus_error(method: &str, err: zbus::Error) -> SetError {
+    SetError::dbus(format!("{INTERFACE}.{method}: {err}"), err)
 }
 
 impl XfceSetter {
@@ -135,11 +135,11 @@ impl XfceSetter {
                 &(CHANNEL, BACKDROP),
             )
             .await
-            .map_err(|err| dbus_error("GetAllProperties", &err))?;
+            .map_err(|err| dbus_error("GetAllProperties", err))?;
         let props: HashMap<String, OwnedVariant> = reply
             .body()
             .deserialize()
-            .map_err(|err| dbus_error("GetAllProperties", &err))?;
+            .map_err(|err| dbus_error("GetAllProperties", err))?;
         Ok(props
             .into_iter()
             .map(|(key, value)| {
@@ -162,7 +162,7 @@ impl XfceSetter {
                 &(CHANNEL, key, value),
             )
             .await
-            .map_err(|err| dbus_error("SetProperty", &err))?;
+            .map_err(|err| dbus_error("SetProperty", err))?;
         Ok(())
     }
 }

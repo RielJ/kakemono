@@ -2,10 +2,13 @@
 //! URL open / file reveal and service installation (plan §A, §B, §E, §F).
 
 pub mod api;
+pub mod deadline;
 pub mod exec;
 #[cfg(feature = "fake")]
 pub mod fake;
 pub mod host;
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows", test))]
+mod hub;
 pub mod open;
 pub mod service;
 

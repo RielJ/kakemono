@@ -25,7 +25,7 @@ pub use kakemono_config::paths::Os;
 use url::Url;
 
 use crate::api::SetError;
-use crate::exec::{CommandRunner, Invocation, TokioRunner};
+use crate::exec::{CommandRunner, Invocation, TokioRunner, argv};
 
 /// The freedesktop file-manager D-Bus service (and interface) used to reveal files on Linux.
 pub const FILE_MANAGER1: &str = "org.freedesktop.FileManager1";
@@ -112,10 +112,6 @@ impl fmt::Display for Launch {
         };
         write!(f, "{mode} {:?}", self.argv())
     }
-}
-
-fn argv(parts: &[&str]) -> Vec<String> {
-    parts.iter().map(|s| (*s).to_owned()).collect()
 }
 
 /// The launcher that opens `url` (already checked by [`checked_url`]).

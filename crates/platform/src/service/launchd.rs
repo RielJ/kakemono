@@ -12,9 +12,9 @@ use std::path::{Path, PathBuf};
 
 use super::{
     Installed, Running, ServiceEnv, ServiceError, ServiceStatus, Uninstalled, create_dir,
-    remove_file, run_any, run_checked, s, write_file, xml_escape,
+    remove_file, run_any, run_checked, write_file, xml_escape,
 };
-use crate::exec::CommandRunner;
+use crate::exec::{CommandRunner, argv};
 
 /// The launchd label (and plist file stem) of the daemon service.
 pub const LABEL: &str = "dev.rielj.kakemono.daemon";
@@ -114,18 +114,6 @@ pub fn parse_print(stdout: &str) -> PrintInfo {
     info
 }
 
-async fn uid(runner: &dyn CommandRunner) -> Result<u32, ServiceError> {
-    let output = run_checked(runner, s(["id", "-u"])).await?;
-    output
-        .stdout
-        .trim()
-        .parse()
-        .map_err(|_| ServiceError::Parse {
-            command: "id -u".to_owned(),
-            output: output.stdout.clone(),
-        })
-}
-
 fn service_target(uid: u32) -> String {
     format!("gui/{uid}/{LABEL}")
 }
@@ -136,7 +124,7 @@ async fn print(
     runner: &dyn CommandRunner,
     uid: u32,
 ) -> Result<Option<PrintInfo>, crate::exec::RunError> {
-    let output = run_any(runner, s(["launchctl", "print", &service_target(uid)])).await?;
+    let output = run_any(runner, argv(&["launchctl", "print", &service_target(uid)])).await?;
     Ok(output.status.success().then(|| parse_print(&output.stdout)))
 }
 
@@ -148,17 +136,21 @@ pub(super) async fn install(
     create_dir(&env.log_dir)?;
     write_file(&path, &plist(env))?;
 
-    let uid = uid(runner).await?;
+    let uid = env.uid;
     let target = service_target(uid);
     // A loaded job keeps its old definition until it is booted out.
     if print(runner, uid).await?.is_some() {
-        run_checked(runner, s(["launchctl", "bootout", &target])).await?;
+        run_checked(runner, argv(&["launchctl", "bootout", &target])).await?;
     }
     // Clears a `launchctl disable` override left by the user, which would block bootstrap.
-    run_checked(runner, s(["launchctl", "enable", &target])).await?;
+    run_checked(runner, argv(&["launchctl", "enable", &target])).await?;
     let domain = format!("gui/{uid}");
     let plist_arg = path.to_string_lossy();
-    run_checked(runner, s(["launchctl", "bootstrap", &domain, &plist_arg])).await?;
+    run_checked(
+        runner,
+        argv(&["launchctl", "bootstrap", &domain, &plist_arg]),
+    )
+    .await?;
 
     Ok(Installed {
         location: path.display().to_string(),
@@ -173,11 +165,15 @@ pub(super) async fn uninstall(
     runner: &dyn CommandRunner,
 ) -> Result<Uninstalled, ServiceError> {
     let path = plist_path(&env.home);
-    let uid = uid(runner).await?;
+    let uid = env.uid;
     // Boot out even when the file is gone: a loaded job outlives its plist.
     let loaded = print(runner, uid).await?.is_some();
     if loaded {
-        run_checked(runner, s(["launchctl", "bootout", &service_target(uid)])).await?;
+        run_checked(
+            runner,
+            argv(&["launchctl", "bootout", &service_target(uid)]),
+        )
+        .await?;
     }
     let removed_file = remove_file(&path)?;
     Ok(Uninstalled {
@@ -192,7 +188,7 @@ pub(super) async fn status(
 ) -> Result<ServiceStatus, ServiceError> {
     let path = plist_path(&env.home);
     let installed = path.is_file();
-    let uid = uid(runner).await?;
+    let uid = env.uid;
     let running = match print(runner, uid).await {
         Ok(Some(PrintInfo { state, pid })) if state.as_deref() == Some("running") => {
             Running::Yes { pid }

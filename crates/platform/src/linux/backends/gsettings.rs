@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::api::{BackendInfo, Fit, SetError, Theme, WallpaperSetter};
-use crate::exec::{self, CommandRunner, Invocation, Vars};
+use crate::exec::{CommandRunner, Invocation, RunOptions, Vars};
 use crate::linux::backends::command::render_error;
 use crate::linux::detect::resolve::BackendKind;
 
@@ -97,16 +97,14 @@ fn missing_optional_key(argv: &[String], stderr: &str) -> bool {
 pub struct GsettingsSetter {
     kind: BackendKind,
     runner: Arc<dyn CommandRunner>,
-    env: Vec<(String, String)>,
-    timeout: Duration,
+    run: RunOptions,
 }
 
 impl fmt::Debug for GsettingsSetter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("GsettingsSetter")
             .field("kind", &self.kind)
-            .field("env", &self.env)
-            .field("timeout", &self.timeout)
+            .field("run", &self.run)
             .finish_non_exhaustive()
     }
 }
@@ -118,22 +116,21 @@ impl GsettingsSetter {
         Some(Self {
             kind,
             runner,
-            env: Vec::new(),
-            timeout: exec::DEFAULT_TIMEOUT,
+            run: RunOptions::default(),
         })
     }
 
     /// Set a variable on every run (e.g. `PATH` in tests).
     #[must_use]
     pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.env.push((key.into(), value.into()));
+        self.run = self.run.with_env(key, value);
         self
     }
 
-    /// Per-command timeout (default [`exec::DEFAULT_TIMEOUT`]).
+    /// Per-command timeout (default [`crate::exec::DEFAULT_TIMEOUT`]).
     #[must_use]
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
+        self.run = self.run.with_timeout(timeout);
         self
     }
 
@@ -151,9 +148,7 @@ impl GsettingsSetter {
 impl WallpaperSetter for GsettingsSetter {
     async fn set(&self, image: &Path, fit: Fit) -> Result<(), SetError> {
         for argv in self.render(image, fit)? {
-            let invocation = Invocation::new(argv)
-                .envs(self.env.iter().cloned())
-                .timeout(self.timeout);
+            let invocation = self.run.apply(Invocation::new(argv));
             tracing::debug!(backend = %self.kind, argv = ?invocation.argv, "running gsettings");
             let output = self.runner.run(&invocation).await?;
             if !output.status.success() && missing_optional_key(&invocation.argv, &output.stderr) {

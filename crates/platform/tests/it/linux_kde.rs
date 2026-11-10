@@ -135,7 +135,10 @@ async fn kde_setter_maps_dbus_errors() {
         .await
         .unwrap_err();
     match &err {
-        SetError::Dbus(msg) => {
+        SetError::Dbus { .. } => {
+            // M6: the zbus error is kept as the source, and its text stays in the message.
+            assert!(std::error::Error::source(&err).is_some());
+            let msg = err.to_string();
             assert!(msg.contains("Widgets are locked"), "{msg}");
             assert!(msg.contains("evaluateScript"), "{msg}");
         }

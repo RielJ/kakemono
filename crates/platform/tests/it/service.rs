@@ -24,6 +24,7 @@ fn env(os: Os, root: &Path) -> ServiceEnv {
         config_home: root.join("home/.config"),
         log_dir: root.join("home/Library/Logs/kakemono"),
         exe,
+        uid: 501,
     }
 }
 
@@ -212,7 +213,6 @@ fn parses_launchctl_print() {
 async fn launchd_install_fresh() {
     let tmp = tempfile::tempdir().unwrap();
     let (manager, runner, _) = manager(Os::MacOs, tmp.path());
-    runner.push_output(out(0, "501\n")); // id -u
     runner.push_output(out(113, "")); // print: not loaded
     let installed = manager.install().await.unwrap();
 
@@ -231,7 +231,6 @@ async fn launchd_install_fresh() {
 async fn launchd_install_reloads_a_loaded_job() {
     let tmp = tempfile::tempdir().unwrap();
     let (manager, runner, _) = manager(Os::MacOs, tmp.path());
-    runner.push_output(out(0, "501\n"));
     runner.push_output(out(0, PRINT_RUNNING));
     manager.install().await.unwrap();
     insta::assert_json_snapshot!("launchd_install_reload_argvs", argvs(&runner, tmp.path()));
@@ -241,7 +240,6 @@ async fn launchd_install_reloads_a_loaded_job() {
 async fn launchd_install_reports_bootstrap_failure() {
     let tmp = tempfile::tempdir().unwrap();
     let (manager, runner, _) = manager(Os::MacOs, tmp.path());
-    runner.push_output(out(0, "501\n"));
     runner.push_output(out(113, ""));
     runner.push_output(Output::success()); // enable
     runner.push_output(Output::failure(
@@ -269,13 +267,11 @@ async fn launchd_uninstall_is_idempotent() {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, "x").unwrap();
 
-    runner.push_output(out(0, "501\n"));
     runner.push_output(out(0, PRINT_RUNNING));
     let first = manager.uninstall().await.unwrap();
     assert!(first.removed);
     assert!(!path.exists());
 
-    runner.push_output(out(0, "501\n"));
     runner.push_output(out(113, "Could not find service"));
     let second = manager.uninstall().await.unwrap();
     assert!(!second.removed);
@@ -288,7 +284,6 @@ async fn launchd_status_distinguishes_states() {
     let (manager, runner, _) = manager(Os::MacOs, tmp.path());
 
     // Not installed.
-    runner.push_output(out(0, "501\n"));
     runner.push_output(out(113, ""));
     let status = manager.status().await.unwrap();
     assert!(!status.installed);
@@ -298,7 +293,6 @@ async fn launchd_status_distinguishes_states() {
     let path = launchd::plist_path(&tmp.path().join("home"));
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, "x").unwrap();
-    runner.push_output(out(0, "501\n"));
     runner.push_output(out(0, PRINT_RUNNING));
     let status = manager.status().await.unwrap();
     assert!(status.installed);
@@ -306,7 +300,6 @@ async fn launchd_status_distinguishes_states() {
     assert_eq!(status.path.as_deref(), Some(path.as_path()));
 
     // Installed, loaded, stopped.
-    runner.push_output(out(0, "501\n"));
     runner.push_output(out(0, PRINT_STOPPED));
     let status = manager.status().await.unwrap();
     assert_eq!(
@@ -317,7 +310,6 @@ async fn launchd_status_distinguishes_states() {
     );
 
     // Installed, not loaded.
-    runner.push_output(out(0, "501\n"));
     runner.push_output(out(113, ""));
     let status = manager.status().await.unwrap();
     assert_eq!(
@@ -328,17 +320,13 @@ async fn launchd_status_distinguishes_states() {
     );
 
     // launchctl missing.
-    runner.push_output(out(0, "501\n"));
     runner.push_spawn_error("No such file or directory");
     let status = manager.status().await.unwrap();
     assert_eq!(status.running, Running::Unknown);
 
-    // Status never changes anything: only id + print.
+    // Status never changes anything: only print.
     for argv in runner.argvs() {
-        assert!(
-            argv[0] == "id" || argv[..2] == ["launchctl", "print"],
-            "{argv:?}"
-        );
+        assert!(argv[..2] == ["launchctl", "print"], "{argv:?}");
     }
 }
 
@@ -375,6 +363,37 @@ async fn systemd_install_reports_failure() {
         err.to_string(),
         "`systemctl --user daemon-reload` failed (exit code 1): Failed to connect to bus: No medium found"
     );
+}
+
+/// L9: a non-UTF-8 exe would be written lossily, so the unit or plist would name a file that
+/// does not exist. Install refuses before writing or running anything.
+#[cfg(unix)]
+#[tokio::test]
+async fn install_refuses_a_non_utf8_exe() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    for os in [Os::Linux, Os::MacOs, Os::Windows] {
+        let runner = RecordingRunner::new();
+        let key = MemoryRunKey::new();
+        let exe = PathBuf::from(std::ffi::OsStr::from_bytes(b"/opt/kake\xffmono/kakemono"));
+        let manager = ServiceManager::with_parts(
+            ServiceEnv {
+                exe: exe.clone(),
+                ..env(os, tmp.path())
+            },
+            Arc::new(runner.clone()),
+            Arc::new(key.clone()),
+        );
+        let err = manager.install().await.unwrap_err();
+        assert!(
+            matches!(&err, ServiceError::NonUtf8Path(path) if *path == exe),
+            "{os:?}: {err:?}"
+        );
+        assert!(runner.argvs().is_empty(), "{os:?}");
+        assert_eq!(key.value(), None, "{os:?}");
+        assert!(manager.env().definition_path().is_none_or(|p| !p.exists()));
+    }
 }
 
 #[tokio::test]

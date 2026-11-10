@@ -15,7 +15,7 @@
 
 use std::cell::RefCell;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -33,9 +33,7 @@ use tokio::sync::broadcast;
 
 use super::mainloop::on_main;
 use crate::api::{Signal, SystemSignals, Theme};
-
-/// Broadcast capacity, as in the fake.
-const CAPACITY: usize = 64;
+use crate::hub::{SignalHub, mode_theme};
 
 /// How long registering the observers may wait for the main thread.
 const REGISTER_TIMEOUT: Duration = Duration::from_secs(10);
@@ -47,31 +45,12 @@ pub struct MacSignals {
 }
 
 struct Shared {
-    tx: broadcast::Sender<Signal>,
-    dark: AtomicBool,
+    hub: SignalHub,
     /// The largest screen in pixels, packed as `width << 32 | height`; `0` when unknown.
     screen: AtomicU64,
 }
 
 impl Shared {
-    fn theme(&self) -> Theme {
-        if self.dark.load(Ordering::SeqCst) {
-            Theme::Dark
-        } else {
-            Theme::Light
-        }
-    }
-
-    /// Record `theme`; broadcast `ThemeChanged` only if it differs from the current one.
-    fn update_theme(&self, theme: Theme) -> bool {
-        let was_dark = self.dark.swap(theme == Theme::Dark, Ordering::SeqCst);
-        let changed = was_dark != (theme == Theme::Dark);
-        if changed {
-            let _ = self.tx.send(Signal::ThemeChanged(theme));
-        }
-        changed
-    }
-
     fn screen(&self) -> Option<(u32, u32)> {
         match self.screen.load(Ordering::SeqCst) {
             0 => None,
@@ -148,7 +127,7 @@ impl MacSignals {
             return Self::new(theme);
         }
         let initial = match dark_light::detect() {
-            Ok(mode) => theme_from_mode(mode).unwrap_or(Theme::Light),
+            Ok(mode) => mode_theme(mode).unwrap_or(Theme::Light),
             Err(err) => {
                 tracing::warn!(%err, "could not read the macOS appearance; assuming light");
                 Theme::Light
@@ -161,11 +140,9 @@ impl MacSignals {
 
     /// Signals with a fixed starting theme and nothing attached.
     fn new(theme: Theme) -> Self {
-        let (tx, _) = broadcast::channel(CAPACITY);
         Self {
             shared: Arc::new(Shared {
-                tx,
-                dark: AtomicBool::new(theme == Theme::Dark),
+                hub: SignalHub::new(theme),
                 screen: AtomicU64::new(0),
             }),
         }
@@ -174,23 +151,15 @@ impl MacSignals {
 
 impl SystemSignals for MacSignals {
     fn theme(&self) -> Theme {
-        self.shared.theme()
+        self.shared.hub.theme()
     }
 
     fn subscribe(&self) -> broadcast::Receiver<Signal> {
-        self.shared.tx.subscribe()
+        self.shared.hub.subscribe()
     }
 
     fn screen_size(&self) -> Option<(u32, u32)> {
         self.shared.screen()
-    }
-}
-
-fn theme_from_mode(mode: dark_light::Mode) -> Option<Theme> {
-    match mode {
-        dark_light::Mode::Dark => Some(Theme::Dark),
-        dark_light::Mode::Light => Some(Theme::Light),
-        dark_light::Mode::Unspecified => None,
     }
 }
 
@@ -211,8 +180,9 @@ fn spawn_theme_watcher(shared: Weak<Shared>) {
                 let Some(shared) = shared.upgrade() else {
                     break;
                 };
-                if let Some(theme) = theme_from_mode(mode) {
-                    shared.update_theme(theme);
+                // `Unspecified` keeps the last theme.
+                if let Some(theme) = mode_theme(mode) {
+                    shared.hub.update_theme(theme);
                 }
             }
         });
@@ -238,7 +208,7 @@ fn add_observers(mtm: MainThreadMarker, shared: &Weak<Shared>) {
         return;
     };
     strong.refresh_screen(mtm);
-    let tx = strong.tx.clone();
+    let tx = strong.hub.sender();
     drop(strong);
     let workspace_center = NSWorkspace::sharedWorkspace().notificationCenter();
     let default_center = NSNotificationCenter::defaultCenter();
@@ -301,10 +271,10 @@ mod tests {
     fn theme_changes_are_deduplicated() {
         let signals = MacSignals::new(Theme::Light);
         let mut rx = signals.subscribe();
-        assert!(!signals.shared.update_theme(Theme::Light));
-        assert!(signals.shared.update_theme(Theme::Dark));
-        assert!(!signals.shared.update_theme(Theme::Dark));
-        assert!(signals.shared.update_theme(Theme::Light));
+        assert!(!signals.shared.hub.update_theme(Theme::Light));
+        assert!(signals.shared.hub.update_theme(Theme::Dark));
+        assert!(!signals.shared.hub.update_theme(Theme::Dark));
+        assert!(signals.shared.hub.update_theme(Theme::Light));
         assert_eq!(rx.try_recv().unwrap(), Signal::ThemeChanged(Theme::Dark));
         assert_eq!(rx.try_recv().unwrap(), Signal::ThemeChanged(Theme::Light));
         assert!(rx.try_recv().is_err());
@@ -348,12 +318,6 @@ mod tests {
         assert_eq!(signals.screen_size(), Some((6016, 3384)));
         signals.shared.store_screen(None);
         assert_eq!(signals.screen_size(), None);
-    }
-
-    #[test]
-    fn unspecified_mode_is_ignored() {
-        assert_eq!(theme_from_mode(dark_light::Mode::Unspecified), None);
-        assert_eq!(theme_from_mode(dark_light::Mode::Dark), Some(Theme::Dark));
     }
 
     // Outside the host nothing drains the main queue: `start` must still return, with the

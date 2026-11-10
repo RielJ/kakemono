@@ -141,14 +141,58 @@ pub enum SetError {
         status: CommandStatus,
         stderr: String,
     },
-    /// A D-Bus call (KDE, XFCE, portal) failed.
-    #[error("D-Bus: {0}")]
-    Dbus(String),
-    /// A native OS API (NSWorkspace, IDesktopWallpaper, ...) failed.
-    #[error("{0}")]
-    Os(String),
+    /// A D-Bus call (KDE, XFCE, the session bus) failed. `message` is the user-facing text
+    /// (it already includes the error's text); `source` is the D-Bus error itself, so callers
+    /// can tell "peer not running" from "denied".
+    #[error("D-Bus: {message}")]
+    Dbus {
+        message: String,
+        #[source]
+        source: BoxError,
+    },
+    /// A native OS API (NSWorkspace, IDesktopWallpaper, ...) failed, or the image cannot be
+    /// used. `message` is the user-facing text; `source` is the API's own error when there is
+    /// one.
+    #[error("{message}")]
+    Os {
+        message: String,
+        #[source]
+        source: Option<BoxError>,
+    },
+    /// The backend did not finish `set` within `after` (see [`crate::deadline`]).
+    #[error("{backend}: timed out after {}s", after.as_secs_f64())]
+    TimedOut { backend: String, after: Duration },
     #[error(transparent)]
     Io(#[from] std::io::Error),
+}
+
+/// The source error kept by [`SetError::Dbus`] and [`SetError::Os`].
+pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
+
+impl SetError {
+    /// `SetError::Os` with `message` and no source.
+    pub fn os(message: impl Into<String>) -> Self {
+        SetError::Os {
+            message: message.into(),
+            source: None,
+        }
+    }
+
+    /// `SetError::Os` showing `message` and keeping `source`.
+    pub fn os_from(message: impl Into<String>, source: impl Into<BoxError>) -> Self {
+        SetError::Os {
+            message: message.into(),
+            source: Some(source.into()),
+        }
+    }
+
+    /// `SetError::Dbus` showing `message` and keeping `source`.
+    pub fn dbus(message: impl Into<String>, source: impl Into<BoxError>) -> Self {
+        SetError::Dbus {
+            message: message.into(),
+            source: source.into(),
+        }
+    }
 }
 
 /// The hint used when no backend is available.
@@ -293,6 +337,31 @@ impl Platform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M6: `Os` and `Dbus` keep the original error as their source, and its text in `Display`
+    /// (which is what crosses IPC).
+    #[test]
+    fn os_and_dbus_errors_keep_their_source() {
+        use std::error::Error as _;
+
+        let io = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        let err = SetError::os_from(format!("IDesktopWallpaper: {io}"), io);
+        assert_eq!(err.to_string(), "IDesktopWallpaper: denied");
+        let source = err.source().expect("source");
+        let io = source.downcast_ref::<std::io::Error>().expect("io::Error");
+        assert_eq!(io.kind(), std::io::ErrorKind::PermissionDenied);
+
+        let err = SetError::dbus("org.xfce.Xfconf.SetProperty: no reply", "no reply");
+        assert_eq!(
+            err.to_string(),
+            "D-Bus: org.xfce.Xfconf.SetProperty: no reply"
+        );
+        assert!(err.source().is_some());
+
+        let err = SetError::os("no screens are attached");
+        assert_eq!(err.to_string(), "no screens are attached");
+        assert!(err.source().is_none());
+    }
 
     #[test]
     fn theme_names_round_trip() {

@@ -27,7 +27,7 @@ use kakemono_config::paths::{BaseDirs, Paths};
 pub use kakemono_config::paths::Os;
 
 use crate::api::CommandStatus;
-use crate::exec::{CommandRunner, Invocation, Output, RunError, TokioRunner};
+use crate::exec::{CommandRunner, Invocation, Output, RunError, TokioRunner, tidy_stderr};
 
 /// Service errors. Messages read as CLI output (`kakemono service install` prints them as is).
 #[derive(Debug, thiserror::Error)]
@@ -51,10 +51,12 @@ pub enum ServiceError {
     },
     #[error(transparent)]
     Run(#[from] RunError),
-    #[error("unexpected output from `{command}`: {output:?}")]
-    Parse { command: String, output: String },
     #[error("login registry entry: {0}")]
     Registry(#[source] io::Error),
+    /// A path the service definition must contain is not valid UTF-8, so writing it would point
+    /// the service at a file that does not exist.
+    #[error("cannot install the service: path is not valid UTF-8: {}", .0.display())]
+    NonUtf8Path(PathBuf),
 }
 
 fn stderr_suffix(stderr: &str) -> String {
@@ -77,6 +79,20 @@ pub struct ServiceEnv {
     pub log_dir: PathBuf,
     /// Absolute path of the `kakemono` binary the service runs.
     pub exe: PathBuf,
+    /// The user's id (macOS: the `gui/<uid>` launchd domain). `getuid()` on Unix; 0 on Windows,
+    /// where nothing reads it.
+    pub uid: u32,
+}
+
+/// The real user id of this process (no command spawned, unlike `id -u`).
+#[cfg(unix)]
+fn current_uid() -> u32 {
+    nix::unistd::getuid().as_raw()
+}
+
+#[cfg(not(unix))]
+fn current_uid() -> u32 {
+    0
 }
 
 impl ServiceEnv {
@@ -95,7 +111,21 @@ impl ServiceEnv {
             config_home: base.config_home,
             log_dir: paths.log_dir,
             exe,
+            uid: current_uid(),
         })
+    }
+
+    /// Every path the definition embeds is UTF-8 (the definitions are text; a lossy path would
+    /// name a file that does not exist).
+    fn check_utf8(&self) -> Result<(), ServiceError> {
+        let log_dir = (self.os == Os::MacOs).then_some(&self.log_dir);
+        match std::iter::once(&self.exe)
+            .chain(log_dir)
+            .find(|path| path.to_str().is_none())
+        {
+            Some(path) => Err(ServiceError::NonUtf8Path(path.clone())),
+            None => Ok(()),
+        }
     }
 
     /// The service definition file, if this OS uses one (not Windows).
@@ -217,6 +247,7 @@ impl ServiceManager {
     /// Writes the definition and starts the service. Re-running it rewrites the definition and
     /// restarts the service, so it also upgrades an old install.
     pub async fn install(&self) -> Result<Installed, ServiceError> {
+        self.env.check_utf8()?;
         match self.env.os {
             Os::MacOs => launchd::install(&self.env, self.runner.as_ref()).await,
             Os::Linux => systemd::install(&self.env, self.runner.as_ref()).await,
@@ -245,10 +276,6 @@ impl ServiceManager {
 
 // ---- helpers shared by the backends ----
 
-fn s<const N: usize>(argv: [&str; N]) -> Vec<String> {
-    argv.iter().map(|a| (*a).to_owned()).collect()
-}
-
 /// Runs `argv`; a non-zero exit or timeout is `ServiceError::Command`.
 async fn run_checked(
     runner: &dyn CommandRunner,
@@ -268,17 +295,18 @@ async fn run_any(runner: &dyn CommandRunner, argv: Vec<String>) -> Result<Output
     runner.run(&Invocation::new(argv)).await
 }
 
+/// `ServiceError::Command` for a failed `argv`, with stderr (or stdout when stderr is empty)
+/// trimmed and capped like `exec::Output::check`'s.
 fn command_error(argv: &[String], output: &Output) -> ServiceError {
-    let stderr = output.stderr.trim();
-    let stderr = if stderr.is_empty() {
-        output.stdout.trim()
+    let stderr = if output.stderr.trim().is_empty() {
+        &output.stdout
     } else {
-        stderr
+        &output.stderr
     };
     ServiceError::Command {
         command: argv.join(" "),
         status: output.status,
-        stderr: stderr.chars().take(500).collect(),
+        stderr: tidy_stderr(stderr),
     }
 }
 

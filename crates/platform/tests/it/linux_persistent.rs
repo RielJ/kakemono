@@ -45,6 +45,8 @@ struct FakeState {
     die_next: bool,
     /// The next spawn fails (binary missing).
     fail_next: bool,
+    /// The next spawned process runs under this name instead of argv0's (`env`, `sh -c exec`).
+    rename_next: Option<String>,
 }
 
 #[derive(Debug)]
@@ -124,11 +126,13 @@ impl ProcessControl for FakeProcesses {
             at,
         });
         if !std::mem::take(&mut st.die_next) {
-            let name = Path::new(&argv0)
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .into_owned();
+            let name = st.rename_next.take().unwrap_or_else(|| {
+                Path::new(&argv0)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            });
             st.alive.insert(pid, name);
         }
         Ok(pid)
@@ -226,6 +230,69 @@ async fn persistent_new_process_dying_during_settle_keeps_old() {
     assert_eq!(fake.alive(), vec![first]);
     assert_eq!(read_record(&dir.path().join(PID_FILE)).unwrap().pid, first);
     assert_eq!(sup.current().await.unwrap().pid, first);
+}
+
+/// H4: a new setter that runs under another name (`env FOO=1 swaybg`, `sh -c "exec swaybg"`)
+/// is stopped, not left running untracked; the old setter and its record stay.
+#[tokio::test(start_paused = true)]
+async fn persistent_new_process_with_another_name_is_stopped() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeProcesses::new();
+    let sup = sup(&fake, dir.path());
+    let first = sup.replace(swaybg("/a.jpg")).await.unwrap();
+
+    let mut wrapped = swaybg("/b.jpg");
+    wrapped.splice(0..0, ["/usr/bin/env".to_owned(), "FOO=1".to_owned()]);
+    fake.st().rename_next = Some("swaybg".to_owned());
+    let err = sup.replace(wrapped).await.unwrap_err();
+
+    let SetError::Command {
+        argv0,
+        status,
+        stderr,
+    } = err
+    else {
+        panic!("unexpected {err:?}");
+    };
+    assert_eq!(argv0, "/usr/bin/env");
+    assert_eq!(status, CommandStatus::FailedToStart);
+    assert!(
+        stderr.contains("runs as `swaybg`, expected `env`"),
+        "{stderr}"
+    );
+    let second = first + 1;
+    assert_eq!(fake.terminated(), [second], "the new process is stopped");
+    assert_eq!(fake.alive(), [first], "nothing leaked");
+    assert_eq!(read_record(&dir.path().join(PID_FILE)).unwrap().pid, first);
+    assert_eq!(sup.current().await.unwrap().pid, first);
+}
+
+/// H4: if `setter.pid` cannot be written, the new process is stopped and the old one keeps
+/// running, still tracked.
+#[tokio::test(start_paused = true)]
+async fn persistent_record_write_failure_stops_the_new_process() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeProcesses::new();
+    let sup = sup(&fake, dir.path());
+    let first = sup.replace(swaybg("/a.jpg")).await.unwrap();
+
+    // `write_record` writes `setter.pid.tmp` first; a directory there makes the write fail.
+    let blocker = dir.path().join(format!("{PID_FILE}.tmp"));
+    std::fs::create_dir(&blocker).unwrap();
+    let err = sup.replace(swaybg("/b.jpg")).await.unwrap_err();
+
+    assert!(matches!(err, SetError::Io(_)), "{err:?}");
+    let second = first + 1;
+    assert_eq!(fake.terminated(), [second], "the new process is stopped");
+    assert_eq!(fake.alive(), [first], "the old setter keeps running");
+    assert_eq!(read_record(&dir.path().join(PID_FILE)).unwrap().pid, first);
+    assert_eq!(sup.current().await.unwrap().pid, first);
+
+    // Once the record can be written again, the next set replaces the old setter.
+    std::fs::remove_dir(&blocker).unwrap();
+    let third = sup.replace(swaybg("/c.jpg")).await.unwrap();
+    assert_eq!(fake.terminated(), [second, first]);
+    assert_eq!(fake.alive(), [third]);
 }
 
 #[tokio::test(start_paused = true)]

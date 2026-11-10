@@ -188,30 +188,56 @@ impl Supervisor {
         self.state.lock().await.current.clone()
     }
 
-    /// Start `argv`, wait the settle time, then terminate the previous setter and record the new
-    /// one. If the new process exits during the settle time, the previous setter keeps running
-    /// and this returns `SetError::Command`.
+    /// Start `argv`, wait the settle time, record the new process, then terminate the previous
+    /// setter.
+    ///
+    /// # Errors
+    ///
+    /// On any error the previous setter keeps running and stays recorded, and the new process
+    /// (if one started) is stopped:
+    /// - `SetError::Command` when the new process exits during the settle time, or runs under
+    ///   another name than argv0's (a wrapper such as `env` or `sh -c exec`, which could never
+    ///   be told apart from a reused PID later);
+    /// - `SetError::Io` when `setter.pid` cannot be written.
     pub async fn replace(&self, argv: Vec<String>) -> Result<u32, SetError> {
         // Held across the settle sleep on purpose (a tokio mutex): concurrent sets queue, so two
         // replacements never race to terminate the same old instance.
+        // pi-lens-ignore: rust-lock-held-across-await -- tokio mutex, held across the settle on purpose
         let mut state = self.state.lock().await;
         let pid = self.spawn(&argv)?;
         tokio::time::sleep(self.settle).await;
         let new = Record { pid, argv };
-        if !alive_as(self.control.as_ref(), &new) {
+        let expected = expected_comm(new.argv0());
+        let stderr = match self.control.comm(pid) {
+            Some(comm) if comm == expected => None,
+            Some(comm) => {
+                // Our own fresh group leader, so stopping it cannot hit another program.
+                self.control.terminate(pid, self.grace).await;
+                Some(format!(
+                    "runs as `{comm}`, expected `{expected}`; use the real binary as argv0"
+                ))
+            }
+            None => Some(format!(
+                "exited within {} ms; a persistent setter must keep running",
+                self.settle.as_millis()
+            )),
+        };
+        if let Some(stderr) = stderr {
             return Err(SetError::Command {
                 argv0: new.argv0().to_owned(),
                 status: CommandStatus::FailedToStart,
-                stderr: format!(
-                    "exited within {} ms; a persistent setter must keep running",
-                    self.settle.as_millis()
-                ),
+                stderr,
             });
+        }
+        // Record the new process before stopping the old one: if the record cannot be written,
+        // the old setter is still running and still tracked.
+        if let Err(err) = write_record(&self.pid_file, &new) {
+            self.control.terminate(pid, self.grace).await;
+            return Err(err.into());
         }
         if let Some(old) = state.current.take() {
             self.terminate_if_ours(&old, pid).await;
         }
-        write_record(&self.pid_file, &new)?;
         tracing::debug!(pid, argv = ?new.argv, "persistent setter replaced");
         state.current = Some(new);
         state.restarts = 0;

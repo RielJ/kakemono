@@ -102,9 +102,10 @@ impl WallpaperSetter for KdeSetter {
             .call_method(Some(DESTINATION), PATH, Some(INTERFACE), METHOD, &(script,))
             .await
             .map_err(|err| {
-                SetError::Dbus(format!(
+                let message = format!(
                     "{INTERFACE}.{METHOD}: {err} (Plasma must be running, with widgets unlocked)"
-                ))
+                );
+                SetError::dbus(message, err)
             })?;
         if let Ok(printed) = reply.body().deserialize::<String>()
             && !printed.trim().is_empty()

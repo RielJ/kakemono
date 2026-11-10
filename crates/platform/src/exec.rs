@@ -5,17 +5,21 @@
 //!   re-splits, so a path with spaces, quotes, `$()` or `;` stays one argv element.
 //! - [`validate`] rejects unknown `{name}` placeholders (call it when loading config).
 //! - [`CommandRunner`] runs an [`Invocation`] with a timeout and captured output. [`TokioRunner`]
-//!   is the real one; [`RecordingRunner`] records argv/env for tests.
+//!   is the real one; `RecordingRunner` (feature `fake`) records argv/env for tests.
 
-use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::api::{CommandStatus, Fit, SetError, Theme};
+
+#[cfg(any(test, feature = "fake"))]
+mod recording;
+#[cfg(any(test, feature = "fake"))]
+pub use recording::{FAKE_PID_BASE, RecordingRunner};
 
 /// The placeholders `render` substitutes.
 pub const PLACEHOLDERS: [&str; 4] = ["path", "uri", "fit", "theme"];
@@ -242,6 +246,46 @@ impl Invocation {
     }
 }
 
+/// Options a setter applies to every command it runs: extra variables and the timeout.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunOptions {
+    /// Variables set on each child, on top of the inherited environment.
+    pub env: Vec<(String, String)>,
+    pub timeout: Duration,
+}
+
+impl Default for RunOptions {
+    /// No extra variables, [`DEFAULT_TIMEOUT`].
+    fn default() -> Self {
+        Self {
+            env: Vec::new(),
+            timeout: DEFAULT_TIMEOUT,
+        }
+    }
+}
+
+impl RunOptions {
+    /// Set a variable on every run (e.g. `PATH` in tests).
+    #[must_use]
+    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.env.push((key.into(), value.into()));
+        self
+    }
+
+    #[must_use]
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    /// `invocation` with these variables added and this timeout.
+    pub fn apply(&self, invocation: Invocation) -> Invocation {
+        invocation
+            .envs(self.env.iter().cloned())
+            .timeout(self.timeout)
+    }
+}
+
 /// The result of a command that started. `status` is never `FailedToStart`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Output {
@@ -284,8 +328,13 @@ impl Output {
     }
 }
 
+/// `parts` as an owned argv.
+pub(crate) fn argv(parts: &[&str]) -> Vec<String> {
+    parts.iter().map(|s| (*s).to_owned()).collect()
+}
+
 /// Trim and keep the last `MAX_ERROR_STDERR` bytes (on a char boundary).
-fn tidy_stderr(stderr: &str) -> String {
+pub(crate) fn tidy_stderr(stderr: &str) -> String {
     let trimmed = stderr.trim();
     let mut start = trimmed.len().saturating_sub(MAX_ERROR_STDERR);
     while !trimmed.is_char_boundary(start) {
@@ -362,6 +411,43 @@ impl Capture {
     }
 }
 
+/// The process group a [`TokioRunner::run`] child leads (Unix). Dropping it while armed SIGKILLs
+/// the group. Disarm it once the leader is reaped, because then its ID may be reused. Windows
+/// has no groups here; there only the child itself is killed.
+struct GroupKill(Option<u32>);
+
+impl GroupKill {
+    fn disarm(&mut self) {
+        self.0 = None;
+    }
+
+    fn kill(&mut self) {
+        if let Some(pgid) = self.0.take() {
+            kill_group(pgid);
+        }
+    }
+}
+
+impl Drop for GroupKill {
+    fn drop(&mut self) {
+        self.kill();
+    }
+}
+
+#[cfg(unix)]
+fn kill_group(pgid: u32) {
+    use nix::sys::signal::{Signal, killpg};
+    use nix::unistd::Pid;
+
+    let Ok(raw) = i32::try_from(pgid) else { return };
+    if let Err(err) = killpg(Pid::from_raw(raw), Signal::SIGKILL) {
+        tracing::debug!(%err, pgid, "killpg failed");
+    }
+}
+
+#[cfg(not(unix))]
+fn kill_group(_pgid: u32) {}
+
 fn status_of(status: std::process::ExitStatus) -> CommandStatus {
     status
         .code()
@@ -385,6 +471,9 @@ impl CommandRunner for TokioRunner {
             cmd.env_clear();
         }
         cmd.envs(invocation.env.iter().map(|(k, v)| (k, v)));
+        // Its own process group, so a timeout can kill wrapper commands' children too.
+        #[cfg(unix)]
+        cmd.process_group(0);
         #[cfg(windows)]
         cmd.creation_flags(CREATE_NO_WINDOW);
 
@@ -392,18 +481,29 @@ impl CommandRunner for TokioRunner {
             argv0: argv0.clone(),
             source,
         })?;
+        // Declared after `child`, so it drops first: a cancelled run kills the whole group while
+        // the unreaped leader still holds the group ID, then `kill_on_drop` kills the leader.
+        let mut group = GroupKill(child.id());
         let stdout = Capture::start(child.stdout.take());
         let stderr = Capture::start(child.stderr.take());
 
         let status = match tokio::time::timeout(invocation.timeout, child.wait()).await {
-            Ok(Ok(status)) => status_of(status),
+            Ok(Ok(status)) => {
+                // Reaped: the group ID may be reused now. Background children it left on
+                // purpose keep running.
+                group.disarm();
+                status_of(status)
+            }
             // Waiting failed: the child is in an unknown state, so make sure it is gone.
             Ok(Err(_)) => {
+                group.kill();
                 let _ = child.kill().await;
                 CommandStatus::Signaled
             }
             Err(_) => {
-                // `kill` sends SIGKILL / TerminateProcess and reaps the child.
+                // SIGKILL the group (Unix), then `kill` sends SIGKILL / TerminateProcess to
+                // the child and reaps it.
+                group.kill();
                 let _ = child.kill().await;
                 tracing::debug!(argv0 = %argv0, timeout = ?invocation.timeout, "command timed out; killed");
                 CommandStatus::TimedOut(invocation.timeout)
@@ -434,17 +534,18 @@ impl CommandRunner for TokioRunner {
             use std::os::windows::process::CommandExt;
             cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
         }
-        let mut child = cmd.spawn().map_err(|source| RunError::Spawn {
+        let child = cmd.spawn().map_err(|source| RunError::Spawn {
             argv0: argv0.clone(),
             source,
         })?;
         let pid = child.id();
-        // Reap it when it exits so replaced setters don't linger as zombies.
+        // Reap it when it exits so replaced setters don't linger as zombies. If the thread
+        // cannot start, dropping the unused closure drops `reaper`, which kills and reaps the
+        // child instead of leaving it running untracked.
+        let reaper = Reaper(Some(child));
         std::thread::Builder::new()
             .name(format!("reap-{pid}"))
-            .spawn(move || {
-                let _ = child.wait();
-            })
+            .spawn(move || reaper.wait())
             .map_err(|source| RunError::Spawn {
                 argv0: argv0.clone(),
                 source,
@@ -453,139 +554,25 @@ impl CommandRunner for TokioRunner {
     }
 }
 
-/// Test double: records every invocation and returns scripted outputs.
-///
-/// Clones share state. Outputs queued with [`push_output`](Self::push_output) are taken in call
-/// order (when each `run` starts), then [`Output::success`]. With [`set_delay`](Self::set_delay), each `run` sleeps
-/// (on the tokio clock, so paused-time tests work); a delay past the invocation's timeout
-/// returns `TimedOut` after the timeout instead.
-#[derive(Clone, Debug, Default)]
-pub struct RecordingRunner {
-    state: Arc<Mutex<RecordingState>>,
-}
+/// A detached child that is reaped by [`Reaper::wait`], or killed and reaped when dropped
+/// without it.
+struct Reaper(Option<std::process::Child>);
 
-#[derive(Debug, Default)]
-struct RecordingState {
-    invocations: Vec<Invocation>,
-    detached: Vec<Vec<String>>,
-    outputs: VecDeque<Result<Output, String>>,
-    delay: Duration,
-    in_flight: usize,
-    max_in_flight: usize,
-}
-
-/// First fake PID returned by `RecordingRunner::spawn_detached`.
-pub const FAKE_PID_BASE: u32 = 40_000;
-
-impl RecordingRunner {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    fn state(&self) -> MutexGuard<'_, RecordingState> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// Queue the output for the next unscripted `run`.
-    pub fn push_output(&self, output: Output) {
-        self.state().outputs.push_back(Ok(output));
-    }
-
-    /// Make the next `run` fail to start, with this io error message.
-    pub fn push_spawn_error(&self, message: impl Into<String>) {
-        self.state().outputs.push_back(Err(message.into()));
-    }
-
-    /// Make each `run` take this long.
-    pub fn set_delay(&self, delay: Duration) {
-        self.state().delay = delay;
-    }
-
-    /// Every `run` call so far, in call order (recorded when the call starts).
-    pub fn invocations(&self) -> Vec<Invocation> {
-        self.state().invocations.clone()
-    }
-
-    /// Just the argv of every `run` call.
-    pub fn argvs(&self) -> Vec<Vec<String>> {
-        self.state()
-            .invocations
-            .iter()
-            .map(|i| i.argv.clone())
-            .collect()
-    }
-
-    /// Every `spawn_detached` argv. The n-th call returned PID `FAKE_PID_BASE + n`.
-    pub fn detached(&self) -> Vec<Vec<String>> {
-        self.state().detached.clone()
-    }
-
-    /// Runs currently in progress.
-    pub fn in_flight(&self) -> usize {
-        self.state().in_flight
-    }
-
-    /// The highest number of concurrent runs seen.
-    pub fn max_in_flight(&self) -> usize {
-        self.state().max_in_flight
+impl Reaper {
+    /// Block until the child exits, then reap it.
+    fn wait(mut self) {
+        if let Some(mut child) = self.0.take() {
+            let _ = child.wait();
+        }
     }
 }
 
-/// Decrements `in_flight` even if the run future is dropped.
-struct InFlight(RecordingRunner);
-
-impl Drop for InFlight {
+impl Drop for Reaper {
     fn drop(&mut self) {
-        let mut state = self.0.state();
-        state.in_flight = state.in_flight.saturating_sub(1);
-    }
-}
-
-#[async_trait::async_trait]
-impl CommandRunner for RecordingRunner {
-    async fn run(&self, invocation: &Invocation) -> Result<Output, RunError> {
-        let (delay, scripted) = {
-            let mut state = self.state();
-            state.invocations.push(invocation.clone());
-            state.in_flight += 1;
-            state.max_in_flight = state.max_in_flight.max(state.in_flight);
-            // Popped at call start, so concurrent runs get scripted results in call order.
-            (state.delay, state.outputs.pop_front())
-        };
-        let _guard = InFlight(self.clone());
-        let argv0 = invocation.argv.first().ok_or(RunError::EmptyCommand)?;
-        let output = match scripted {
-            None => Output::success(),
-            Some(Ok(output)) => output,
-            // Spawn failures are immediate: no delay.
-            Some(Err(message)) => {
-                return Err(RunError::Spawn {
-                    argv0: argv0.clone(),
-                    source: std::io::Error::new(std::io::ErrorKind::NotFound, message),
-                });
-            }
-        };
-        if delay > invocation.timeout {
-            tokio::time::sleep(invocation.timeout).await;
-            return Ok(Output {
-                status: CommandStatus::TimedOut(invocation.timeout),
-                ..output
-            });
+        if let Some(mut child) = self.0.take() {
+            let _ = child.kill();
+            let _ = child.wait();
         }
-        if !delay.is_zero() {
-            tokio::time::sleep(delay).await;
-        }
-        Ok(output)
-    }
-
-    fn spawn_detached(&self, argv: &[String]) -> Result<u32, RunError> {
-        if argv.is_empty() {
-            return Err(RunError::EmptyCommand);
-        }
-        let mut state = self.state();
-        state.detached.push(argv.to_vec());
-        let n = u32::try_from(state.detached.len() - 1).unwrap_or(u32::MAX - FAKE_PID_BASE);
-        Ok(FAKE_PID_BASE + n)
     }
 }
 
@@ -641,5 +628,35 @@ mod tests {
             FAKE_PID_BASE + 1
         );
         assert_eq!(runner.detached().len(), 2);
+    }
+
+    /// L1: a reaper dropped without running (its thread failed to spawn) kills and reaps the
+    /// child instead of leaving it running untracked.
+    #[cfg(unix)]
+    #[test]
+    fn an_unused_reaper_kills_its_child() {
+        let child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let pid = nix::unistd::Pid::from_raw(i32::try_from(child.id()).unwrap());
+        drop(Reaper(Some(child)));
+        // Reaped: the pid no longer names a process (not even a zombie).
+        assert_eq!(
+            nix::sys::signal::kill(pid, None),
+            Err(nix::errno::Errno::ESRCH)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_reaper_waits_for_its_child() {
+        let child = std::process::Command::new("true").spawn().unwrap();
+        let pid = nix::unistd::Pid::from_raw(i32::try_from(child.id()).unwrap());
+        Reaper(Some(child)).wait();
+        assert_eq!(
+            nix::sys::signal::kill(pid, None),
+            Err(nix::errno::Errno::ESRCH)
+        );
     }
 }

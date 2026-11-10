@@ -277,7 +277,9 @@ async fn xfce_setter_maps_dbus_errors() {
         .set(Path::new("/w/x.png"), Fit::Fill)
         .await
     {
-        Err(SetError::Dbus(msg)) => {
+        Err(err @ SetError::Dbus { .. }) => {
+            assert!(std::error::Error::source(&err).is_some());
+            let msg = err.to_string();
             assert!(msg.contains("GetAllProperties"), "{msg}");
             assert!(msg.contains("does not exist"), "{msg}");
         }
