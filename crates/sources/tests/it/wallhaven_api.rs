@@ -225,3 +225,274 @@ fn api_key_selects_mode() {
     assert!(keyed.uses_api());
     assert!(!keyless.uses_api());
 }
+
+// ---------------------------------------------------------------------------------------------
+// Browse (picker Sources tab): `page`/`seed` paging, fail-fast 429, field mapping.
+// ---------------------------------------------------------------------------------------------
+
+mod browse {
+    use kakemono_config::schema::WallhavenConfig;
+    use kakemono_sources::wallhaven::Wallhaven;
+    use kakemono_sources::{
+        BrowseBatch, BrowseCursor, BrowseSupport, ImageRef, Provider, ProviderError, RemoteItem,
+    };
+    use wiremock::matchers::{method, path, query_param, query_param_is_missing};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use crate::common;
+
+    const KEY: &str = "testkey";
+
+    fn fixture(name: &str) -> String {
+        let file = common::fixtures_dir().join("wallhaven").join(name);
+        std::fs::read_to_string(&file).unwrap_or_else(|e| panic!("{}: {e}", file.display()))
+    }
+
+    fn keyed(base_url: url::Url) -> Wallhaven {
+        let cfg = WallhavenConfig {
+            api_key: KEY.to_owned(),
+            purity: "110".to_owned(),
+            sorting: "random".to_owned(),
+            categories: "111".to_owned(),
+        };
+        Wallhaven::with_base_url(cfg, reqwest::Client::new(), base_url)
+    }
+
+    fn base(server: &MockServer) -> url::Url {
+        server.uri().parse().unwrap()
+    }
+
+    /// `/api/v1/search` with the key and the config params; `page` and `seed` are added by the
+    /// caller.
+    fn search() -> wiremock::MockBuilder {
+        Mock::given(method("GET"))
+            .and(path("/api/v1/search"))
+            .and(query_param("apikey", KEY))
+            .and(query_param("purity", "110"))
+            .and(query_param("sorting", "random"))
+            .and(query_param("categories", "111"))
+            .and(query_param("q", "nature"))
+    }
+
+    fn ok(body: String) -> ResponseTemplate {
+        ResponseTemplate::new(200).set_body_raw(body, "application/json")
+    }
+
+    async fn first_page() -> (MockServer, BrowseBatch) {
+        let server = MockServer::start().await;
+        search()
+            .and(query_param("page", "1"))
+            .and(query_param_is_missing("seed"))
+            .respond_with(ok(fixture("api_browse_p1.json")))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let batch = keyed(base(&server)).browse("nature", None).await.unwrap();
+        (server, batch)
+    }
+
+    #[tokio::test]
+    async fn browse_first_call_sends_page_1_without_seed_and_cursor_holds_seed() {
+        let (server, batch) = first_page().await;
+        assert_eq!(batch.next, Some(BrowseCursor("2:Xy12Ab".to_owned())));
+        server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn browse_next_call_sends_page_and_seed_from_cursor() {
+        let server = MockServer::start().await;
+        search()
+            .and(query_param("page", "2"))
+            .and(query_param("seed", "Xy12Ab"))
+            .respond_with(ok(fixture("api_browse_p1.json")))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let cursor = BrowseCursor("2:Xy12Ab".to_owned());
+        let batch = keyed(base(&server))
+            .browse("nature", Some(&cursor))
+            .await
+            .unwrap();
+        assert_eq!(batch.next, Some(BrowseCursor("3:Xy12Ab".to_owned())));
+        server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn browse_last_page_has_no_next() {
+        let server = MockServer::start().await;
+        search()
+            .and(query_param("page", "3"))
+            .and(query_param("seed", "Xy12Ab"))
+            .respond_with(ok(fixture("api_browse_last.json")))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let cursor = BrowseCursor("3:Xy12Ab".to_owned());
+        let batch = keyed(base(&server))
+            .browse("nature", Some(&cursor))
+            .await
+            .unwrap();
+        assert_eq!(batch.next, None);
+        assert_eq!(batch.items.len(), 1);
+        assert!(batch.items[0].nsfw, "purity nsfw: {:?}", batch.items[0]);
+        server.verify().await;
+    }
+
+    /// A sort without a seed (e.g. `toplist`) answers `"seed": null`: the cursor carries an
+    /// empty seed and the next request sends none.
+    #[tokio::test]
+    async fn browse_without_seed_sends_no_seed_on_next_page() {
+        let server = MockServer::start().await;
+        search()
+            .and(query_param("page", "2"))
+            .and(query_param_is_missing("seed"))
+            .respond_with(ok(fixture("api_browse_last.json")
+                .replace(r#""current_page": 3"#, r#""current_page": 2"#)))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let cursor = BrowseCursor("2:".to_owned());
+        let batch = keyed(base(&server))
+            .browse("nature", Some(&cursor))
+            .await
+            .unwrap();
+        assert_eq!(batch.next, Some(BrowseCursor("3:".to_owned())));
+        server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn browse_maps_fields_and_drops_items_without_thumbs() {
+        let (_server, batch) = first_page().await;
+        let want = vec![
+            RemoteItem {
+                remote_id: "abc123".to_owned(),
+                preview_url: "https://th.wallhaven.cc/lg/ab/abc123.jpg".to_owned(),
+                image: ImageRef::Direct(
+                    "https://w.wallhaven.cc/full/ab/wallhaven-abc123.jpg".to_owned(),
+                ),
+                source_url: "https://wallhaven.cc/w/abc123".to_owned(),
+                title: String::new(),
+                author: "artist1".to_owned(),
+                width: Some(1920),
+                height: Some(1080),
+                nsfw: false,
+            },
+            RemoteItem {
+                remote_id: "def456".to_owned(),
+                preview_url: "https://th.wallhaven.cc/lg/de/def456.jpg".to_owned(),
+                image: ImageRef::Direct(
+                    "https://w.wallhaven.cc/full/de/wallhaven-def456.png".to_owned(),
+                ),
+                source_url: "https://wallhaven.cc/w/def456".to_owned(),
+                title: String::new(),
+                author: String::new(),
+                width: Some(3840),
+                height: Some(2160),
+                nsfw: true,
+            },
+        ];
+        assert_eq!(batch.items, want);
+    }
+
+    #[tokio::test]
+    async fn browse_sanitizes_remote_id() {
+        let server = MockServer::start().await;
+        let body = r#"{"data":[{"id":"../x","url":"https://wallhaven.cc/w/x","purity":"sfw",
+            "path":"https://w.wallhaven.cc/full/x.jpg",
+            "thumbs":{"large":"https://th.wallhaven.cc/lg/x.jpg"}}],
+            "meta":{"current_page":1,"last_page":1,"seed":null}}"#;
+        search()
+            .respond_with(ok(body.to_owned()))
+            .mount(&server)
+            .await;
+        let batch = keyed(base(&server)).browse("nature", None).await.unwrap();
+        let id = &batch.items[0].remote_id;
+        assert_eq!(id, &kakemono_sources::browse::sanitize_remote_id("../x"));
+    }
+
+    #[tokio::test]
+    async fn browse_rate_limit_fails_fast_without_retry() {
+        let server = MockServer::start().await;
+        search()
+            .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "30"))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let err = keyed(base(&server))
+            .browse("nature", None)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                ProviderError::RateLimitedFor {
+                    retry_after_secs: Some(30),
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+        assert_eq!(err.to_string(), "wallhaven api: rate limited (status 429)");
+        server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn browse_status_error_never_contains_the_key() {
+        let server = MockServer::start().await;
+        search()
+            .respond_with(ResponseTemplate::new(500))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let err = keyed(base(&server))
+            .browse("nature", None)
+            .await
+            .unwrap_err();
+        common::assert_key_absent(&err, KEY);
+        assert!(
+            err.to_string()
+                .starts_with("wallhaven api: unexpected status 500 for "),
+            "{err}"
+        );
+        assert!(err.to_string().contains("apikey=REDACTED"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn browse_transport_error_never_contains_the_key() {
+        let err = keyed(common::hang_up_server().await)
+            .browse("nature", None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ProviderError::Request { .. }), "{err:?}");
+        common::assert_key_absent(&err, KEY);
+    }
+
+    #[tokio::test]
+    async fn browse_rejects_a_malformed_cursor_without_a_request() {
+        let server = MockServer::start().await;
+        search()
+            .respond_with(ok(fixture("api_browse_p1.json")))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let cursor = BrowseCursor("not-a-page".to_owned());
+        let err = keyed(base(&server))
+            .browse("nature", Some(&cursor))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ProviderError::Other(_)), "{err:?}");
+        server.verify().await;
+    }
+
+    #[test]
+    fn browse_support_is_paged() {
+        let wallhaven = keyed("https://wallhaven.cc".parse().unwrap());
+        assert_eq!(wallhaven.browse_support(), BrowseSupport::Paged);
+    }
+
+    #[test]
+    fn media_hosts_is_wallhaven_cc() {
+        let wallhaven = keyed("https://wallhaven.cc".parse().unwrap());
+        assert_eq!(wallhaven.media_hosts(), ["wallhaven.cc"]);
+    }
+}
