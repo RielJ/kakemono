@@ -879,7 +879,7 @@ mod tests {
                 .items
                 .iter()
                 .chain(&second.items)
-                .all(|t| t.image_url.starts_with("thumb://")
+                .all(|t| t.image_url.starts_with(&crate::thumbs::url_for(""))
                     && thumbs.is_admitted(Path::new(&t.path))),
             "every listed entry stays servable and pickable"
         );
