@@ -2,7 +2,7 @@
  * Frontend API surface. Every call goes to the Tauri backend (`crates/ui/src-tauri`) with
  * `invoke`, or to the Tauri dialog plugin. Command names and argument shapes match
  * `src-tauri/src/commands/`, `commands_desktop.rs`, `commands_sources/`, `picker.rs` and
- * `lifecycle.rs`; see
+ * `lifecycle.rs`; the one event the picker listens for here is `picker-shown`. See
  * `.pi/contracts/ui.md`.
  *
  * Config, status, command reply and error types are generated from Rust by ts-rs
@@ -10,22 +10,31 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 
 import type { AppInfo } from './bindings/AppInfo'
 import type { ApplyReport } from './bindings/ApplyReport'
 import type { BackendReport } from './bindings/BackendReport'
+import type { BrowseAction } from './bindings/BrowseAction'
+import type { BrowseListing } from './bindings/BrowseListing'
+import type { BrowseSourceState } from './bindings/BrowseSourceState'
+import type { BrowseSourceStatus } from './bindings/BrowseSourceStatus'
+import type { BrowseUseData } from './bindings/BrowseUseData'
 import type { CheckSourceData } from './bindings/CheckSourceData'
 import type { Config } from './bindings/Config'
 import type { DoctorReport } from './bindings/DoctorReport'
 import type { DownloadNowData } from './bindings/DownloadNowData'
 import type { ErrorKind } from './bindings/ErrorKind'
 import type { LoginItems } from './bindings/LoginItems'
+import type { PickerTab } from './bindings/PickerTab'
+import type { RemoteThumb } from './bindings/RemoteThumb'
 import type { SaveOutcome } from './bindings/SaveOutcome'
 import type { ServiceStatus } from './bindings/ServiceStatus'
 import type { SourceType } from './bindings/SourceType'
 import type { StatusData } from './bindings/StatusData'
+import type { TabListing } from './bindings/TabListing'
 import type { Thumbnail } from './bindings/Thumbnail'
 import type { WallpaperInfo } from './bindings/WallpaperInfo'
 import type { WireError } from './bindings/WireError'
@@ -34,19 +43,34 @@ export type {
   AppInfo,
   ApplyReport,
   BackendReport,
+  BrowseAction,
+  BrowseListing,
+  BrowseSourceState,
+  BrowseSourceStatus,
+  BrowseUseData,
   CheckSourceData,
   Config,
   DoctorReport,
   DownloadNowData,
   ErrorKind,
   LoginItems,
+  RemoteThumb,
   SaveOutcome,
   ServiceStatus,
   SourceType,
   StatusData,
+  TabListing,
   Thumbnail,
+  UnlistenFn,
   WallpaperInfo,
 }
+
+/**
+ * An on-disk picker tab (`downloaded`, `local`, `favorites` or `cache`): the generated
+ * `PickerTab` binding, renamed so it can't be mixed up with the picker's own tab list, which
+ * also has `sources`.
+ */
+export type DiskTab = PickerTab
 
 /**
  * A partial config for `save_config`: only the keys that changed. Objects merge into their
@@ -94,6 +118,14 @@ export function isDaemonNotRunning(err: unknown): boolean {
  */
 export function isDaemonUnreachable(err: unknown): boolean {
   return isCommandError(err) && err.kind === 'daemon_unreachable'
+}
+
+/**
+ * True when a command outlived its deadline (kind `daemon_timeout`). For `browseUse` this is
+ * not a failure: the download goes on in the background and the message says so.
+ */
+export function isDaemonTimeout(err: unknown): boolean {
+  return isCommandError(err) && err.kind === 'daemon_timeout'
 }
 
 /** Human-readable text for any rejection from this module. */
@@ -165,6 +197,47 @@ export function setFile(path: string): Promise<void> {
  */
 export function listThumbnails(): Promise<Thumbnail[]> {
   return invoke<Thumbnail[]>('thumbnails')
+}
+
+/**
+ * One page (40 entries) of an on-disk picker tab, from `offset`. On `offset` 0 the current
+ * wallpaper is pinned first when the tab holds it (`currentIndex` 0).
+ */
+export function listTab(tab: DiskTab, offset: number): Promise<TabListing> {
+  return invoke<TabListing>('tab_thumbnails', { tab, offset })
+}
+
+// ── Sources tab (`commands_sources/browse.rs`) ───────────────────────────────
+
+export interface BrowsePageArgs {
+  /** The session from the previous page; omit to start a new one. */
+  session?: string | null
+  page: number
+  /** Browse only this `[[sources]]` id; omit for every enabled online source. */
+  source?: string | null
+}
+
+/**
+ * One page of remote previews (IPC `browse`). An unknown or expired `session` comes back
+ * `restarted` at page 0. Rejects with the daemon's text when browsing is off or unavailable.
+ */
+export function browsePage({ session, page, source }: BrowsePageArgs): Promise<BrowseListing> {
+  return invoke<BrowseListing>('browse_page', { session: session ?? null, page, source: source ?? null })
+}
+
+export interface BrowseUseArgs {
+  sourceId: string
+  remoteId: string
+  action: BrowseAction
+}
+
+/**
+ * Downloads a browsed image into `download_dir/<sourceId>/`, then sets it, copies it to
+ * favorites or just keeps it (IPC `browse_use`). Waits up to 120 s; past that it rejects
+ * `daemon_timeout` ("Still downloading in the background…", see `isDaemonTimeout`).
+ */
+export function browseUse({ sourceId, remoteId, action }: BrowseUseArgs): Promise<BrowseUseData> {
+  return invoke<BrowseUseData>('browse_use', { sourceId, remoteId, action })
 }
 
 // ── Sources and dropped images (`commands_sources/`) ─────────────────────────
@@ -317,6 +390,14 @@ export function showPicker(): Promise<void> {
 /** Hides the picker, saving a dragged position first. */
 export function hidePicker(): Promise<void> {
   return invoke<void>('hide_picker')
+}
+
+/** Emitted to the picker each time it is shown (`picker.rs`, `SHOWN_EVENT`). */
+export const PICKER_SHOWN = 'picker-shown'
+
+/** Calls `handler` each time the picker is shown. Resolves to the function that stops it. */
+export function onPickerShown(handler: () => void): Promise<UnlistenFn> {
+  return listen<null>(PICKER_SHOWN, () => handler())
 }
 
 /** Forgets a dragged picker position (`[picker] placement = "edge"`). */
