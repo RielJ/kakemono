@@ -41,6 +41,8 @@ fn export_all(dir: &Path) {
     kakemono_ui::commands::Thumbnail::export_all(&cfg).expect("export Thumbnail");
     kakemono_ui::commands::PickerTab::export_all(&cfg).expect("export PickerTab");
     kakemono_ui::commands::TabListing::export_all(&cfg).expect("export TabListing");
+    kakemono_ui::commands_sources::BrowseListing::export_all(&cfg).expect("export BrowseListing");
+    kakemono_ui::commands_sources::RemoteThumb::export_all(&cfg).expect("export RemoteThumb");
     kakemono_ui::commands_desktop::DoctorReport::export_all(&cfg).expect("export DoctorReport");
     kakemono_ui::lifecycle::LoginItems::export_all(&cfg).expect("export LoginItems");
     kakemono_ui::events::Connection::export_all(&cfg).expect("export Connection");

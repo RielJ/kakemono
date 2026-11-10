@@ -21,6 +21,8 @@ pub const COMMANDS: &[&str] = &[
     "set_file",
     "thumbnails",
     "tab_thumbnails",
+    "browse_page",
+    "browse_use",
     "check_source",
     "download_now",
     "delete_source_files",

@@ -131,6 +131,8 @@ fn capabilities_picker_gets_only_what_the_picker_calls() {
         allowed_commands(&picker),
         set(&[
             "app_info",
+            "browse_page",
+            "browse_use",
             "daemon_connection",
             "favorite",
             "fetch_dropped_url",

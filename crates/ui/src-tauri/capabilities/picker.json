@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "picker",
-  "description": "The picker strip: list and set thumbnails, favorite, trash, image drops, dragging the window.",
+  "description": "The picker strip: list and set thumbnails, browse remote sources, favorite, trash, image drops, dragging the window.",
   "windows": ["kakemono-picker"],
   "permissions": [
     "core:default",
@@ -12,6 +12,8 @@
     "allow-daemon-connection",
     "allow-thumbnails",
     "allow-tab-thumbnails",
+    "allow-browse-page",
+    "allow-browse-use",
     "allow-set-file",
     "allow-favorite",
     "allow-trash",
