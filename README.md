@@ -1,70 +1,119 @@
-# kakemono
-
-kakemono is a wallpaper manager for macOS, Linux, and Windows. A small daemon downloads wallpapers from Bing, Wallhaven, Unsplash, Reddit, NASA APOD, or your own folders, and changes the wallpaper on a timer. It keeps a history you can step back through, saves favorites, and can prefer dark images in dark mode and light images in light mode.
-
-The `kakemono` binary is both the daemon and the command-line client. The kakemono app adds a menu-bar (tray) icon, a thumbnail picker for browsing and setting wallpapers, and a settings window.
+<p align="center">
+  <img src="crates/ui/src-tauri/icons/128x128@2x.png" alt="kakemono" width="96" />
+</p>
+<h2 align="center">kakemono</h2>
+<p align="center">
+  <a href="https://github.com/RielJ/kakemono/releases/latest"><img src="https://img.shields.io/github/v/release/RielJ/kakemono?style=for-the-badge&label=Release&color=1a1a1a" alt="Latest release" /></a>
+  <a href="https://github.com/RielJ/kakemono/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/RielJ/kakemono/ci.yml?branch=main&style=for-the-badge&label=CI" alt="CI status" /></a>
+  <img src="https://img.shields.io/badge/macOS%20%7C%20Linux%20%7C%20Windows-1a1a1a?style=for-the-badge" alt="macOS, Linux, and Windows" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-1a1a1a?style=for-the-badge" alt="MIT license" /></a>
+</p>
+<p align="center">
+  <strong>A wallpaper manager for macOS, Linux, and Windows.</strong><br>
+  New wallpapers from Bing, Wallhaven, Unsplash, Reddit, NASA APOD, or your own folders, on a timer.
+</p>
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#the-picker">Picker</a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="#development">Development</a>
+</p>
 
 ![Demo: turn on a Wallhaven source in Settings, open the picker, and click a preview to set it as the wallpaper.](docs/demo.gif)
 
+---
+
+A small daemon downloads wallpapers and changes them on a timer. It keeps a history you can step back through, saves favorites, and can prefer dark images in dark mode and light images in light mode.
+
+| | |
+|---|---|
+| **Sources** | Bing, Wallhaven, Unsplash, Reddit, NASA APOD, local folders and albums, and lists of image files. Paste a Wallhaven or Reddit search URL and kakemono uses its filters. |
+| **Picker** | A thumbnail strip from the menu bar or a shortcut: browse any source and click a preview to set it. |
+| **History** | Step back and forward through past wallpapers, favorite the good ones, trash the bad ones. |
+| **Scriptable** | One binary is the daemon and the CLI. Hooks run on every change, and a local socket speaks JSON. |
+
+The `kakemono` binary is both the daemon and the command-line client. The kakemono app adds a menu-bar (tray) icon, the picker, and a settings window.
+
 ## Install
 
-Prebuilt downloads are on the [Releases](https://github.com/RielJ/kakemono/releases) page. Each release has two kinds of file:
+### Download
 
-- **The app** (`kakemono_<version>_<arch>.dmg`, `.deb`, `.rpm`, `.AppImage`, `.msi`, or `-setup.exe`). It contains the `kakemono` binary too, so most people need only this.
-- **The command-line tool alone** (`kakemono-<version>-<target>.tar.gz`, or `.zip` on Windows), for servers and window managers where you don't want the app.
+| Platform | App (includes the CLI) | CLI only |
+|---|---|---|
+| macOS, Apple silicon | [`kakemono-macos-arm64.dmg`](https://github.com/RielJ/kakemono/releases/latest/download/kakemono-macos-arm64.dmg) | [`kakemono-cli-macos-arm64.tar.gz`](https://github.com/RielJ/kakemono/releases/latest/download/kakemono-cli-macos-arm64.tar.gz) |
+| macOS, Intel | [`kakemono-macos-x64.dmg`](https://github.com/RielJ/kakemono/releases/latest/download/kakemono-macos-x64.dmg) | [`kakemono-cli-macos-x64.tar.gz`](https://github.com/RielJ/kakemono/releases/latest/download/kakemono-cli-macos-x64.tar.gz) |
+| Linux, x86_64 | [`.deb`](https://github.com/RielJ/kakemono/releases/latest/download/kakemono-linux-x64.deb) · [`.rpm`](https://github.com/RielJ/kakemono/releases/latest/download/kakemono-linux-x64.rpm) · [`.AppImage`](https://github.com/RielJ/kakemono/releases/latest/download/kakemono-linux-x64.AppImage) | [`kakemono-cli-linux-x64.tar.gz`](https://github.com/RielJ/kakemono/releases/latest/download/kakemono-cli-linux-x64.tar.gz) |
+| Linux, ARM64 | — | [`kakemono-cli-linux-arm64.tar.gz`](https://github.com/RielJ/kakemono/releases/latest/download/kakemono-cli-linux-arm64.tar.gz) |
+| Windows, x64 | [`-setup.exe`](https://github.com/RielJ/kakemono/releases/latest/download/kakemono-windows-x64-setup.exe) · [`.msi`](https://github.com/RielJ/kakemono/releases/latest/download/kakemono-windows-x64.msi) | [`kakemono-cli-windows-x64.zip`](https://github.com/RielJ/kakemono/releases/latest/download/kakemono-cli-windows-x64.zip) |
 
-`SHA256SUMS` lists a checksum for every file.
-
-The builds are not signed, so each system warns about them the first time.
+Every file is also on the [Releases](https://github.com/RielJ/kakemono/releases) page, with a `SHA256SUMS` file. The builds are not signed, so each system warns about them the first time.
 
 ### macOS
 
-1. Open the `.dmg` for your Mac (`aarch64` for Apple silicon, `x64` for Intel) and drag **kakemono** to **Applications**.
-2. Because the app is not signed, macOS says that it "is damaged" or "cannot be opened". To allow it, run:
+```sh
+# Apple silicon. On an Intel Mac, use kakemono-macos-x64.dmg.
+curl -LO https://github.com/RielJ/kakemono/releases/latest/download/kakemono-macos-arm64.dmg
+open kakemono-macos-arm64.dmg                                   # drag kakemono to Applications
 
-   ```sh
-   xattr -dr com.apple.quarantine /Applications/kakemono.app
-   ```
+# The app is not signed, so macOS calls it "damaged" until you clear the quarantine flag
+xattr -dr com.apple.quarantine /Applications/kakemono.app
 
-3. Open kakemono. It starts the daemon and puts its icon in the menu bar.
-4. To use the command-line tool, link it onto your `PATH`:
+# Optional: put the CLI on your PATH
+ln -s /Applications/kakemono.app/Contents/MacOS/kakemono ~/.local/bin/kakemono
+```
 
-   ```sh
-   ln -s /Applications/kakemono.app/Contents/MacOS/kakemono ~/.local/bin/kakemono
-   ```
-
-On a MacBook with a notch, macOS hides menu-bar icons that don't fit beside it. If you can't see the kakemono icon, quit some menu-bar apps or use a menu-bar manager such as Ice or Bartender.
+Open kakemono. It starts the daemon and puts its icon in the menu bar. On a MacBook with a notch, macOS hides menu-bar icons that don't fit beside it; if you can't see the icon, quit some menu-bar apps or use a menu-bar manager such as Ice or Bartender.
 
 ### Linux
 
-Install the package for your distribution:
-
 ```sh
-sudo apt install ./kakemono_<version>_amd64.deb      # Debian, Ubuntu
-sudo dnf install ./kakemono-<version>-1.x86_64.rpm   # Fedora
-```
+# Debian, Ubuntu
+curl -LO https://github.com/RielJ/kakemono/releases/latest/download/kakemono-linux-x64.deb
+sudo apt install ./kakemono-linux-x64.deb
 
-Or make the AppImage executable and run it: `chmod +x kakemono_<version>_amd64.AppImage`.
+# Fedora
+sudo dnf install https://github.com/RielJ/kakemono/releases/latest/download/kakemono-linux-x64.rpm
+
+# Any distribution
+curl -LO https://github.com/RielJ/kakemono/releases/latest/download/kakemono-linux-x64.AppImage
+chmod +x kakemono-linux-x64.AppImage && ./kakemono-linux-x64.AppImage
+```
 
 The packages install `kakemono` and `kakemono-ui` into `/usr/bin`. The tray icon needs a StatusNotifier host: KDE Plasma and most bars (waybar, for example) have one. On GNOME, install the AppIndicator extension.
 
-On a Linux machine without a desktop app, or on ARM, use the `tar.gz` and copy `kakemono` onto your `PATH`.
-
 ### Windows
 
-Run the `.msi` or the `-setup.exe`. SmartScreen warns that the publisher is unknown: click **More info**, then **Run anyway**. The installer adds kakemono to the Start menu. Its icon is in the notification area; Windows can hide it behind the **^** arrow.
+```powershell
+Invoke-WebRequest https://github.com/RielJ/kakemono/releases/latest/download/kakemono-windows-x64-setup.exe -OutFile kakemono-setup.exe
+.\kakemono-setup.exe
+```
 
-The `.zip` contains `kakemono.exe` alone.
+SmartScreen warns that the publisher is unknown: click **More info**, then **Run anyway**. The installer adds kakemono to the Start menu. Its icon is in the notification area; Windows can hide it behind the **^** arrow. The `.msi` installs the same app.
+
+### Command-line tool only
+
+For servers, window managers, and ARM Linux, where you don't want the app:
+
+```sh
+# Pick one: macos-arm64, macos-x64, linux-x64, or linux-arm64
+platform=linux-x64
+curl -fsSL https://github.com/RielJ/kakemono/releases/latest/download/kakemono-cli-$platform.tar.gz | tar xz
+install -m 755 kakemono-cli-$platform/kakemono ~/.local/bin/
+```
+
+On Windows, unzip `kakemono-cli-windows-x64.zip` and put `kakemono.exe` on your `PATH`.
+
+To check a download, fetch `SHA256SUMS` from the same release and run `shasum -a 256 -c SHA256SUMS --ignore-missing`.
 
 ### Build from source
 
-kakemono builds with stable Rust 1.99 or newer. For the command-line tool and daemon only, run this in a clone of this repository:
+kakemono builds with stable Rust 1.99 or newer. For the command-line tool and daemon only:
 
 ```sh
-cargo install --locked --path crates/cli
+git clone https://github.com/RielJ/kakemono.git && cd kakemono
+cargo install --locked --path crates/cli                    # installs kakemono into ~/.cargo/bin
 ```
-
-The command installs `kakemono` into `~/.cargo/bin`.
 
 The app is a Tauri 2 project in `crates/ui`, and also needs Node.js 26 or newer (`.node-version`). On Linux it needs the WebKitGTK development packages too. On Debian and Ubuntu:
 
@@ -262,7 +311,7 @@ location = "~/Pictures/Wallpapers"
 | `album-name`, `album-date` | A folder, shown in file-name or file-date order. |
 | `images` | Image files. |
 
-With no `[[sources]]` rows, kakemono uses Bing, Wallhaven "nature", and the favorites folder. Settings has a sources table with **Add…**, which is the easiest way to edit them. Each row shows a status from a background check for images (OK, Failed, or Paused while Internet access is off); select a failed row to see why. Double-click a name to rename it in place.
+With no `[[sources]]` rows, kakemono uses Wallhaven's hot list (`https://wallhaven.cc/hot`), its top list (`https://wallhaven.cc/toplist`), and the favorites folder. Settings has a sources table with **Add…**, which is the easiest way to edit them. Each row shows a status from a background check for images (OK, Failed, or Paused while Internet access is off); select a failed row to see why. Double-click a name to rename it in place.
 
 Settings shared by every row of a type go in a section named after the type:
 
