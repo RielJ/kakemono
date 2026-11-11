@@ -232,6 +232,23 @@ jobs:
           path: dist
           merge-multiple: true
 
+      # upload-artifact keeps each UI bundle's folder (dmg/, deb/, msi/...).
+      # Release assets are flat files; the names already carry the version
+      # and arch, so a clash means two jobs built the same file.
+      - name: Flatten the bundle folders
+        working-directory: dist
+        run: |
+          for f in */*; do
+            name="${f##*/}"
+            if [[ -e "$name" ]]; then
+              echo "two artifacts are named $name"
+              exit 1
+            fi
+            mv -- "$f" .
+          done
+          rmdir -- */
+          ls -l
+
       - name: SHA256SUMS
         working-directory: dist
         run: sha256sum -- * > SHA256SUMS
