@@ -83,6 +83,7 @@ case "$mode" in
     ;;
   full)
     step scripts/check-scripts.sh
+    step scripts/check-old-name.sh
     step cargo fmt --all -- --check
     step cargo clippy --workspace --all-targets --all-features -- -D warnings
     step cargo nextest run --workspace --all-features
