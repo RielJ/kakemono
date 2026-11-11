@@ -1,20 +1,11 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 
-import { checkSource, errorMessage, isDaemonUnreachable, selectDirectory, selectFiles } from '../../shared/api'
+import { selectDirectory, selectFiles } from '../../shared/api'
 import type { SourceType } from '../../shared/bindings/SourceType'
-import { SOURCE_TYPES } from '../sourceTypes'
+import { MAX_NAME_LEN, SOURCE_TYPES } from '../sourceTypes'
 import Modal from './Modal'
 
-type Phase =
-  | { kind: 'idle' }
-  | { kind: 'checking' }
-  /** `unreachable`: the daemon didn't answer, so the entry couldn't be checked; offer Add anyway. */
-  | { kind: 'error'; message: string; unreachable: boolean }
-
 const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p
-
-/** Longest name, as `MAX_NAME_LEN` in kakemono-config; the config cuts longer ones on load. */
-const MAX_NAME_LEN = 64
 
 /** Name hints per type; other types get a generic one. */
 const NAME_PLACEHOLDER: Partial<Record<SourceType, string>> = {
@@ -22,15 +13,18 @@ const NAME_PLACEHOLDER: Partial<Record<SourceType, string>> = {
   unsplash: 'e.g. unsplash-mountains',
   reddit: 'e.g. earthporn-top-year',
   folder: 'e.g. my-wallpapers',
+  bing: 'e.g. bing-daily',
+  apod: 'e.g. nasa-apod',
 }
 
 /**
- * Add or edit one source's location, after Variety: the type's instruction, one field, OK and
- * Cancel. OK checks the entry with the daemon (`check_source`), shows "Just a moment to check
- * for images…" meanwhile, and finishes only when images were found; an error stays inline.
- * Path types open the system picker at once when adding (Images picks several files).
- * `onDone` gets one location per row to add and the optional name, trimmed (empty for none);
- * `initial` makes it an edit, and `initialName` fills the name.
+ * Add or edit one source, after Variety: the type's instruction, its field, an optional Name,
+ * OK and Cancel. OK finishes at once; the Sources table checks the location for images in the
+ * background and shows the result on the row.
+ * Path types open the system picker at once when adding (Images picks several files) and then
+ * wait for OK, so a name can be typed. Bing and APOD take no location: only the Name shows.
+ * `onDone` gets one location per row to add (`['']` for Bing and APOD) and the optional name,
+ * trimmed (empty for none); `initial` makes it an edit, and `initialName` fills the name.
  */
 export default function SourceDialog({
   kind,
@@ -53,10 +47,8 @@ export default function SourceDialog({
   const [name, setName] = useState(initialName ?? '')
   // Several picked image files; empty when the field holds the one location.
   const [many, setMany] = useState<string[]>([])
-  const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
   const fieldId = useId()
   const nameId = useId()
-  const messageId = useId()
   const alive = useRef(true)
   const autoPicked = useRef(false)
 
@@ -67,23 +59,9 @@ export default function SourceDialog({
     }
   }, [])
 
-  const locations = (): string[] => (many.length > 0 ? many : [text.trim()].filter(Boolean))
-
-  const check = async (locs: string[]) => {
-    setPhase({ kind: 'checking' })
-    for (const loc of locs) {
-      try {
-        const { count } = await checkSource(kind, loc)
-        if (count < 1) throw new Error('No images found.')
-      } catch (err) {
-        if (!alive.current) return
-        const message = errorMessage(err)
-        setPhase({ kind: 'error', message: locs.length > 1 ? `${baseName(loc)}: ${message}` : message, unreachable: isDaemonUnreachable(err) })
-        return
-      }
-      if (!alive.current) return
-    }
-    onDone(locs, name.trim())
+  const locations = (): string[] => {
+    if (input.kind === 'none') return ['']
+    return many.length > 0 ? many : [text.trim()].filter(Boolean)
   }
 
   /** Opens the system picker; `auto` (Add) closes the dialog when the user cancels it. */
@@ -95,10 +73,8 @@ export default function SourceDialog({
       if (auto) onCancel()
       return
     }
-    setPhase({ kind: 'idle' })
     setText(picked.length === 1 ? picked[0] : '')
     setMany(picked.length > 1 ? picked : [])
-    if (auto) await check(picked)
   }
 
   const selectDirOrFile = async (): Promise<string> => {
@@ -116,97 +92,73 @@ export default function SourceDialog({
   const submit = (e: FormEvent) => {
     e.preventDefault()
     const locs = locations()
-    if (locs.length === 0 || phase.kind === 'checking') return
-    void check(locs)
+    if (locs.length === 0) return
+    onDone(locs, name.trim())
   }
 
-  const checking = phase.kind === 'checking'
-  const error = phase.kind === 'error' ? phase : null
-  const prompt = many.length > 0 ? 'Image files:' : input.kind === 'none' ? 'Location:' : input.prompt
+  const prompt = many.length > 0 ? 'Image files:' : input.kind === 'none' ? '' : input.prompt
   const title = `${editing ? 'Edit' : 'Add'} ${info.label} source`
 
   return (
     <Modal title={title} onClose={onCancel}>
       <form onSubmit={submit} className="mt-3">
-        <label htmlFor={fieldId} className="block mb-1.5">
-          {prompt}
-        </label>
-        <div className="flex items-center gap-1.5">
-          {many.length > 0 ? (
-            <ul id={fieldId} aria-label={prompt} className="flex-1 min-w-0 max-h-28 overflow-y-auto field h-auto py-1 field-mono">
-              {many.map((p) => (
-                <li key={p} className="truncate" title={p}>
-                  {baseName(p)}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <input
-              id={fieldId}
-              type="text"
-              data-autofocus
-              spellCheck={false}
-              autoComplete="off"
-              autoCapitalize="off"
-              value={text}
-              placeholder={input.kind === 'text' ? input.placeholder : undefined}
-              aria-invalid={error ? true : undefined}
-              aria-describedby={error ? messageId : undefined}
-              onChange={(e) => {
-                setText(e.target.value)
-                if (error) setPhase({ kind: 'idle' })
-              }}
-              className={`field flex-1 ${pick ? 'field-mono' : ''}`}
-            />
-          )}
-          {pick && (
-            <button type="button" className="btn" disabled={checking} onClick={() => void choose(false)}>
-              Choose…
-            </button>
-          )}
-        </div>
-        {many.length === 0 && (
-          <div className="mt-2.5">
-            <label htmlFor={nameId} className="block mb-1.5">
-              Name <span className="text-muted">(optional)</span>
+        {input.kind !== 'none' && (
+          <>
+            <label htmlFor={fieldId} className="block mb-1.5">
+              {prompt}
             </label>
-            <input
-              id={nameId}
-              type="text"
-              autoComplete="off"
-              maxLength={MAX_NAME_LEN}
-              value={name}
-              placeholder={NAME_PLACEHOLDER[kind] ?? 'e.g. my-wallpapers'}
-              onChange={(e) => setName(e.target.value)}
-              className="field w-full"
-            />
-          </div>
-        )}
-        <div className="mt-2 min-h-[18px] text-[12px] leading-snug">
-          <p role="status" className="text-muted">
-            {checking ? 'Just a moment to check for images…' : ''}
-          </p>
-          {error && (
-            <div id={messageId}>
-              <p role="alert" className="text-danger break-words">
-                {error.message}
-              </p>
-              {error.unreachable && (
-                <p className="mt-0.5 text-muted">Kakemono couldn’t check this source because its background service isn’t answering.</p>
+            <div className="flex items-center gap-1.5">
+              {many.length > 0 ? (
+                <ul id={fieldId} aria-label={prompt} className="flex-1 min-w-0 max-h-28 overflow-y-auto field h-auto py-1 field-mono">
+                  {many.map((p) => (
+                    <li key={p} className="truncate" title={p}>
+                      {baseName(p)}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <input
+                  id={fieldId}
+                  type="text"
+                  data-autofocus
+                  spellCheck={false}
+                  autoComplete="off"
+                  autoCapitalize="off"
+                  value={text}
+                  placeholder={input.kind === 'text' ? input.placeholder : undefined}
+                  onChange={(e) => setText(e.target.value)}
+                  className={`field flex-1 ${pick ? 'field-mono' : ''}`}
+                />
+              )}
+              {pick && (
+                <button type="button" className="btn" onClick={() => void choose(false)}>
+                  Choose…
+                </button>
               )}
             </div>
-          )}
+          </>
+        )}
+        <div className={input.kind === 'none' ? '' : 'mt-2.5'}>
+          <label htmlFor={nameId} className="block mb-1.5">
+            Name <span className="text-muted">(optional{many.length > 0 ? ', used for each file' : ''})</span>
+          </label>
+          <input
+            id={nameId}
+            type="text"
+            autoComplete="off"
+            maxLength={MAX_NAME_LEN}
+            value={name}
+            data-autofocus={input.kind === 'none' || undefined}
+            placeholder={NAME_PLACEHOLDER[kind] ?? 'e.g. my-wallpapers'}
+            onChange={(e) => setName(e.target.value)}
+            className="field w-full"
+          />
         </div>
-        <div className="mt-3 flex justify-end gap-2">
+        <div className="mt-4 flex justify-end gap-2">
           <button type="button" className="btn" onClick={onCancel}>
             Cancel
           </button>
-          {error?.unreachable && (
-            <button type="button" className="btn" onClick={() => onDone(locations(), name.trim())}>
-              Add anyway
-            </button>
-          )}
-          <button type="submit" className="btn btn-accent" disabled={checking || locations().length === 0}>
+          <button type="submit" className="btn btn-accent" disabled={locations().length === 0}>
             OK
           </button>
         </div>

@@ -30,6 +30,7 @@ const SOURCES: SourceEntry[] = [
 ]
 
 beforeEach(() => {
+  vi.mocked(api.checkSource).mockResolvedValue({ count: 5 })
   vi.mocked(api.nextWallpaper).mockResolvedValue()
   vi.mocked(api.deleteSourceFiles).mockResolvedValue()
   vi.mocked(api.openSourceFolder).mockResolvedValue()
@@ -101,10 +102,10 @@ describe('SourcesTable', () => {
     expect(rows()).toHaveLength(4)
     const cells = rows().map((r) => within(r).getAllByRole('gridcell').map((c) => c.textContent))
     expect(cells.map((c) => c.slice(1))).toEqual([
-      ['Bing', '—'],
-      ['Wallhaven', 'nature'],
-      ['Folder', '/home/u/Pictures/Wallpapers'],
-      ['APOD', '—'],
+      ['Bing', '—', 'OK'],
+      ['Wallhaven', 'nature', 'OK'],
+      ['Folder', '/home/u/Pictures/Wallpapers', 'OK'],
+      ['APOD', '—', 'OK'],
     ])
     const boxes = rows().map((r) => within(r).getByRole('checkbox'))
     expect(boxes.map((b) => (b as HTMLInputElement).checked)).toEqual([true, true, false, false])
@@ -305,12 +306,97 @@ describe('SourcesTable', () => {
     expect(screen.getByText(/Internet access is off/)).toBeTruthy()
   })
 
-  it('Edit is disabled for Bing and APOD', async () => {
-    const { user } = await setup()
+  it('Edit… on Bing opens a name-only dialog and renames it', async () => {
+    const { last, user } = await setup()
     await user.click(within(row(0)).getByText('Bing'))
-    expect((button('Edit…') as HTMLButtonElement).disabled).toBe(true)
-    await user.click(within(row(3)).getByText('APOD'))
-    expect((button('Edit…') as HTMLButtonElement).disabled).toBe(true)
+    await user.click(button('Edit…'))
+    const dialog = screen.getByRole('dialog', { name: 'Edit Bing source' })
+    expect(within(dialog).getAllByRole('textbox')).toHaveLength(1)
+    await user.type(within(dialog).getByRole('textbox', { name: /^Name/ }), 'bing-daily')
+    await user.click(within(dialog).getByRole('button', { name: 'OK' }))
+    expect(last().sources[0]).toEqual({ ...SOURCES[0], name: 'bing-daily' })
+  })
+
+  describe('Status', () => {
+    it('checks each row in the background and shows the result', async () => {
+      vi.mocked(api.checkSource).mockImplementation(async (kind) => {
+        if (kind === 'folder') throw { kind: 'daemon', message: 'no images found' }
+        return { count: 24 }
+      })
+      await setup()
+      const status = (n: number) => within(row(n)).getAllByRole('gridcell')[3]
+      expect(status(1).textContent).toBe('OK')
+      expect(status(1).querySelector('[title]')?.getAttribute('title')).toBe('Found 24 images.')
+      expect(status(2).textContent).toBe('Failed')
+      expect(status(2).querySelector('[title]')?.getAttribute('title')).toBe('no images found')
+    })
+
+    it('spells out a selected row’s failure under the table', async () => {
+      vi.mocked(api.checkSource).mockImplementation(async (kind) => {
+        if (kind === 'folder') throw { kind: 'daemon', message: 'no images found' }
+        return { count: 3 }
+      })
+      const { user } = await setup()
+      expect(screen.queryByText(/no images found/, { selector: '[role="alert"], p' })).toBeNull()
+      await user.click(within(row(2)).getByText('Folder'))
+      expect(screen.getByText('Folder: no images found')).toBeTruthy()
+    })
+
+    it('shows Checking… while the check runs, and doesn’t check again after a rename', async () => {
+      let finish: (v: { count: number }) => void = () => {}
+      vi.mocked(api.checkSource).mockReturnValue(new Promise((res) => (finish = res)))
+      const { user } = await setup({ sources: [SOURCES[1]] })
+      expect(within(row(0)).getAllByRole('gridcell')[3].textContent).toBe('Checking…')
+      await act(async () => finish({ count: 2 }))
+      expect(within(row(0)).getAllByRole('gridcell')[3].textContent).toBe('OK')
+      await user.dblClick(within(row(0)).getAllByRole('gridcell')[1])
+      await user.keyboard('renamed{Enter}')
+      expect(api.checkSource).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('rename in place', () => {
+    const nameCell = (n: number) => within(row(n)).getAllByRole('gridcell')[1]
+
+    it('double-clicking the name edits it there; Enter saves, and no dialog opens', async () => {
+      const { last, user } = await setup()
+      await user.dblClick(nameCell(1))
+      expect(screen.queryByRole('dialog')).toBeNull()
+      const field = within(row(1)).getByRole('textbox', { name: 'Name for Wallhaven' }) as HTMLInputElement
+      expect(document.activeElement).toBe(field)
+      await user.keyboard('wallhaven-top{Enter}')
+      expect(last().sources[1]).toEqual({ ...SOURCES[1], name: 'wallhaven-top' })
+      expect(within(row(1)).queryByRole('textbox')).toBeNull()
+      expect(document.activeElement).toBe(row(1))
+    })
+
+    it('Escape cancels, clicking away saves, and an empty name removes it', async () => {
+      const named = [{ ...SOURCES[1], name: 'Nature picks' }, SOURCES[2]]
+      const { changes, commits, last, user } = await setup({ sources: named })
+      await user.dblClick(nameCell(0))
+      await user.keyboard('{Control>}a{/Control}zzz{Escape}')
+      expect(changes.concat(commits)).toHaveLength(0)
+      expect(within(row(0)).getByText('Nature picks')).toBeTruthy()
+      await user.dblClick(nameCell(0))
+      await user.clear(within(row(0)).getByRole('textbox'))
+      await user.click(within(row(1)).getByText('Folder'))
+      expect(last().sources[0]).toEqual(SOURCES[1])
+      expect('name' in last().sources[0]).toBe(false)
+    })
+
+    it('works for Bing too, and keys typed there don’t reach the row', async () => {
+      const { last, user } = await setup()
+      await user.dblClick(nameCell(0))
+      await user.keyboard('a b{Enter}')
+      expect(last().sources[0]).toEqual({ ...SOURCES[0], name: 'a b' })
+      expect(last().sources[0].enabled).toBe(true)
+    })
+
+    it('double-clicking the location opens Edit instead', async () => {
+      const { user } = await setup()
+      await user.dblClick(within(row(1)).getByText('nature'))
+      expect(screen.getByRole('dialog', { name: 'Edit Wallhaven source' })).toBeTruthy()
+    })
   })
 
   describe('Add… and Edit…', () => {
@@ -319,9 +405,10 @@ describe('SourcesTable', () => {
       await user.click(within(screen.getByRole('dialog', { name: 'Add a source' })).getByRole('button', { name }))
     }
 
-    it('adds Bing directly as a new enabled row', async () => {
+    it('adds Bing after a name-only dialog as a new enabled row', async () => {
       const { last, user } = await setup({ sources: SOURCES.slice(1) })
       await choose(user, /^Bing/)
+      await user.click(within(screen.getByRole('dialog', { name: 'Add Bing source' })).getByRole('button', { name: 'OK' }))
       const added = last().sources[last().sources.length - 1]
       expect(added).toEqual({ id: expect.stringMatching(/^bing-[0-9a-f]{4}$/), type: 'bing', location: '', enabled: true })
       expect(screen.queryByRole('dialog')).toBeNull()
@@ -336,8 +423,7 @@ describe('SourcesTable', () => {
       expect(rows()).toHaveLength(4)
     })
 
-    it('adds a Wallhaven search after the dialog checks it, and selects the new row', async () => {
-      vi.mocked(api.checkSource).mockResolvedValue({ count: 5 })
+    it('adds a Wallhaven search at OK, checks it in the background, and selects the new row', async () => {
       const { last, user } = await setup()
       await choose(user, /^Wallhaven/)
       const dialog = screen.getByRole('dialog', { name: 'Add Wallhaven source' })
@@ -348,15 +434,26 @@ describe('SourcesTable', () => {
       const added = last().sources[4]
       expect(added).toEqual({ id: expect.stringMatching(/^wh-[0-9a-f]{4}$/), type: 'wallhaven', location: 'forest', enabled: true })
       expect(row(4).getAttribute('aria-selected')).toBe('true')
+      await act(async () => {})
+      expect(api.checkSource).toHaveBeenCalledWith('wallhaven', 'forest')
+      expect(within(row(4)).getAllByRole('gridcell')[3].textContent).toBe('OK')
     })
 
-    it('adds nothing when the check fails or the dialog is cancelled', async () => {
+    it('adds the row even when its check fails; the row shows Failed', async () => {
       vi.mocked(api.checkSource).mockRejectedValue({ kind: 'daemon', message: 'no images found' })
-      const { changes, commits, user } = await setup()
+      const { last, user } = await setup({ sources: [] })
       await choose(user, /^Wallhaven/)
       await user.type(screen.getAllByRole('textbox')[0], 'zzzz')
       await user.click(button('OK'))
-      expect(screen.getByRole('dialog')).toBeTruthy()
+      expect(last().sources).toHaveLength(1)
+      await act(async () => {})
+      expect(within(row(0)).getAllByRole('gridcell')[3].textContent).toBe('Failed')
+    })
+
+    it('adds nothing when the dialog is cancelled', async () => {
+      const { changes, commits, user } = await setup()
+      await choose(user, /^Wallhaven/)
+      await user.type(screen.getAllByRole('textbox')[0], 'zzzz')
       await user.click(button('Cancel'))
       expect(screen.queryByRole('dialog')).toBeNull()
       expect(changes.concat(commits)).toHaveLength(0)
@@ -368,6 +465,7 @@ describe('SourcesTable', () => {
       const { last, user } = await setup()
       await choose(user, /^Images/)
       await act(async () => {})
+      await user.click(button('OK'))
       expect(last().sources.slice(4).map((s) => [s.type, s.location, s.enabled])).toEqual([
         ['images', '/p/a.jpg', true],
         ['images', '/p/b.png', true],

@@ -267,6 +267,36 @@ input[type="range"] {
   .sources-name > :last-child {
     flex-shrink: 0;
   }
+  /* In-place rename: fills the Name cell. */
+  .sources-rename {
+    width: 100%;
+    height: 24px;
+    padding: 0 6px;
+  }
+  /* Status of the background image check: a dot and a word. */
+  .sources-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--c-muted);
+  }
+  .sources-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--c-faint);
+  }
+  .sources-status-ok .sources-dot { background: var(--c-ok); }
+  .sources-status-failed { color: var(--c-danger); }
+  .sources-status-failed .sources-dot { background: var(--c-danger); }
+  .sources-status-unknown .sources-dot { background: var(--c-warn); }
+  .sources-status-checking .sources-dot { animation: sources-pulse 1s ease-in-out infinite alternate; }
+  @keyframes sources-pulse { to { opacity: 0.3; } }
+  @media (prefers-reduced-motion: reduce) {
+    .sources-status-checking .sources-dot { animation: none; }
+  }
 
   .btn-danger {
     background: var(--c-danger);

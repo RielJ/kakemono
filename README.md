@@ -262,7 +262,7 @@ location = "~/Pictures/Wallpapers"
 | `album-name`, `album-date` | A folder, shown in file-name or file-date order. |
 | `images` | Image files. |
 
-With no `[[sources]]` rows, kakemono uses Bing, Wallhaven "nature", and the favorites folder. Settings has a sources table with **Add…**, which is the easiest way to edit them.
+With no `[[sources]]` rows, kakemono uses Bing, Wallhaven "nature", and the favorites folder. Settings has a sources table with **Add…**, which is the easiest way to edit them. Each row shows a status from a background check for images (OK, Failed, or Paused while Internet access is off); select a failed row to see why. Double-click a name to rename it in place.
 
 Settings shared by every row of a type go in a section named after the type:
 

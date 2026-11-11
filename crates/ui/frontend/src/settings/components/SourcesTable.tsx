@@ -4,7 +4,8 @@ import type { Config } from '../../shared/api'
 import { deleteSourceFiles, errorMessage, openSourceFolder } from '../../shared/api'
 import type { SourceEntry } from '../../shared/bindings/SourceEntry'
 import type { SourceType } from '../../shared/bindings/SourceType'
-import { SOURCE_TYPES, isOnline, newSourceId, takesInput } from '../sourceTypes'
+import { MAX_NAME_LEN, SOURCE_TYPES, isOnline, newSourceId, takesInput } from '../sourceTypes'
+import { useSourceChecks, type SourceCheck } from '../useSourceChecks'
 import AddSourceMenu from './AddSourceMenu'
 import { Group, Note } from './Group'
 import RemoveSourceDialog from './RemoveSourceDialog'
@@ -32,10 +33,29 @@ const withName = (s: SourceEntry, name: string): SourceEntry => {
   return name ? { ...rest, name } : rest
 }
 
+/** The Status cell's word and tooltip for a row's background check. */
+function statusOf(check: SourceCheck | undefined): { tone: string; label: string; detail: string } {
+  switch (check?.state) {
+    case undefined:
+    case 'checking':
+      return { tone: 'checking', label: 'Checking…', detail: 'Checking this source for images…' }
+    case 'ok':
+      return { tone: 'ok', label: 'OK', detail: `Found ${check.count} image${check.count === 1 ? '' : 's'}.` }
+    case 'failed':
+      return { tone: 'failed', label: 'Failed', detail: check.message }
+    case 'unknown':
+      return { tone: 'unknown', label: 'Unknown', detail: check.message }
+    case 'paused':
+      return { tone: 'paused', label: 'Paused', detail: 'Not checked: Internet access is off.' }
+  }
+}
+
 /**
  * The General tab's Images table, after Variety: one row per `[[sources]]` entry with an
- * Enabled box, the name (or the type when unnamed) and the location, and Add…, Edit…, Remove…, Open Folder and Use Only These under
- * it. Rows multi-select with shift- and cmd/ctrl-click or the arrow keys.
+ * Enabled box, the name (or the type when unnamed), the location and a Status from a background
+ * image check (`useSourceChecks`), and Add…, Edit…, Remove…, Open Folder and Use Only These under
+ * it. Rows multi-select with shift- and cmd/ctrl-click or the arrow keys. Double-click a name to
+ * rename it in place; double-click elsewhere (or Enter) opens Edit.
  */
 export default function SourcesTable({ config, onChange, onCommit }: Props) {
   const sources = config.sources
@@ -47,6 +67,10 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
   const [editing, setEditing] = useState<Editing>(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<Message>(null)
+  // The row whose name is being edited in place.
+  const [renaming, setRenaming] = useState<string | null>(null)
+  const renameDone = useRef(false)
+  const checks = useSourceChecks(sources, internet)
   const rowRefs = useRef(new Map<string, HTMLTableRowElement>())
 
   // Ids that left the config (removed here or elsewhere) drop out of the selection.
@@ -142,15 +166,14 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
     }
   }
 
-  /** Bing and APOD take no input, so they are added at once, and only once. */
+  /** Opens the Add dialog. Bing and APOD take no location, so each can be added only once. */
   const add = (kind: SourceType) => {
     setMessage(null)
-    if (takesInput(kind)) return setEditing({ kind, id: null })
-    if (sources.some((s) => s.type === kind)) {
+    if (!takesInput(kind) && sources.some((s) => s.type === kind)) {
       setMessage({ tone: 'danger', text: `${SOURCE_TYPES[kind].label} is already in the list.` })
       return
     }
-    addRows(kind, [''])
+    setEditing({ kind, id: null })
   }
 
   /** Appends one enabled row per location and selects the new rows. */
@@ -167,10 +190,32 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
     setActive(added[0]?.id ?? null)
   }
 
-  const openEdit = () => {
-    if (!single || !takesInput(single.type)) return
+  const openEditFor = (s: SourceEntry) => {
     setMessage(null)
-    setEditing({ kind: single.type, id: single.id, initial: single.location, name: single.name })
+    setEditing({ kind: s.type, id: s.id, initial: s.location, name: s.name })
+  }
+
+  const openEdit = () => {
+    if (single) openEditFor(single)
+  }
+
+  const startRename = (id: string) => {
+    select(id, { range: false, add: false })
+    renameDone.current = false
+    setRenaming(id)
+  }
+
+  /** Ends the in-place rename; `name` saves it (trimmed, empty removes it), `null` cancels. */
+  const endRename = (id: string, name: string | null) => {
+    if (renameDone.current) return
+    renameDone.current = true
+    setRenaming(null)
+    if (name !== null) {
+      const next = name.trim()
+      const cur = sources.find((s) => s.id === id)
+      if (cur && (cur.name ?? '') !== next) setSources(sources.map((s) => (s.id === id ? withName(s, next) : s)))
+    }
+    focusRow(id)
   }
 
   const finishEdit = (locations: string[], name: string) => {
@@ -234,13 +279,21 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
     await openSourceFolder(single.id).catch((err: unknown) => setMessage({ tone: 'danger', text: errorMessage(err) }))
   }
 
+  // The selected row's failed check, spelled out under the table.
+  const singleCheck = single ? checks.get(single.id) : undefined
+  const problem =
+    single && singleCheck?.state === 'failed'
+      ? `${single.name || SOURCE_TYPES[single.type].label}: ${singleCheck.message}`
+      : null
+
   return (
     <Group
       title="Images"
       footer={
-        (message || !internet) && (
+        (message || problem || !internet) && (
           <div className="space-y-1">
             {message && <Note tone={message.tone}>{message.text}</Note>}
+            {problem && <Note tone="danger">{problem}</Note>}
             {!internet && <Note>Internet access is off, so online sources are paused.</Note>}
           </div>
         )
@@ -250,14 +303,16 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
         <table role="grid" aria-label="Image sources" aria-multiselectable="true" className="sources-table">
           <colgroup>
             <col className="w-[72px]" />
-            <col className="w-[34%]" />
+            <col className="w-[32%]" />
             <col />
+            <col className="w-[96px]" />
           </colgroup>
           <thead>
             <tr>
               <th scope="col">Enabled</th>
               <th scope="col">Name</th>
               <th scope="col">Location</th>
+              <th scope="col">Status</th>
             </tr>
           </thead>
           <tbody>
@@ -265,6 +320,7 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
               const info = SOURCE_TYPES[s.type]
               const offline = !internet && info.online
               const location = takesInput(s.type) ? s.location : ''
+              const status = statusOf(checks.get(s.id))
               return (
                 <tr
                   key={s.id}
@@ -278,10 +334,7 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
                   onClick={(e) => onRowClick(e, s.id)}
                   onDoubleClick={() => {
                     select(s.id, { range: false, add: false })
-                    if (takesInput(s.type)) {
-                      setMessage(null)
-                      setEditing({ kind: s.type, id: s.id, initial: s.location, name: s.name })
-                    }
+                    openEditFor(s)
                   }}
                   onFocus={() => setActive(s.id)}
                   onKeyDown={(e) => onRowKeyDown(e, s.id)}
@@ -296,8 +349,39 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
                       onChange={() => toggle(s.id)}
                     />
                   </td>
-                  <td role="gridcell">
-                    {s.name ? (
+                  <td
+                    role="gridcell"
+                    title={renaming === s.id ? undefined : 'Double-click to rename'}
+                    onDoubleClick={(e) => {
+                      e.stopPropagation()
+                      startRename(s.id)
+                    }}
+                  >
+                    {renaming === s.id ? (
+                      <input
+                        type="text"
+                        aria-label={`Name for ${info.label}`}
+                        className="field sources-rename"
+                        autoFocus
+                        autoComplete="off"
+                        maxLength={MAX_NAME_LEN}
+                        defaultValue={s.name ?? ''}
+                        placeholder={info.label}
+                        onFocus={(e) => e.currentTarget.select()}
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => {
+                          e.stopPropagation()
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            endRename(s.id, e.currentTarget.value)
+                          } else if (e.key === 'Escape') {
+                            e.preventDefault()
+                            endRename(s.id, null)
+                          }
+                        }}
+                        onBlur={(e) => endRename(s.id, e.currentTarget.value)}
+                      />
+                    ) : s.name ? (
                       <span className="sources-name" title={`${s.name} (${info.label})`}>
                         <span className="truncate">{s.name}</span>
                         <span className="text-muted text-[11px]">{info.label}</span>
@@ -317,6 +401,12 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
                       </span>
                     )}
                   </td>
+                  <td role="gridcell">
+                    <span className={`sources-status sources-status-${status.tone}`} title={status.detail}>
+                      <span className="sources-dot" aria-hidden="true" />
+                      {status.label}
+                    </span>
+                  </td>
                 </tr>
               )
             })}
@@ -328,7 +418,7 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
       </div>
       <div className="flex flex-wrap items-center gap-1.5 px-2.5 py-2">
         <AddSourceMenu internet={internet} onChoose={add} disabled={busy} />
-        <button type="button" className="btn" disabled={!single || !takesInput(single.type) || busy} onClick={openEdit}>
+        <button type="button" className="btn" disabled={!single || busy} onClick={openEdit}>
           Edit…
         </button>
         <button type="button" className="btn" disabled={chosen.length === 0 || busy} onClick={openRemove}>

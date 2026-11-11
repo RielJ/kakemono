@@ -134,6 +134,9 @@ const allListed: [MissingType] extends [never] ? true : MissingType = true
 void allListed
 
 export const isOnline = (t: SourceType): boolean => SOURCE_TYPES[t].online
+/** Longest source name, as `MAX_NAME_LEN` in kakemono-config; the config cuts longer ones on load. */
+export const MAX_NAME_LEN = 64
+
 /** Whether the source needs a `location`. Matches Rust `SourceType::takes_input`. */
 export const takesInput = (t: SourceType): boolean => SOURCE_TYPES[t].input.kind !== 'none'
 /** Whether `location` is a filesystem path. Matches Rust `SourceType::is_local`. */
