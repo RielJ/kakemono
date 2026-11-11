@@ -13,7 +13,9 @@
 # Everything lives in $KK_VM_DIR (default ~/VMs/kakemono-win); deleting that folder removes it.
 # The Windows ISO comes from https://www.microsoft.com/software-download/windows11arm64
 # (no sign-in). Needs `brew install qemu`. While the VM runs, VNC on 127.0.0.1:5905 shows its
-# screen and SSH listens on 127.0.0.1:$KK_VM_SSH_PORT (default 2225).
+# screen and SSH listens on 127.0.0.1:$KK_VM_SSH_PORT (default 2225). The VNC password is
+# "kakemono" (macOS Screen Sharing refuses a server without one) and the Windows account is kk
+# with password "kakemono."; both are fixed because the VM only listens on 127.0.0.1.
 set -euo pipefail
 { # Parsed whole before it runs, so editing this file mid-run is safe (scripts/check-scripts.sh).
 
@@ -24,6 +26,8 @@ cpus="${KK_VM_CPUS:-6}"
 mem="${KK_VM_MEM:-8G}"
 disk_size="${KK_VM_DISK:-96G}"
 virtio_url=https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso
+
+vm_password='kakemono.'
 
 die() { echo "vm: $*" >&2; exit 1; }
 log() { echo "vm: $*" >&2; }
@@ -59,10 +63,11 @@ boot() {
     -drive "if=none,id=disk,format=qcow2,discard=unmap,file=$dir/disk.qcow2" \
     -device nvme,drive=disk,serial=kakemono,bootindex=1 \
     -netdev "user,id=net,hostfwd=tcp:127.0.0.1:$port-:22" -device virtio-net-pci,netdev=net \
-    -rtc base=utc -display none -vnc 127.0.0.1:5 \
+    -rtc base=utc -display none -vnc 127.0.0.1:5,password=on \
     -monitor "unix:$dir/monitor.sock,server,nowait" \
     -pidfile "$dir/qemu.pid" -daemonize "$@" >"$dir/qemu.log" 2>&1 \
     || die "QEMU failed to start: $(cat "$dir/qemu.log")"
+  monitor 'set_password vnc kakemono'
 }
 
 cdrom() { # id path [bootindex]
@@ -80,13 +85,11 @@ cmd_install() {
 
   [[ -f "$dir/virtio-win.iso" ]] || { log "downloading virtio-win drivers"; curl -fL -o "$dir/virtio-win.iso" "$virtio_url"; }
   [[ -f "$dir/id_ed25519" ]] || ssh-keygen -q -t ed25519 -N '' -C kakemono-win-vm -f "$dir/id_ed25519"
-  [[ -f "$dir/password" ]] || { LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20; echo; } >"$dir/password"
-  chmod 600 "$dir/password"
 
   # The answer-file disc: Windows Setup looks for autounattend.xml at the root of every drive.
   local answer="$dir/answer"
   rm -rf "$answer" "$dir/answer.iso"; mkdir -p "$answer"
-  sed "s/@PASSWORD@/$(cat "$dir/password")/g" "$here/autounattend.xml" >"$answer/autounattend.xml"
+  sed "s/@PASSWORD@/$vm_password/g" "$here/autounattend.xml" >"$answer/autounattend.xml"
   cp "$here/provision.ps1" "$answer/"
   cp "$dir/id_ed25519.pub" "$answer/authorized_keys"
   hdiutil makehybrid -quiet -iso -joliet -default-volume-name KKANSWER -o "$dir/answer.iso" "$answer"
