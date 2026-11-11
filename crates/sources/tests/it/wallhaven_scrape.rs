@@ -240,7 +240,7 @@ mod browse {
     use std::time::Duration;
 
     use kakemono_config::schema::WallhavenConfig;
-    use kakemono_sources::wallhaven::{DEFAULT_SCRAPE_DELAY, Wallhaven};
+    use kakemono_sources::wallhaven::Wallhaven;
     use kakemono_sources::{BrowseCursor, ImageRef, Provider, ProviderError, RemoteItem};
     use wiremock::matchers::{method, path, path_regex, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -419,24 +419,23 @@ mod browse {
         assert!(batch.items.is_empty() && batch.next.is_none(), "{batch:?}");
     }
 
-    /// The scrape delay belongs to `resolve_image`; a browse batch is one quick request.
+    /// The scrape delay belongs to `resolve_image`; a browse batch is one quick request. The
+    /// delay is long so a loaded machine can't make the request itself look like a wait (the
+    /// default 1 s once failed at 1.04 s next to a release build).
     #[tokio::test]
     async fn browse_does_not_wait_the_scrape_delay() {
+        const DELAY: Duration = Duration::from_secs(30);
         let server = MockServer::start().await;
         search()
             .respond_with(html(fixture(&server)))
             .mount(&server)
             .await;
         let start = std::time::Instant::now();
-        keyless(&server, DEFAULT_SCRAPE_DELAY)
+        keyless(&server, DELAY)
             .browse("nature", None)
             .await
             .unwrap();
-        assert!(
-            start.elapsed() < DEFAULT_SCRAPE_DELAY,
-            "{:?}",
-            start.elapsed()
-        );
+        assert!(start.elapsed() < DELAY, "{:?}", start.elapsed());
     }
 
     #[tokio::test]
