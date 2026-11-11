@@ -606,6 +606,7 @@ mod tests {
             enabled: true,
             kind,
             location: location.into(),
+            ..Default::default()
         }
     }
 
