@@ -14,7 +14,7 @@ use crate::defaults::home_dir;
 use crate::error::ConfigError;
 use crate::load::parse_str;
 use crate::schema::{Config, DesktopConfig, SourceEntry, SourceType};
-use crate::sources::normalize_sources;
+use crate::sources::{normalize_name, normalize_sources};
 
 /// Reads `path` (an empty document if it doesn't exist), runs `f`, checks the result still loads,
 /// and writes it with [`kakemono_fs::update`]: atomically, keeping the file mode (new files are
@@ -112,6 +112,7 @@ fn merge(table: &mut dyn TableLike, obj: &Map<String, Json>, root: bool) -> Resu
                 let mut rows = to_array_of_tables(items).map_err(|e| format!("{key}: {e}"))?;
                 if key == SOURCES_KEY {
                     keep_raw_types(table.get(key), &mut rows);
+                    tidy_names(&mut rows);
                 }
                 replace_rows(table, key, rows);
             }
@@ -211,6 +212,7 @@ fn keep_raw_types(old: Option<&Item>, rows: &mut ArrayOfTables) {
                 .and_then(Item::as_str)
                 .map_or(SourceType::Unsupported, SourceType::from_config_str),
             location: str_of(*row, "location"),
+            ..Default::default()
         })
         .collect();
     normalize_sources(&mut entries);
@@ -239,9 +241,25 @@ fn keep_raw_types(old: Option<&Item>, rows: &mut ArrayOfTables) {
     }
 }
 
+/// Stores each row's `name` the way loading reads it ([`normalize_name`]), and leaves out a
+/// blank one: an unnamed row writes no `name` key, as before names existed.
+fn tidy_names(rows: &mut ArrayOfTables) {
+    for row in rows.iter_mut() {
+        let Some(raw) = row.get("name").and_then(Item::as_str) else {
+            continue;
+        };
+        let name = normalize_name(raw);
+        if name.is_empty() {
+            row.remove("name");
+        } else if name != raw {
+            row.insert("name", Item::Value(Value::from(name)));
+        }
+    }
+}
+
 /// Keys a `[[sources]]` row writes first, in this order; any others follow alphabetically. JSON
 /// objects arrive key-sorted, which would put `id` after `enabled`.
-const ROW_KEY_ORDER: [&str; 4] = ["id", "enabled", "type", "location"];
+const ROW_KEY_ORDER: [&str; 5] = ["id", "name", "enabled", "type", "location"];
 
 fn is_rows(items: &[Json]) -> bool {
     !items.is_empty() && items.iter().all(Json::is_object)

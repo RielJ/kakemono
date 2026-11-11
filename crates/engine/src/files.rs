@@ -1026,6 +1026,7 @@ mod tests {
             enabled,
             kind,
             location: location.into(),
+            ..Default::default()
         };
         cfg.sources = vec![
             row(SourceType::Folder, "/pics", false),

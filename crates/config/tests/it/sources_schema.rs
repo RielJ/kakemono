@@ -18,6 +18,7 @@ fn row(id: &str, kind: SourceType, location: &str) -> SourceEntry {
         enabled: true,
         kind,
         location: location.to_owned(),
+        ..Default::default()
     }
 }
 
@@ -202,5 +203,52 @@ location = "~/not-a-path"
             tilde_expanded(home(), "x").as_str(),
             "~/not-a-path",
         ]
+    );
+}
+
+#[test]
+fn name_round_trips_with_spaces_and_unicode() {
+    let cfg = parse_str(
+        "[[sources]]\nid = \"wh-1a2b\"\nname = \"Wallhaven hot ✨\"\ntype = \"wallhaven\"\nlocation = \"nature\"\n",
+        home(),
+    )
+    .unwrap();
+    assert_eq!(cfg.sources[0].name, "Wallhaven hot ✨");
+    let back = parse_str(&toml::to_string(&cfg).unwrap(), home()).unwrap();
+    assert_eq!(back.sources, cfg.sources);
+}
+
+/// Old files have no `name`; such a row loads with an empty name and writes no `name` key.
+#[test]
+fn row_without_name_writes_no_name_key() {
+    let cfg = parse_str("[[sources]]\nid = \"b\"\ntype = \"bing\"\n", home()).unwrap();
+    assert_eq!(cfg.sources[0].name, "");
+    let toml_row = toml::to_string(&cfg.sources[0]).unwrap();
+    assert!(!toml_row.contains("name"), "{toml_row}");
+    let json = serde_json::to_value(&cfg.sources[0]).unwrap();
+    assert!(json.get("name").is_none(), "{json}");
+}
+
+#[test]
+fn name_is_trimmed_at_load() {
+    let cfg = parse_str(
+        "[[sources]]\nid = \"b\"\nname = \"  wallhaven-hot \\t\"\ntype = \"bing\"\n",
+        home(),
+    )
+    .unwrap();
+    assert_eq!(cfg.sources[0].name, "wallhaven-hot");
+}
+
+#[test]
+fn long_name_is_cut_to_max_name_len_characters_at_load() {
+    let long = "é".repeat(kakemono_config::MAX_NAME_LEN + 10);
+    let cfg = parse_str(
+        &format!("[[sources]]\nid = \"b\"\nname = \"{long}\"\ntype = \"bing\"\n"),
+        home(),
+    )
+    .unwrap();
+    assert_eq!(
+        cfg.sources[0].name,
+        "é".repeat(kakemono_config::MAX_NAME_LEN)
     );
 }

@@ -58,6 +58,7 @@ fn fixture(hook: Option<&[&str]>) -> Fixture {
         enabled: true,
         kind: SourceType::Folder,
         location: pics.to_string_lossy().into_owned(),
+        ..Default::default()
     }];
     cfg.hooks.on_change = hook.map(|h| CommandSpec::new(argv(h)).unwrap());
 

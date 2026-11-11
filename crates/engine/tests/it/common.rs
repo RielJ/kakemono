@@ -187,6 +187,7 @@ pub fn row(id: &str, kind: SourceType, location: &str) -> SourceEntry {
         enabled: true,
         kind,
         location: location.to_owned(),
+        ..Default::default()
     }
 }
 

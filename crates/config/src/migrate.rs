@@ -135,6 +135,7 @@ fn build_rows(old: &legacy::LegacyConfig, home: &Path) -> (Vec<SourceEntry>, Vec
                 enabled,
                 kind,
                 location,
+                ..Default::default()
             }
         })
         .collect();

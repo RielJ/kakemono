@@ -257,6 +257,16 @@ input[type="range"] {
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /* A named row: the name, then the type in small muted text. */
+  .sources-name {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+  }
+  .sources-name > :last-child {
+    flex-shrink: 0;
+  }
 
   .btn-danger {
     background: var(--c-danger);

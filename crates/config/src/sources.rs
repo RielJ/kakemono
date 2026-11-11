@@ -11,6 +11,9 @@ use crate::schema::{SourceEntry, SourceType};
 /// Longest valid source id.
 pub const MAX_ID_LEN: usize = 32;
 
+/// Longest source name, in characters (not bytes); longer names are cut.
+pub const MAX_NAME_LEN: usize = 64;
+
 impl SourceType {
     /// Whether the source downloads from the internet into `downloads/<id>/`.
     pub fn is_online(self) -> bool {
@@ -87,9 +90,23 @@ pub fn deterministic_id(kind: SourceType, location: &str, taken: &HashSet<String
         .expect("an unbounded suffix range always finds a free id")
 }
 
+/// `name` as stored: surrounding whitespace trimmed and cut to [`MAX_NAME_LEN`] characters.
+pub fn normalize_name(name: &str) -> String {
+    name.trim()
+        .chars()
+        .take(MAX_NAME_LEN)
+        .collect::<String>()
+        .trim_end()
+        .to_owned()
+}
+
 /// Replaces empty, invalid and duplicate ids with [`deterministic_id`]s, in row order (the first
-/// row keeps a duplicated id). Returns one warning per replaced id.
+/// row keeps a duplicated id), and tidies each name with [`normalize_name`]. Returns one warning
+/// per replaced id.
 pub fn normalize_sources(sources: &mut [SourceEntry]) -> Vec<String> {
+    for src in sources.iter_mut() {
+        src.name = normalize_name(&src.name);
+    }
     let mut warnings = Vec::new();
     // Valid ids are reserved up front so a generated id never steals a later row's own id.
     let mut taken: HashSet<String> = sources
@@ -139,6 +156,7 @@ mod tests {
             enabled: true,
             kind,
             location: location.to_owned(),
+            ..Default::default()
         }
     }
 

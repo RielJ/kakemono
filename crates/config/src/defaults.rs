@@ -96,6 +96,7 @@ pub fn default_sources(favorites: &Path) -> Vec<SourceEntry> {
         enabled: true,
         kind,
         location: location.to_owned(),
+        ..Default::default()
     };
     vec![
         row("bing", SourceType::Bing, ""),

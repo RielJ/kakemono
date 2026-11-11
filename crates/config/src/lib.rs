@@ -26,4 +26,6 @@ pub use schema::{
     ManagedBy, PickerConfig, PickerCustom, PickerOrientation, PickerPlacement, PickerPosition,
     SourceEntry, SourceType, ThemeOverride, UiConfig, UnsplashConfig, WallhavenConfig,
 };
-pub use sources::{MAX_ID_LEN, deterministic_id, normalize_sources, valid_id};
+pub use sources::{
+    MAX_ID_LEN, MAX_NAME_LEN, deterministic_id, normalize_name, normalize_sources, valid_id,
+};

@@ -24,11 +24,17 @@ interface Props {
 type Message = { tone: 'danger' | 'muted'; text: string } | null
 
 /** The open add/edit dialog: a new source of `kind`, or the existing source `id`. */
-type Editing = { kind: SourceType; id: string | null; initial?: string } | null
+type Editing = { kind: SourceType; id: string | null; initial?: string; name?: string } | null
+
+/** `s` with `name` set, or without the key when `name` is empty (the config writes no `name`). */
+const withName = (s: SourceEntry, name: string): SourceEntry => {
+  const { name: _old, ...rest } = s
+  return name ? { ...rest, name } : rest
+}
 
 /**
  * The General tab's Images table, after Variety: one row per `[[sources]]` entry with an
- * Enabled box, the type and the location, and Add…, Edit…, Remove…, Open Folder and Use Only These under
+ * Enabled box, the name (or the type when unnamed) and the location, and Add…, Edit…, Remove…, Open Folder and Use Only These under
  * it. Rows multi-select with shift- and cmd/ctrl-click or the arrow keys.
  */
 export default function SourcesTable({ config, onChange, onCommit }: Props) {
@@ -148,12 +154,12 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
   }
 
   /** Appends one enabled row per location and selects the new rows. */
-  const addRows = (kind: SourceType, locations: string[]) => {
+  const addRows = (kind: SourceType, locations: string[], name = '') => {
     const taken = new Set(ids)
     const added = locations.map((location) => {
       const id = newSourceId(kind, taken)
       taken.add(id)
-      return { id, type: kind, location, enabled: true }
+      return withName({ id, type: kind, location, enabled: true }, name)
     })
     setSources([...sources, ...added])
     setSelected(new Set(added.map((a) => a.id)))
@@ -164,16 +170,16 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
   const openEdit = () => {
     if (!single || !takesInput(single.type)) return
     setMessage(null)
-    setEditing({ kind: single.type, id: single.id, initial: single.location })
+    setEditing({ kind: single.type, id: single.id, initial: single.location, name: single.name })
   }
 
-  const finishEdit = (locations: string[]) => {
+  const finishEdit = (locations: string[], name: string) => {
     const current = editing
     setEditing(null)
     if (!current) return
-    if (current.id === null) return addRows(current.kind, locations)
+    if (current.id === null) return addRows(current.kind, locations, name)
     const location = locations[0] ?? ''
-    setSources(sources.map((s) => (s.id === current.id ? { ...s, location } : s)))
+    setSources(sources.map((s) => (s.id === current.id ? withName({ ...s, location }, name) : s)))
     focusRow(current.id)
   }
 
@@ -250,7 +256,7 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
           <thead>
             <tr>
               <th scope="col">Enabled</th>
-              <th scope="col">Type</th>
+              <th scope="col">Name</th>
               <th scope="col">Location</th>
             </tr>
           </thead>
@@ -274,7 +280,7 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
                     select(s.id, { range: false, add: false })
                     if (takesInput(s.type)) {
                       setMessage(null)
-                      setEditing({ kind: s.type, id: s.id, initial: s.location })
+                      setEditing({ kind: s.type, id: s.id, initial: s.location, name: s.name })
                     }
                   }}
                   onFocus={() => setActive(s.id)}
@@ -285,12 +291,21 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
                       type="checkbox"
                       tabIndex={-1}
                       checked={s.enabled}
-                      aria-label={`Enabled: ${info.label}${location ? ` ${location}` : ''}`}
+                      aria-label={`Enabled: ${s.name || info.label}${location ? ` ${location}` : ''}`}
                       onClick={(e) => e.stopPropagation()}
                       onChange={() => toggle(s.id)}
                     />
                   </td>
-                  <td role="gridcell">{info.label}</td>
+                  <td role="gridcell">
+                    {s.name ? (
+                      <span className="sources-name" title={`${s.name} (${info.label})`}>
+                        <span className="truncate">{s.name}</span>
+                        <span className="text-muted text-[11px]">{info.label}</span>
+                      </span>
+                    ) : (
+                      info.label
+                    )}
+                  </td>
                   <td role="gridcell">
                     {location ? (
                       <span className="sources-location" title={location}>
@@ -337,6 +352,7 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
         <SourceDialog
           kind={editing.kind}
           initial={editing.initial}
+          initialName={editing.name}
           onDone={finishEdit}
           onCancel={() => {
             const id = editing.id
