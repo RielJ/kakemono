@@ -2432,7 +2432,7 @@ dependencies = [
 
 [[package]]
 name = "kakemono"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2464,7 +2464,7 @@ dependencies = [
 
 [[package]]
 name = "kakemono-config"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "etcetera",
@@ -2482,7 +2482,7 @@ dependencies = [
 
 [[package]]
 name = "kakemono-engine"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2510,14 +2510,14 @@ dependencies = [
 
 [[package]]
 name = "kakemono-fs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "tempfile",
 ]
 
 [[package]]
 name = "kakemono-platform"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -2549,7 +2549,7 @@ dependencies = [
 
 [[package]]
 name = "kakemono-protocol"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "futures",
  "insta",
@@ -2566,7 +2566,7 @@ dependencies = [
 
 [[package]]
 name = "kakemono-sources"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2587,7 +2587,7 @@ dependencies = [
 
 [[package]]
 name = "kakemono-ui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "futures",
