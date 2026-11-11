@@ -10,8 +10,9 @@
 //! - **Reddit:** `x`, `r/x`, `/r/x` or `https://(www.|old.)reddit.com/r/x/...` give the
 //!   subreddit `x`.
 //! - **Wallhaven:** keywords pass through as the query. A `wallhaven.cc/search?...` URL sets the
-//!   query from `q` and overrides `categories`, `purity` and `sorting`; `wallhaven.cc/tag/<n>`
-//!   (or `/tag/<n>`) becomes the query `id:<n>`.
+//!   query from `q`, overrides `categories`, `purity` and `sorting`, and adds `topRange`,
+//!   `order`, `atleast`, `resolutions`, `ratios` and `colors` to every request;
+//!   `wallhaven.cc/tag/<n>` (or `/tag/<n>`) becomes the query `id:<n>`.
 //! - **Unsplash:** keywords pass through; `unsplash.com/s/photos/<kw>` gives `<kw>` with `-` read
 //!   as a space. Any other URL is an error.
 //! - **Bing, APOD:** the location is ignored.
@@ -264,10 +265,14 @@ const UNSPLASH_HOSTS: &[&str] = &["unsplash.com", "www.unsplash.com"];
 ///
 /// - Keywords pass through as the query, with no overrides.
 /// - `wallhaven.cc/search?q=..&categories=..&purity=..&sorting=..` (any of them optional) sets
-///   the query from `q` and overrides the other three. Other parameters are ignored.
+///   the query from `q` and overrides the other three.
+/// - The search parameters `topRange`, `order`, `atleast`, `resolutions`, `ratios` and `colors`
+///   are kept as is (not checked; Wallhaven checks them) and sent with every request. Other
+///   parameters (`page`, `seed`, ...) and empty values are ignored.
 /// - `wallhaven.cc/tag/<n>`, or just `/tag/<n>`, gives the query `id:<n>`.
 /// - `wallhaven.cc/latest`, `/toplist`, `/hot` and `/random` set `sorting` to `date_added`,
-///   `toplist`, `hot` and `random`.
+///   `toplist`, `hot` and `random`; their query parameters are read as above, so
+///   `wallhaven.cc/toplist?topRange=1y` keeps its range.
 ///
 /// Errors: [`ProviderError::NotConfigured`] (`wallhaven: ...`) for any other URL.
 pub(crate) fn wallhaven_location(location: &str) -> Result<WallhavenSearch, ProviderError> {
@@ -303,6 +308,12 @@ pub(crate) fn wallhaven_location(location: &str) -> Result<WallhavenSearch, Prov
             "categories" => search.overrides.categories = Some(value.to_owned()),
             "purity" => search.overrides.purity = Some(value.to_owned()),
             "sorting" => search.overrides.sorting = Some(value.to_owned()),
+            "topRange" => search.overrides.top_range = Some(value.to_owned()),
+            "order" => search.overrides.order = Some(value.to_owned()),
+            "atleast" => search.overrides.atleast = Some(value.to_owned()),
+            "resolutions" => search.overrides.resolutions = Some(value.to_owned()),
+            "ratios" => search.overrides.ratios = Some(value.to_owned()),
+            "colors" => search.overrides.colors = Some(value.to_owned()),
             _ => {}
         }
     }
@@ -501,16 +512,56 @@ mod tests {
                     categories: Some("100".into()),
                     purity: Some("100".into()),
                     sorting: Some("toplist".into()),
+                    ..WallhavenOverrides::default()
                 },
             }
         );
     }
 
     #[test]
+    fn wallhaven_search_url_keeps_range_order_and_filters() {
+        let got = wallhaven_location(
+            "https://wallhaven.cc/search?categories=110&purity=100&topRange=1y&sorting=toplist\
+             &order=desc&atleast=2560x1440&resolutions=1920x1080%2C2560x1440&ratios=16x9,16x10\
+             &colors=0066cc",
+        )
+        .unwrap();
+        assert_eq!(
+            got,
+            WallhavenSearch {
+                query: String::new(),
+                overrides: WallhavenOverrides {
+                    categories: Some("110".into()),
+                    purity: Some("100".into()),
+                    sorting: Some("toplist".into()),
+                    top_range: Some("1y".into()),
+                    order: Some("desc".into()),
+                    atleast: Some("2560x1440".into()),
+                    resolutions: Some("1920x1080,2560x1440".into()),
+                    ratios: Some("16x9,16x10".into()),
+                    colors: Some("0066cc".into()),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn wallhaven_toplist_listing_keeps_top_range() {
+        let got = wallhaven_location("https://wallhaven.cc/toplist?topRange=1y&page=2").unwrap();
+        assert_eq!(
+            got.overrides,
+            WallhavenOverrides {
+                sorting: Some("toplist".into()),
+                top_range: Some("1y".into()),
+                ..WallhavenOverrides::default()
+            }
+        );
+    }
+
+    #[test]
     fn wallhaven_search_url_decodes_query_and_leaves_missing_options() {
-        let got =
-            wallhaven_location("https://wallhaven.cc/search?q=misty+forest%21&atleast=1920x1080")
-                .unwrap();
+        let got = wallhaven_location("https://wallhaven.cc/search?q=misty+forest%21&page=3&seed=x")
+            .unwrap();
         assert_eq!(got.query, "misty forest!");
         assert_eq!(got.overrides, WallhavenOverrides::default());
     }
@@ -685,6 +736,8 @@ mod tests {
             .and(query_param("categories", "010"))
             .and(query_param("purity", "110"))
             .and(query_param("sorting", "toplist"))
+            .and(query_param("topRange", "1y"))
+            .and(query_param("order", "desc"))
             .and(query_param("apikey", "k"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "data": [{"url": "https://wallhaven.cc/w/a1", "path": "https://w.wallhaven.cc/full/a1.jpg"}]
@@ -705,7 +758,8 @@ mod tests {
         let row = entry(
             "wh-1",
             SourceType::Wallhaven,
-            "https://wallhaven.cc/search?q=forest&categories=010&purity=110&sorting=toplist",
+            "https://wallhaven.cc/search?q=forest&categories=010&purity=110&sorting=toplist\
+             &topRange=1y&order=desc",
         );
         let src = build_online_at(&row, &cfg, Client::new(), &origins).unwrap();
         let results = src.provider.fetch(&src.query).await.unwrap();
