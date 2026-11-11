@@ -107,6 +107,7 @@ fn pics_row(root: &Path) -> SourceEntry {
         enabled: true,
         kind: SourceType::Folder,
         location: root.join("pics").to_string_lossy().into_owned(),
+        ..Default::default()
     }
 }
 

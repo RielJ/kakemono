@@ -155,3 +155,52 @@ fn unknown_type_follows_its_row_by_id() {
         "[[sources]]\nid = \"fl-0001\"\nenabled = false\ntype = \"flickr\"\nlocation = \"dogs\"\n"
     );
 }
+
+/// A named row writes `name` right after `id`, trimmed.
+#[test]
+fn source_name_is_written_after_id_and_trimmed() {
+    let mut d = doc("");
+    apply_json(
+        &mut d,
+        &json!({"sources": [
+            {"enabled": true, "id": "wh-1a2b", "location": "nature", "name": "  wallhaven-hot ", "type": "wallhaven"},
+        ]}),
+    )
+    .expect("patch");
+    assert_eq!(
+        d.to_string(),
+        "[[sources]]\nid = \"wh-1a2b\"\nname = \"wallhaven-hot\"\nenabled = true\ntype = \"wallhaven\"\nlocation = \"nature\"\n"
+    );
+}
+
+/// A blank name is no name: the key is left out rather than written as `name = ""`.
+#[test]
+fn blank_source_name_is_not_written() {
+    let mut d = doc("");
+    apply_json(
+        &mut d,
+        &json!({"sources": [
+            {"id": "bing", "name": "   ", "enabled": true, "type": "bing", "location": ""},
+        ]}),
+    )
+    .expect("patch");
+    assert_eq!(
+        d.to_string(),
+        "[[sources]]\nid = \"bing\"\nenabled = true\ntype = \"bing\"\nlocation = \"\"\n"
+    );
+}
+
+/// A file from before names existed survives a save of the list unchanged.
+#[test]
+fn unnamed_rows_survive_a_ui_save_byte_for_byte() {
+    let text = "[[sources]]\nid = \"bing\"\nenabled = true\ntype = \"bing\"\nlocation = \"\"\n\n\
+         [[sources]]\nid = \"wh-1a2b\"\nenabled = false\ntype = \"wallhaven\"\nlocation = \"nature\"\n";
+    assert_eq!(ui_save(text), text);
+}
+
+#[test]
+fn named_rows_survive_a_ui_save_byte_for_byte() {
+    let text = "[[sources]]\nid = \"wh-1a2b\"\nname = \"wallhaven-hot\"\nenabled = true\ntype = \"wallhaven\"\n\
+         location = \"https://wallhaven.cc/search?categories=110&purity=100&topRange=1y&sorting=hot&order=desc\"\n";
+    assert_eq!(ui_save(text), text);
+}

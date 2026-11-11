@@ -66,6 +66,7 @@ fn fixture(pics: Option<&Path>, prepare: impl FnOnce(&Path) -> State) -> Fixture
             enabled: true,
             kind: SourceType::Folder,
             location: p.to_string_lossy().into_owned(),
+            ..Default::default()
         })
         .into_iter()
         .collect();

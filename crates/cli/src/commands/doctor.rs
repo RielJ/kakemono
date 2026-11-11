@@ -582,6 +582,7 @@ mod tests {
             enabled,
             kind,
             location: location.to_owned(),
+            ..Default::default()
         }
     }
 

@@ -60,6 +60,7 @@ impl Fixture {
             enabled: true,
             kind: SourceType::Folder,
             location: pics.to_string_lossy().into_owned(),
+            ..Default::default()
         }];
         edit(&mut cfg);
 

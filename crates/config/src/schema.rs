@@ -154,6 +154,13 @@ pub struct ApodConfig {
 pub struct SourceEntry {
     /// `[a-z0-9-]{1,32}`; names the download folder `downloads/<id>/`.
     pub id: String,
+    /// Optional label the UI and CLI show instead of the type, e.g. `"wallhaven-hot"`. Any text,
+    /// trimmed and capped at [`MAX_NAME_LEN`](crate::MAX_NAME_LEN) characters on load and save;
+    /// empty means no name and is left out of the file. Only a label: the id still names the
+    /// download folder.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    #[ts(optional, as = "Option<String>")]
+    pub name: String,
     pub enabled: bool,
     #[serde(rename = "type")]
     pub kind: SourceType,
@@ -168,6 +175,7 @@ impl Default for SourceEntry {
     fn default() -> Self {
         Self {
             id: String::new(),
+            name: String::new(),
             enabled: true,
             kind: SourceType::Unsupported,
             location: String::new(),

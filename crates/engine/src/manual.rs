@@ -154,6 +154,7 @@ impl Engine {
             enabled: true,
             kind,
             location: location.to_owned(),
+            ..Default::default()
         };
         let http = self.inner.deps.http.clone();
         // Parse the location first: the sources factory skips a bad row with only a log line.
