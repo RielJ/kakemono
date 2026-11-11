@@ -30,6 +30,7 @@ const SOURCES: SourceEntry[] = [
 ]
 
 beforeEach(() => {
+  localStorage.clear()
   vi.mocked(api.checkSource).mockResolvedValue({ count: 5 })
   vi.mocked(api.nextWallpaper).mockResolvedValue()
   vi.mocked(api.deleteSourceFiles).mockResolvedValue()
@@ -106,10 +107,10 @@ describe('SourcesTable', () => {
         .map((c) => c.textContent),
     )
     expect(cells.map((c) => c.slice(1))).toEqual([
-      ['Bing', '—', 'OK'],
-      ['Wallhaven', 'nature', 'OK'],
-      ['Folder', '/home/u/Pictures/Wallpapers', 'OK'],
-      ['APOD', '—', 'OK'],
+      ['Bing', '—', ''],
+      ['Wallhaven', 'nature', ''],
+      ['Folder', '/home/u/Pictures/Wallpapers', ''],
+      ['APOD', '—', ''],
     ])
     const boxes = rows().map((r) => within(r).getByRole('checkbox'))
     expect(boxes.map((b) => (b as HTMLInputElement).checked)).toEqual([true, true, false, false])
@@ -324,16 +325,17 @@ describe('SourcesTable', () => {
   })
 
   describe('Status', () => {
-    it('checks each row in the background and shows the result', async () => {
+    const allOn = SOURCES.map((s) => ({ ...s, enabled: true }))
+
+    it('checks enabled rows in the background and flags only the bad ones', async () => {
       vi.mocked(api.checkSource).mockImplementation(async (kind) => {
         if (kind === 'folder') throw { kind: 'daemon', message: 'no images found' }
         return { count: 24 }
       })
-      await setup()
+      await setup({ sources: allOn })
       const status = (n: number) => within(row(n)).getAllByRole('gridcell')[3]
-      expect(status(1).textContent).toBe('OK')
-      expect(status(1).querySelector('[title]')?.getAttribute('title')).toBe('Found 24 images.')
-      expect(status(2).textContent).toBe('Failed')
+      expect(status(1).textContent).toBe('')
+      expect(status(2).textContent).toBe('Invalid')
       expect(status(2).querySelector('[title]')?.getAttribute('title')).toBe('no images found')
     })
 
@@ -342,7 +344,7 @@ describe('SourcesTable', () => {
         if (kind === 'folder') throw { kind: 'daemon', message: 'no images found' }
         return { count: 3 }
       })
-      const { user } = await setup()
+      const { user } = await setup({ sources: allOn })
       expect(screen.queryByText(/no images found/, { selector: '[role="alert"], p' })).toBeNull()
       await user.click(within(row(2)).getByText('Folder'))
       expect(screen.getByText('Folder: no images found')).toBeTruthy()
@@ -354,7 +356,7 @@ describe('SourcesTable', () => {
       const { user } = await setup({ sources: [SOURCES[1]] })
       expect(within(row(0)).getAllByRole('gridcell')[3].textContent).toBe('Checking…')
       await act(async () => finish({ count: 2 }))
-      expect(within(row(0)).getAllByRole('gridcell')[3].textContent).toBe('OK')
+      expect(within(row(0)).getAllByRole('gridcell')[3].textContent).toBe('')
       await user.dblClick(within(row(0)).getAllByRole('gridcell')[1])
       await user.keyboard('renamed{Enter}')
       expect(api.checkSource).toHaveBeenCalledTimes(1)
@@ -454,10 +456,10 @@ describe('SourcesTable', () => {
       expect(row(4).getAttribute('aria-selected')).toBe('true')
       await act(async () => {})
       expect(api.checkSource).toHaveBeenCalledWith('wallhaven', 'forest')
-      expect(within(row(4)).getAllByRole('gridcell')[3].textContent).toBe('OK')
+      expect(within(row(4)).getAllByRole('gridcell')[3].textContent).toBe('')
     })
 
-    it('adds the row even when its check fails; the row shows Failed', async () => {
+    it('adds the row even when its check fails; the row shows Invalid', async () => {
       vi.mocked(api.checkSource).mockRejectedValue({ kind: 'daemon', message: 'no images found' })
       const { last, user } = await setup({ sources: [] })
       await choose(user, /^Wallhaven/)
@@ -465,7 +467,7 @@ describe('SourcesTable', () => {
       await user.click(button('OK'))
       expect(last().sources).toHaveLength(1)
       await act(async () => {})
-      expect(within(row(0)).getAllByRole('gridcell')[3].textContent).toBe('Failed')
+      expect(within(row(0)).getAllByRole('gridcell')[3].textContent).toBe('Invalid')
     })
 
     it('adds nothing when the dialog is cancelled', async () => {

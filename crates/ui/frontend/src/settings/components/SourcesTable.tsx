@@ -34,26 +34,24 @@ const withName = (s: SourceEntry, name: string): SourceEntry => {
 }
 
 /** The Status cell's word and tooltip for a row's background check. */
-function statusOf(check: SourceCheck | undefined): { tone: string; label: string; detail: string } {
+function statusOf(check: SourceCheck | undefined): { tone: string; label: string; detail: string } | null {
   switch (check?.state) {
     case undefined:
+      return null
     case 'checking':
       return { tone: 'checking', label: 'Checking…', detail: 'Checking this source for images…' }
-    case 'ok':
-      return { tone: 'ok', label: 'OK', detail: `Found ${check.count} image${check.count === 1 ? '' : 's'}.` }
     case 'failed':
-      return { tone: 'failed', label: 'Failed', detail: check.message }
+      return { tone: 'failed', label: 'Invalid', detail: check.message }
     case 'unknown':
       return { tone: 'unknown', label: 'Unknown', detail: check.message }
-    case 'paused':
-      return { tone: 'paused', label: 'Paused', detail: 'Not checked: Internet access is off.' }
   }
 }
 
 /**
  * The General tab's Images table, after Variety: one row per `[[sources]]` entry with an
- * Enabled box, the name (or the type when unnamed), the location and a Status from a background
- * image check (`useSourceChecks`), and Add…, Edit…, Remove…, Open Folder and Use Only These under
+ * Enabled box, the name (or the type when unnamed), the location and a Status that flags a source
+ * failing its one-time image check (`useSourceChecks`; a good source shows nothing), and Add…,
+ * Edit…, Remove…, Open Folder and Use Only These under
  * it. Rows multi-select with shift- and cmd/ctrl-click or the arrow keys. Double-click a name to
  * rename it in place; double-click elsewhere (or Enter) opens Edit.
  */
@@ -406,10 +404,12 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
                     )}
                   </td>
                   <td role="gridcell">
-                    <span className={`sources-status sources-status-${status.tone}`} title={status.detail}>
-                      <span className="sources-dot" aria-hidden="true" />
-                      {status.label}
-                    </span>
+                    {status && (
+                      <span className={`sources-status sources-status-${status.tone}`} title={status.detail}>
+                        <span className="sources-dot" aria-hidden="true" />
+                        {status.label}
+                      </span>
+                    )}
                   </td>
                 </tr>
               )

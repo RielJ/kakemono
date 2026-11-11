@@ -328,9 +328,6 @@ input[type="range"] {
     flex-shrink: 0;
     background: var(--c-faint);
   }
-  .sources-status-ok .sources-dot {
-    background: var(--c-ok);
-  }
   .sources-status-failed {
     color: var(--c-danger);
   }
