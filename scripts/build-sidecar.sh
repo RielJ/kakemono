@@ -13,6 +13,7 @@
 #
 # Prints the staged path on stdout. Honors CARGO_BUILD_JOBS and other cargo env vars.
 set -euo pipefail
+{ # Parsed whole before it runs, so editing this file mid-run is safe (scripts/check-scripts.sh).
 
 target=""
 profile="release"
@@ -77,3 +78,4 @@ mkdir -p "$dest_dir"
 cp -f "$src" "$dest"
 chmod +x "$dest"
 echo "$dest"
+exit; }

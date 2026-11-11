@@ -5,6 +5,7 @@
 #
 # Usage: scripts/check-deb.sh BUNDLE_DIR   (the dir holding deb/, e.g. target/release/bundle)
 set -euo pipefail
+{ # Parsed whole before it runs, so editing this file mid-run is safe (scripts/check-scripts.sh).
 
 bundle="${1:?usage: check-deb.sh BUNDLE_DIR}"
 shopt -s nullglob
@@ -22,3 +23,4 @@ for bin in usr/bin/kakemono usr/bin/kakemono-ui; do
   }
 done
 echo "check-deb: $deb holds usr/bin/kakemono and usr/bin/kakemono-ui"
+exit; }

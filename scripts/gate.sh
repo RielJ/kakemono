@@ -21,6 +21,7 @@
 # Tests run under cargo-nextest (.config/nextest.toml kills a test after 2 min, so a deadlock
 # fails instead of hanging). Doctests run with `cargo test --doc` (nextest does not run them).
 set -euo pipefail
+{ # Parsed whole before it runs, so editing this file mid-run is safe (scripts/check-scripts.sh).
 
 cd "$(dirname "$0")/.."
 
@@ -81,6 +82,7 @@ case "$mode" in
     step cargo nextest run "${pkg_flags[@]}"
     ;;
   full)
+    step scripts/check-scripts.sh
     step cargo fmt --all -- --check
     step cargo clippy --workspace --all-targets --all-features -- -D warnings
     step cargo nextest run --workspace --all-features
@@ -126,3 +128,4 @@ case "$mode" in
     exit 2
     ;;
 esac
+exit; }

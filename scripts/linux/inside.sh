@@ -2,6 +2,7 @@
 # Runs inside the container scripts/linux-check.sh starts, from a copy of the source in /src.
 # Steps mirror .github/workflows/ci.yml (rust, frontend) and release.yml (deb).
 set -euo pipefail
+{ # Parsed whole before it runs, so editing this file mid-run is safe (scripts/check-scripts.sh).
 cd /src
 
 step() { printf '\n==> %s\n' "$*"; }
@@ -49,3 +50,4 @@ for mode in "$@"; do
   esac
 done
 step "linux check passed: $*"
+exit; }

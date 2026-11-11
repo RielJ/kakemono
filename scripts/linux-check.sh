@@ -22,6 +22,7 @@
 #   KK_LINUX_KEEP=1     keep the image and cache volumes after the run
 #   CARGO_BUILD_JOBS=N  passed into the container (default: half the CPUs Docker has)
 set -euo pipefail
+{ # Parsed whole before it runs, so editing this file mid-run is safe (scripts/check-scripts.sh).
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
@@ -80,3 +81,4 @@ git ls-files -z --cached --others --exclude-standard \
       -v kakemono-linux-target:/target \
       -v kakemono-linux-node-modules:/src/crates/ui/frontend/node_modules \
       "$image" bash -c 'tar -xf - -C /src && exec bash /src/scripts/linux/inside.sh "$@"' _ "${steps[@]}"
+exit; }
