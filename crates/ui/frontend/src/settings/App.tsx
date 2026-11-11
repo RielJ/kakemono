@@ -19,8 +19,10 @@ import AdvancedSettings from './components/AdvancedSettings'
 import GeneralSettings from './components/GeneralSettings'
 import Icon from './components/Icon'
 import Tabs, { tabId } from './components/Tabs'
+import UpdateBanner from './components/UpdateBanner'
 import { fileManagerName, TABS, type DaemonState, type TabId } from './sections'
 import { useConfigStore, type SaveStatus } from './useConfigStore'
+import { useUpdate } from './useUpdate'
 import { configErrors } from './validate'
 
 // ── Appearance ───────────────────────────────────────────────────────────────
@@ -215,6 +217,7 @@ export default function App() {
   const [dropNotice, setDropNotice] = useDropNotice()
   // A dropped image becomes the wallpaper; the daemon's `changed` event updates Now showing.
   const drop = useImageDrop({ onNotice: setDropNotice })
+  const update = useUpdate()
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -403,6 +406,7 @@ export default function App() {
         className="flex-1 min-h-0 overflow-y-auto"
       >
         <div className="max-w-[640px] mx-auto px-8 pt-6 pb-10">
+          <UpdateBanner update={update} />
           {startError && (
             <p role="alert" className="mb-4 text-[12px] text-danger break-words">
               {startError}

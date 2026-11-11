@@ -4,6 +4,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   browsePage,
+  checkUpdate,
+  installUpdate,
+  openUpdatePage,
   browseUse,
   checkSource,
   currentThumbnail,
@@ -65,6 +68,28 @@ function recordInvokeOptions(): unknown[] {
 afterEach(() => clearMocks())
 
 describe('shared/api', () => {
+  it('checks for updates and opens the release page', async () => {
+    const info = { version: '0.3.0', current: '0.2.0', install: 'in_app' }
+    const calls = recordIPC((cmd) => (cmd === 'check_update' ? info : null))
+    await expect(checkUpdate()).resolves.toEqual(info)
+    await openUpdatePage()
+    expect(calls).toEqual([
+      { cmd: 'check_update', args: {} },
+      { cmd: 'open_update_page', args: {} },
+    ])
+  })
+
+  it('installs an update with a progress channel', async () => {
+    const calls = recordIPC()
+    await installUpdate(() => {})
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.cmd).toBe('install_update')
+    // The channel goes over IPC as a callback reference.
+    expect(JSON.parse(JSON.stringify(calls[0]?.args))).toEqual({
+      progress: expect.stringMatching(/^__CHANNEL__:\d+$/),
+    })
+  })
+
   it('starts the daemon through ensure_daemon', async () => {
     const calls = recordIPC(() => true)
     await expect(startDaemon()).resolves.toBe(true)

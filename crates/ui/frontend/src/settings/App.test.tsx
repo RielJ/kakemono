@@ -10,7 +10,14 @@ import { testConfig } from './testConfig'
 
 vi.mock('../shared/api', async (importOriginal) => {
   const real = await importOriginal<typeof import('../shared/api')>()
-  return { ...real, getConfig: vi.fn(), getAppInfo: vi.fn(), getStatus: vi.fn(), fetchDroppedUrl: vi.fn() }
+  return {
+    ...real,
+    getConfig: vi.fn(),
+    getAppInfo: vi.fn(),
+    getStatus: vi.fn(),
+    fetchDroppedUrl: vi.fn(),
+    checkUpdate: vi.fn(),
+  }
 })
 
 // Captures the handlers the settings window registers, so tests can play daemon events.
@@ -46,6 +53,7 @@ beforeEach(() => {
   vi.mocked(api.getConfig).mockResolvedValue(testConfig())
   vi.mocked(api.getAppInfo).mockResolvedValue({ os: 'macos', config_path: '', version: '0' })
   vi.mocked(api.getStatus).mockResolvedValue(status('Alps'))
+  vi.mocked(api.checkUpdate).mockResolvedValue(null)
 })
 afterEach(() => {
   cleanup()
@@ -53,6 +61,14 @@ afterEach(() => {
 })
 
 describe('settings shell', () => {
+  it('shows a banner when a newer version is out', async () => {
+    vi.mocked(api.checkUpdate).mockResolvedValue({ version: '9.0.0', current: '0', install: 'in_app' })
+    render(<App />)
+    const banner = await screen.findByRole('region', { name: 'App update' })
+    expect(within(banner).getByText('kakemono 9.0.0 is available')).toBeTruthy()
+    expect(within(banner).getByRole('button', { name: 'Update' })).toBeTruthy()
+  })
+
   // Desktop's groups can repeat a title, so count matches instead of asking for exactly one.
   const heading = (name: string) => (screen.queryAllByRole('heading', { name }).length > 0 ? name : null)
 

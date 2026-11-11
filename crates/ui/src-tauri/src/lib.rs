@@ -20,6 +20,7 @@ pub mod picker;
 pub mod picker_place;
 pub mod thumbs;
 pub mod tray;
+pub mod updater;
 pub mod windows;
 
 use std::sync::Arc;
@@ -79,11 +80,13 @@ pub fn run() -> anyhow::Result<()> {
         ))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(link)
         .manage(picker::PickerState::detect())
         .manage(Arc::new(thumbs::Thumbs::detect()))
         .manage(Arc::new(commands_sources::BrowsePreviews::default()))
         .manage(events::LiveState::default())
+        .manage(updater::PendingUpdate::default())
         .invoke_handler(tauri::generate_handler![
             commands::get_config,
             commands::save_config,
@@ -120,6 +123,9 @@ pub fn run() -> anyhow::Result<()> {
             picker::reset_picker_position,
             picker::picker_resize_begin,
             picker::picker_resize,
+            updater::check_update,
+            updater::install_update,
+            updater::open_update_page,
         ])
         .setup(setup)
         .build(tauri::generate_context!())?;

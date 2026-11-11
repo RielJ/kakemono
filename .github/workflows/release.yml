@@ -13,7 +13,12 @@ name: Release
 # windows-x64 (the matrix `asset` value).
 #
 # Bundles are unsigned: no Apple Developer ID, notarization or Authenticode
-# secrets yet.
+# secrets yet. Updater bundles are signed with the minisign key in the
+# TAURI_SIGNING_PRIVATE_KEY secret; tauri.conf.json holds its public key.
+# Each updatable asset gets an <asset>.sig, macOS gets
+# kakemono-<os>-<arch>.app.tar.gz, and the release gets latest.json
+# (scripts/updater-manifest.sh), which installed apps read through
+# releases/latest/download/latest.json once the release is published.
 
 on:
   push:
@@ -186,15 +191,21 @@ jobs:
 
       # tauri.bundle.conf.json adds `bundle.externalBin`. It is not in
       # tauri.conf.json because tauri-build would then need the staged
-      # sidecar for every plain `cargo build`.
+      # sidecar for every plain `cargo build`. tauri.updater.conf.json turns
+      # on the signed updater bundles, which need the private key, so local
+      # builds leave it out.
       - name: tauri build
         working-directory: crates/ui/frontend
         env:
           TAURI_APP_PATH: ../src-tauri
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: >-
+            ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         # TAURI_EXTRA_CONFIG is unquoted on purpose: empty, or two words.
         run: >-
           npm run tauri -- build --ci --target "${{ matrix.target }}"
-          --config ../src-tauri/tauri.bundle.conf.json $TAURI_EXTRA_CONFIG
+          --config ../src-tauri/tauri.bundle.conf.json
+          --config ../src-tauri/tauri.updater.conf.json $TAURI_EXTRA_CONFIG
 
       - name: Check the sidecar sits beside kakemono-ui
         run: |
@@ -229,8 +240,9 @@ jobs:
           }
 
       # Copies each bundle to dist/kakemono-<asset><suffix>, e.g.
-      # kakemono_0.2.0_aarch64.dmg -> kakemono-macos-arm64.dmg. The .app
-      # directory is not uploaded; the dmg carries it.
+      # kakemono_0.2.0_aarch64.dmg -> kakemono-macos-arm64.dmg, and its
+      # updater signature to the same name plus .sig. The .app directory is
+      # not uploaded; the dmg carries it, and the updater gets .app.tar.gz.
       - name: Name the bundles
         run: |
           bundle="target/${{ matrix.target }}/release/bundle"
@@ -239,14 +251,22 @@ jobs:
           # Quoted: the globs expand inside the bundle folder, not here.
           for pair in 'dmg/*.dmg:.dmg' 'deb/*.deb:.deb' 'rpm/*.rpm:.rpm' \
             'appimage/*.AppImage:.AppImage' 'msi/*.msi:.msi' \
-            'nsis/*.exe:-setup.exe'; do
+            'nsis/*.exe:-setup.exe' 'macos/*.app.tar.gz:.app.tar.gz'; do
             files=("$bundle"/${pair%%:*})
             (( ${#files[@]} == 0 )) && continue
             if (( ${#files[@]} > 1 )); then
               echo "more than one ${pair%%:*}: ${files[*]}"
               exit 1
             fi
-            cp -- "${files[0]}" "dist/kakemono-${{ matrix.asset }}${pair#*:}"
+            dest="dist/kakemono-${{ matrix.asset }}${pair#*:}"
+            cp -- "${files[0]}" "$dest"
+            if [[ "${pair#*:}" != .dmg ]]; then
+              [[ -s "${files[0]}.sig" ]] || {
+                echo "no updater signature ${files[0]}.sig"
+                exit 1
+              }
+              cp -- "${files[0]}.sig" "$dest.sig"
+            fi
           done
           ls -l dist
 
@@ -264,10 +284,21 @@ jobs:
     permissions:
       contents: write
     steps:
+      # For scripts/updater-manifest.sh.
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+
+      # The manifest installed apps read to find this release. It fails if
+      # an updatable asset or its signature is missing.
+      - name: latest.json
+        run: |
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download"
+          bash scripts/updater-manifest.sh dist "${GITHUB_REF_NAME#v}" \
+            "$base/$GITHUB_REF_NAME"
 
       - name: SHA256SUMS
         working-directory: dist

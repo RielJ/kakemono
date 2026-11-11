@@ -35,6 +35,8 @@ pub enum ErrorKind {
     CliFailed,
     CliOutput,
     Autostart,
+    /// Checking for, downloading or installing an app update failed.
+    Update,
 }
 
 /// What a failed command sends the frontend.

@@ -44,4 +44,7 @@ pub const COMMANDS: &[&str] = &[
     "reset_picker_position",
     "picker_resize_begin",
     "picker_resize",
+    "check_update",
+    "install_update",
+    "open_update_page",
 ];

@@ -39,6 +39,8 @@ fn export_all(dir: &Path) {
     kakemono_ui::commands::SaveOutcome::export_all(&cfg).expect("export SaveOutcome");
     kakemono_ui::commands::AppInfo::export_all(&cfg).expect("export AppInfo");
     kakemono_ui::commands::Thumbnail::export_all(&cfg).expect("export Thumbnail");
+    kakemono_ui::updater::UpdateInfo::export_all(&cfg).expect("export UpdateInfo");
+    kakemono_ui::updater::UpdateProgress::export_all(&cfg).expect("export UpdateProgress");
     kakemono_ui::commands::PickerTab::export_all(&cfg).expect("export PickerTab");
     kakemono_ui::commands::TabListing::export_all(&cfg).expect("export TabListing");
     kakemono_ui::commands_sources::BrowseListing::export_all(&cfg).expect("export BrowseListing");

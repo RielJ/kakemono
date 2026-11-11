@@ -106,6 +106,16 @@ On Windows, unzip `kakemono-cli-windows-x64.zip` and put `kakemono.exe` on your 
 
 To check a download, fetch `SHA256SUMS` from the same release and run `shasum -a 256 -c SHA256SUMS --ignore-missing`.
 
+### Updates
+
+The app checks for a new release when you open Settings, and again when you come back to it after an hour or more. When one is out, a banner at the top of Settings shows the new version:
+
+- **Update** downloads the new version, checks its signature, installs it, and restarts kakemono. The daemon stops for the install, and the new app starts it again.
+- **What's new** opens the release page.
+- **Later** hides the banner until the next version.
+
+On Linux, updating a `.deb` or `.rpm` install asks for your password, because the package installs system-wide. A build that is not from a release package, such as one from `cargo build`, links to the release page instead. The command-line tool on its own does not update itself: download the new archive.
+
 ### Build from source
 
 kakemono builds with stable Rust 1.99 or newer. For the command-line tool and daemon only:
@@ -172,6 +182,7 @@ Every command takes `--config <PATH>` and `--socket <PATH>`. `kakemono <command>
 | Command | What it does |
 |---|---|
 | `daemon` | Starts the daemon in the background. `-f`, `--foreground` keeps it in the terminal. The daemon refuses to start twice. |
+| `quit` | Stops the daemon after it saves its state. The login service restarts only a daemon that failed, so it stays stopped until the next login or `kakemono daemon`. |
 | `next` | Sets the next wallpaper: forward in the history, or a new download at the end of it. |
 | `prev` | Sets the previous wallpaper from the history. |
 | `set <IMAGE-PATH>` | Sets an image file as the wallpaper. |

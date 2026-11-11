@@ -35,6 +35,7 @@ tauri-plugin-single-instance.workspace = true
 tauri-plugin-autostart.workspace = true
 tauri-plugin-dialog.workspace = true
 tauri-plugin-opener.workspace = true
+tauri-plugin-updater.workspace = true
 tokio.workspace = true
 futures.workspace = true
 serde.workspace = true

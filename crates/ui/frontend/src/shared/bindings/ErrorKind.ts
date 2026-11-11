@@ -4,4 +4,4 @@
  * Stable machine-readable error kind. The frontend branches on a few of these
  * (`daemon_not_running`, `daemon_unreachable`); the rest pick the wording.
  */
-export type ErrorKind = "daemon_not_running" | "daemon_unreachable" | "daemon_timeout" | "daemon" | "config" | "invalid" | "io" | "opener" | "internal" | "cli_not_found" | "cli_failed" | "cli_output" | "autostart";
+export type ErrorKind = "daemon_not_running" | "daemon_unreachable" | "daemon_timeout" | "daemon" | "config" | "invalid" | "io" | "opener" | "internal" | "cli_not_found" | "cli_failed" | "cli_output" | "autostart" | "update";

@@ -9,7 +9,7 @@
  * (`./bindings`); do not redeclare them here.
  */
 
-import { invoke } from '@tauri-apps/api/core'
+import { Channel, invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
@@ -37,6 +37,8 @@ import type { StatusData } from './bindings/StatusData'
 import type { TabListing } from './bindings/TabListing'
 import type { Thumbnail } from './bindings/Thumbnail'
 import type { WallpaperInfo } from './bindings/WallpaperInfo'
+import type { UpdateInfo } from './bindings/UpdateInfo'
+import type { UpdateProgress } from './bindings/UpdateProgress'
 import type { WireError } from './bindings/WireError'
 
 export type {
@@ -62,6 +64,8 @@ export type {
   TabListing,
   Thumbnail,
   UnlistenFn,
+  UpdateInfo,
+  UpdateProgress,
   WallpaperInfo,
 }
 
@@ -318,6 +322,28 @@ export function detectDesktop(write: boolean): Promise<string> {
  */
 export function startDaemon(): Promise<boolean> {
   return invoke<boolean>('ensure_daemon')
+}
+
+// ── App updates (src-tauri/src/updater.rs) ──────────────────────────────────
+
+/** The newer release, or `null` when this is the newest version. */
+export function checkUpdate(): Promise<UpdateInfo | null> {
+  return invoke<UpdateInfo | null>('check_update')
+}
+
+/**
+ * Downloads and installs the update found by the last `checkUpdate`, then restarts the app, so
+ * on success the promise never settles. Rejects when any step fails.
+ */
+export function installUpdate(onProgress: (progress: UpdateProgress) => void): Promise<void> {
+  const progress = new Channel<UpdateProgress>()
+  progress.onmessage = onProgress
+  return invoke<void>('install_update', { progress })
+}
+
+/** Opens the release page of the update found by the last check, in the browser. */
+export function openUpdatePage(): Promise<void> {
+  return invoke<void>('open_update_page')
 }
 
 // ── Start at login ──────────────────────────────────────────────────────────
