@@ -29,6 +29,6 @@ fn unset_optional_fields_serialise_as_null() {
 fn source_type_is_sent_under_the_key_type() {
     let json = serde_json::to_value(Config::default()).expect("serialise");
     let row = &json["sources"][0];
-    assert_eq!(row["type"], Value::from("bing"));
+    assert_eq!(row["type"], Value::from("wallhaven"));
     assert_eq!(row.get("kind"), None);
 }

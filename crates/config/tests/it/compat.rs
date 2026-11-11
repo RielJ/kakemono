@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use crate::tilde_expanded;
 use kakemono_config::load::{load_or_default_with_home, load_with_home, parse_str};
 use kakemono_config::{
-    Backend, CommandSpec, Config, Fit, ManagedBy, PickerPlacement, PickerPosition, ThemeOverride,
-    defaults_for_home,
+    Backend, CommandSpec, Config, Fit, ManagedBy, PickerPlacement, PickerPosition, SourceType,
+    ThemeOverride, defaults_for_home,
 };
 
 const HOME: &str = "/home/golden";
@@ -58,10 +58,45 @@ fn default_values_spelled_out() {
     );
     assert!(d.daemon.rotate_on_theme_change);
     assert!(!d.daemon.reapply_on_space_change);
-    assert!(
-        d.sources
-            .iter()
-            .any(|s| s.kind == kakemono_config::SourceType::Bing && s.enabled)
+    // A fresh install shows Wallhaven's hot and top lists, plus the favorites folder.
+    let rows: Vec<_> = d
+        .sources
+        .iter()
+        .map(|s| {
+            (
+                s.id.as_str(),
+                s.name.as_str(),
+                s.kind,
+                s.location.as_str(),
+                s.enabled,
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (
+                "wh-hot",
+                "Wallhaven hot",
+                SourceType::Wallhaven,
+                "https://wallhaven.cc/hot",
+                true
+            ),
+            (
+                "wh-top",
+                "Wallhaven top",
+                SourceType::Wallhaven,
+                "https://wallhaven.cc/toplist",
+                true
+            ),
+            (
+                "favorites",
+                "",
+                SourceType::Folder,
+                "/home/golden/Pictures/Wallpapers/favorites",
+                true
+            ),
+        ]
     );
     assert_eq!(d.bing.market, "en-US");
     assert_eq!(d.apod.api_key, "DEMO_KEY");

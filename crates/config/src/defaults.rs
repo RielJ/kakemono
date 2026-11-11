@@ -88,21 +88,33 @@ pub fn defaults_for_home(home: &Path) -> Config {
     }
 }
 
-/// The rows a fresh install starts with: Bing, Wallhaven "nature" and the favorites folder, all
-/// enabled.
+/// The rows a fresh install starts with, all enabled: Wallhaven's hot and top lists, and the
+/// favorites folder. The URLs set only the sorting, so `[wallhaven]` purity (SFW) and categories
+/// still apply.
 pub fn default_sources(favorites: &Path) -> Vec<SourceEntry> {
-    let row = |id: &str, kind, location: &str| SourceEntry {
+    let row = |id: &str, name: &str, kind, location: &str| SourceEntry {
         id: id.to_owned(),
+        name: name.to_owned(),
         enabled: true,
         kind,
         location: location.to_owned(),
-        ..Default::default()
     };
     vec![
-        row("bing", SourceType::Bing, ""),
-        row("wh-nature", SourceType::Wallhaven, "nature"),
+        row(
+            "wh-hot",
+            "Wallhaven hot",
+            SourceType::Wallhaven,
+            "https://wallhaven.cc/hot",
+        ),
+        row(
+            "wh-top",
+            "Wallhaven top",
+            SourceType::Wallhaven,
+            "https://wallhaven.cc/toplist",
+        ),
         row(
             "favorites",
+            "",
             SourceType::Folder,
             &favorites.to_string_lossy(),
         ),

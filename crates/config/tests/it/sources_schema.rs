@@ -143,8 +143,18 @@ fn missing_sources_gives_the_three_default_rows() {
     assert_eq!(
         cfg.sources,
         vec![
-            row("bing", SourceType::Bing, ""),
-            row("wh-nature", SourceType::Wallhaven, "nature"),
+            SourceEntry {
+                name: "Wallhaven hot".into(),
+                ..row("wh-hot", SourceType::Wallhaven, "https://wallhaven.cc/hot")
+            },
+            SourceEntry {
+                name: "Wallhaven top".into(),
+                ..row(
+                    "wh-top",
+                    SourceType::Wallhaven,
+                    "https://wallhaven.cc/toplist"
+                )
+            },
             row(
                 "favorites",
                 SourceType::Folder,

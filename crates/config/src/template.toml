@@ -61,7 +61,7 @@ api_key = "DEMO_KEY"
 
 # --- Sources ---
 # One [[sources]] block per source. Several blocks of the same type are allowed.
-# Without any [[sources]] blocks kakemono uses Bing, Wallhaven "nature" and the favorites folder.
+# Without any [[sources]] blocks kakemono uses Wallhaven's hot and top lists and the favorites folder.
 # type: wallhaven | unsplash | reddit | bing | apod | folder | images | album-name | album-date
 # location: search keywords or URL, a subreddit, a path (~ allowed), or "" for bing and apod.
 # id: letters a-z, digits and "-" (at most 32); names the download folder downloads/<id>/.
