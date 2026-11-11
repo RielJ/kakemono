@@ -369,6 +369,15 @@ cargo clippy --workspace --all-targets -- -D warnings
 cd crates/ui/frontend && npm ci && npm test && npm run build
 ```
 
+`scripts/gate.sh full` runs the Rust checks that CI runs, plus cross-target clippy. To run CI's Linux and Windows jobs from a Mac before you push:
+
+| Script | What it runs | Needs |
+|---|---|---|
+| `scripts/linux-check.sh` | The Rust tests, the frontend checks, and a `.deb` build, in an Ubuntu 24.04 container | Docker |
+| `scripts/windows-check.sh` | Clippy and the Rust tests in a Windows 11 ARM64 VM | QEMU (`brew install qemu`) and about 60 GB of disk |
+
+To create the Windows VM, download the Windows 11 ARM64 ISO from [Microsoft](https://www.microsoft.com/software-download/windows11arm64), then run `scripts/windows-vm/vm.sh install <iso>` and `scripts/windows-vm/vm.sh setup`. Both run unattended and take about an hour in total. The VM is in `~/VMs/kakemono-win`. To remove it, run `vm.sh destroy`. Run either script with `--help` to see its options.
+
 | Crate | Contents |
 |---|---|
 | `crates/cli` | The `kakemono` binary: commands and the daemon host |
