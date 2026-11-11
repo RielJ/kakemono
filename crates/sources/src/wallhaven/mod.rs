@@ -48,8 +48,12 @@ const MEDIA_HOSTS: &[&str] = &["wallhaven.cc"];
 
 use crate::http::{REDACTED, redact_url};
 
-/// Per-instance search options that replace the `[wallhaven]` values, taken from a pasted
-/// `wallhaven.cc` URL. `None` (or an empty string) keeps the config value.
+/// Per-instance search options taken from a pasted `wallhaven.cc` URL.
+///
+/// `categories`, `purity` and `sorting` replace the `[wallhaven]` values; `None` (or an empty
+/// string) keeps the config value. The other fields have no config value: when set (and not
+/// empty) they are sent as the Wallhaven search parameter of the same name, as is, and when
+/// `None` the parameter is not sent. Wallhaven checks the values itself.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WallhavenOverrides {
     /// `categories`, e.g. `"100"` (general only).
@@ -58,6 +62,19 @@ pub struct WallhavenOverrides {
     pub purity: Option<String>,
     /// `sorting`, e.g. `"toplist"`.
     pub sorting: Option<String>,
+    /// `topRange`: `1d`, `3d`, `1w`, `1M`, `3M`, `6M` or `1y`. Wallhaven uses it only with
+    /// `sorting=toplist`.
+    pub top_range: Option<String>,
+    /// `order`: `desc` or `asc`.
+    pub order: Option<String>,
+    /// `atleast`: minimum resolution, e.g. `2560x1440`.
+    pub atleast: Option<String>,
+    /// `resolutions`: exact resolutions, e.g. `1920x1080,2560x1440`.
+    pub resolutions: Option<String>,
+    /// `ratios`: aspect ratios, e.g. `16x9,16x10` or `landscape`.
+    pub ratios: Option<String>,
+    /// `colors`: a hex color without `#`, e.g. `0066cc`.
+    pub colors: Option<String>,
 }
 
 /// The Wallhaven provider. `Debug` shows `api_key` as [`REDACTED`] when it is set.
@@ -67,6 +84,9 @@ pub struct Wallhaven {
     purity: String,
     sorting: String,
     categories: String,
+    /// Search parameters from a pasted URL with no config value (`topRange`, `order`, ...),
+    /// sent as is by both modes. Empty unless [`Wallhaven::apply_overrides`] set some.
+    extra_params: Vec<(&'static str, String)>,
     base_url: url::Url,
     scrape_delay: Duration,
     client: Client,
@@ -98,23 +118,43 @@ impl Wallhaven {
             purity: or_default(cfg.purity, DEFAULT_PURITY),
             sorting: or_default(cfg.sorting, DEFAULT_SORTING),
             categories: or_default(cfg.categories, DEFAULT_CATEGORIES),
+            extra_params: Vec::new(),
             base_url,
             scrape_delay: DEFAULT_SCRAPE_DELAY,
             client,
         }
     }
 
-    /// Replaces `categories`, `purity` and `sorting` with the non-empty values in `overrides`.
+    /// Replaces `categories`, `purity` and `sorting` with the non-empty values in `overrides`,
+    /// and sends its other non-empty values (`topRange`, `order`, `atleast`, `resolutions`,
+    /// `ratios`, `colors`) with every search request.
     #[must_use]
     pub fn apply_overrides(mut self, overrides: &WallhavenOverrides) -> Self {
+        fn set(value: &Option<String>) -> Option<&str> {
+            value.as_deref().filter(|v| !v.is_empty())
+        }
         let pick = |slot: &mut String, value: &Option<String>| {
-            if let Some(v) = value.as_deref().filter(|v| !v.is_empty()) {
+            if let Some(v) = set(value) {
                 v.clone_into(slot);
             }
         };
         pick(&mut self.categories, &overrides.categories);
         pick(&mut self.purity, &overrides.purity);
         pick(&mut self.sorting, &overrides.sorting);
+        let extras = [
+            ("topRange", &overrides.top_range),
+            ("order", &overrides.order),
+            ("atleast", &overrides.atleast),
+            ("resolutions", &overrides.resolutions),
+            ("ratios", &overrides.ratios),
+            ("colors", &overrides.colors),
+        ];
+        for (key, value) in extras {
+            self.extra_params.retain(|(k, _)| *k != key);
+            if let Some(v) = set(value) {
+                self.extra_params.push((key, v.to_owned()));
+            }
+        }
         self
     }
 
@@ -131,8 +171,8 @@ impl Wallhaven {
         !self.api_key.is_empty()
     }
 
-    /// The search parameters both modes send (`purity`, `sorting`, `categories`, and `q` when
-    /// `query` is not empty).
+    /// The search parameters both modes send (`purity`, `sorting`, `categories`, `q` when
+    /// `query` is not empty, and the URL options set by [`Wallhaven::apply_overrides`]).
     fn search_params<'a>(&'a self, query: &'a str) -> Vec<(&'a str, &'a str)> {
         let mut params = vec![
             ("sorting", self.sorting.as_str()),
@@ -142,6 +182,7 @@ impl Wallhaven {
         if !query.is_empty() {
             params.push(("q", query));
         }
+        params.extend(self.extra_params.iter().map(|(k, v)| (*k, v.as_str())));
         params
     }
 
@@ -204,6 +245,7 @@ impl std::fmt::Debug for Wallhaven {
             .field("purity", &self.purity)
             .field("sorting", &self.sorting)
             .field("categories", &self.categories)
+            .field("extra_params", &self.extra_params)
             .field("base_url", &self.base_url.as_str())
             .field("scrape_delay", &self.scrape_delay)
             .finish_non_exhaustive()
