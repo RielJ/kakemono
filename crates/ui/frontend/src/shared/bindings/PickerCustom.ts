@@ -8,4 +8,4 @@ export type PickerCustom = { x: number, y: number, monitor: string,
  * Length of the strip along its direction, in physical px, after the user resized it.
  * 0 (the default, left out of the file) means the length of the edge strip.
  */
-length: number, };
+length?: number, };

@@ -385,6 +385,7 @@ pub struct PickerCustom {
     /// Length of the strip along its direction, in physical px, after the user resized it.
     /// 0 (the default, left out of the file) means the length of the edge strip.
     #[serde(skip_serializing_if = "is_zero")]
+    #[ts(optional, as = "Option<u32>")]
     pub length: u32,
 }
 
