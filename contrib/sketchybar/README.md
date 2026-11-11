@@ -74,7 +74,6 @@ To test the hook, run `kakemono next`. The label changes when the new wallpaper 
 ## How it works
 
 - After every wallpaper change (a timed rotation, `next`, `prev`, `set`, `trash`, or a light or dark switch with `rotate_on_theme_change` on), the daemon runs the `on_change` argv. It runs the command directly, with no shell, and does not wait for it. A hook that fails or runs longer than 10 seconds is logged as a warning and does not affect the wallpaper.
-- `on_change` replaces Go wallpaperd's `[sketchybar]` section. The Go daemon never fired the trigger, and kakemono ignores `[sketchybar]`.
 - `wallpaper.sh` runs `kakemono status --json` and builds the label from `.current.title`, `.current.source`, `.paused`, and `.theme`. When the daemon isn't running, `status` exits with code 1 and the label shows "No daemon".
 - Pause and resume don't change the wallpaper, so the hook doesn't fire for them. `wallpaper_popup.sh` fires `wallpaper_changed` itself after it pauses or resumes.
 - The hook gets these environment variables, so a script can use them instead of calling `status`: `KAKEMONO_PATH`, `KAKEMONO_SOURCE`, `KAKEMONO_TITLE`, `KAKEMONO_AUTHOR`, `KAKEMONO_SOURCE_URL`, and `KAKEMONO_THEME`. The argv can also use the placeholders `{path}`, `{uri}`, `{fit}`, and `{theme}`.

@@ -63,7 +63,7 @@ On start, the daemon detects the backend and writes it to `[desktop]` with `dete
 - `backend` is already pinned for this session (step 1 above);
 - the detected backend can't set a wallpaper (unconfigured, or `command` without `set_command`);
 - `set_command` is set and the detected backend is not `command`;
-- the config is the legacy `~/.config/wallpaperd/config.toml`.
+- the config is a legacy file that kakemono reads but doesn't write.
 
 `kakemono detect --write` saves the detected backend from your shell. It refuses a section with `managed_by = "user"` unless you pass `--force`, and it refuses the legacy config. Run `kakemono config init` first in that case.
 

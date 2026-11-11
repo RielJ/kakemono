@@ -4,7 +4,7 @@ kakemono is a wallpaper manager for macOS, Linux, and Windows. A small daemon do
 
 The `kakemono` binary is both the daemon and the command-line client. The kakemono app adds a menu-bar (tray) icon, a thumbnail picker for browsing and setting wallpapers, and a settings window.
 
-kakemono replaces the Go `wallpaperd`, and reads its config and history. To switch, follow [docs/migration.md](docs/migration.md).
+![Demo: turn on a Wallhaven source in Settings, open the picker, and click a preview to set it as the wallpaper.](docs/demo.gif)
 
 ## Install
 
@@ -197,8 +197,7 @@ kakemono reads the first config file that it finds:
 
 1. `--config <PATH>`;
 2. `$KAKEMONO_CONFIG`;
-3. `~/.config/kakemono/config.toml` (`$XDG_CONFIG_HOME/kakemono/config.toml` if set; `%APPDATA%\kakemono\config.toml` on Windows);
-4. the wallpaperd config, `~/.config/wallpaperd/config.toml`.
+3. `~/.config/kakemono/config.toml` (`$XDG_CONFIG_HOME/kakemono/config.toml` if set; `%APPDATA%\kakemono\config.toml` on Windows).
 
 With no file, kakemono uses the defaults below. `kakemono config init` writes a commented config, with some example values that differ from the defaults. The daemon reads the config when it starts. After you edit the file, restart the daemon or send it `reload` (see [Talk to the daemon over the socket](#talk-to-the-daemon-over-the-socket)).
 
@@ -214,7 +213,11 @@ kakemono ignores unknown keys. A section with some keys missing uses the default
 | `trash_dir` | `"~/Pictures/Wallpapers/trash"` | Where `trash` moves files. |
 | `socket_path` | unset | The daemon socket. Unset means the platform default (see [Files](#files)). Ignored on Windows. |
 | `rotate_on_theme_change` | `true` | Set a new wallpaper when the system switches between light and dark mode. |
-| `reapply_on_space_change` | `false` | macOS: set the current wallpaper again when you switch Spaces. See [docs/migration.md](docs/migration.md#spaces-get-the-wallpaper-only-when-they-are-current). |
+| `reapply_on_space_change` | `false` | macOS: set the current wallpaper again when you switch Spaces. See [Spaces on macOS](#spaces-on-macos). |
+
+#### Spaces on macOS
+
+macOS has no API that sets the wallpaper on every Space. kakemono sets it on the current Space of each screen, and the other Spaces keep their old wallpaper. With `reapply_on_space_change = true`, each Space gets the current wallpaper when you switch to it. The option is off by default because setting the wallpaper again turns off **Show on all Spaces** in System Settings.
 
 ### Change and download settings in `[daemon]`
 
@@ -270,7 +273,7 @@ Settings shared by every row of a type go in a section named after the type:
 
 Wallhaven works without an API key. `purity` is three digits for SFW, sketchy, and NSFW. `categories` is three digits for general, anime, and people. `sorting` is one of `random`, `toplist`, `date_added`, `relevance`, `views`, `favorites`, and `hot`.
 
-Config files from older versions, with `[light]`, `[dark]`, and an `enabled` key per provider, are converted to `[[sources]]` rows on the first start. [docs/migration.md](docs/migration.md#sources-list-2026-07) describes the conversion.
+Config files from older versions, with `[light]`, `[dark]`, and an `enabled` key per provider, are converted to `[[sources]]` rows on the first start. The original file is kept next to the new one as `config.toml.bak`.
 
 ### `[filters]`
 
