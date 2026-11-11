@@ -102,7 +102,12 @@ export default function ThumbnailStrip({ tab, vertical, notices }: StripProps) {
         setHasMore(page.hasMore)
         setLoadError(null)
         const shown = page.items.filter((t) => t.path !== pending.current?.path)
-        setActive(Math.max(0, shown.findIndex((t) => t.isCurrent)))
+        setActive(
+          Math.max(
+            0,
+            shown.findIndex((t) => t.isCurrent),
+          ),
+        )
         // Same tick as the items: a later `.finally` would let React commit the items while
         // still loading, leaving the sentinel unobserved for that commit.
         setLoading(false)
@@ -407,6 +412,7 @@ function Option({ id, thumb, active, onClick, onContextMenu }: OptionProps) {
   const [broken, setBroken] = useState(false)
   const label = optionLabel(thumb)
   return (
+    // oxlint-disable-next-line jsx-a11y/click-events-have-key-events -- the listbox handles keys (aria-activedescendant)
     <div
       id={id}
       role="option"
@@ -418,7 +424,14 @@ function Option({ id, thumb, active, onClick, onContextMenu }: OptionProps) {
       onContextMenu={onContextMenu}
     >
       {thumb.imageUrl && !broken ? (
-        <img src={thumb.imageUrl} alt="" loading="lazy" decoding="async" draggable={false} onError={() => setBroken(true)} />
+        <img
+          src={thumb.imageUrl}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          draggable={false}
+          onError={() => setBroken(true)}
+        />
       ) : (
         <span className="placeholder">
           <Icon name="image" />

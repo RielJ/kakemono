@@ -78,11 +78,7 @@ export type DiskTab = PickerTab
  */
 export type ConfigPatch = Patch<Config>
 
-type Patch<T> = T extends readonly unknown[]
-  ? T
-  : T extends object
-    ? { [K in keyof T]?: Patch<T[K]> | null }
-    : T
+type Patch<T> = T extends readonly unknown[] ? T : T extends object ? { [K in keyof T]?: Patch<T[K]> | null } : T
 
 /**
  * How a backend command fails: `WireError` from `src-tauri/src/error.rs`, the one shape every

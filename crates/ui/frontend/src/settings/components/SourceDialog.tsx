@@ -83,10 +83,11 @@ export default function SourceDialog({
   }
 
   useEffect(() => {
-    // Once, even when React runs effects twice in development.
+    // Once, on mount, even when React runs effects twice in development.
     if (pick === null || editing || autoPicked.current) return
     autoPicked.current = true
     void choose(true)
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- opens the picker once, on mount
   }, [])
 
   const submit = (e: FormEvent) => {
@@ -109,7 +110,11 @@ export default function SourceDialog({
             </label>
             <div className="flex items-center gap-1.5">
               {many.length > 0 ? (
-                <ul id={fieldId} aria-label={prompt} className="flex-1 min-w-0 max-h-28 overflow-y-auto field h-auto py-1 field-mono">
+                <ul
+                  id={fieldId}
+                  aria-label={prompt}
+                  className="flex-1 min-w-0 max-h-28 overflow-y-auto field h-auto py-1 field-mono"
+                >
                   {many.map((p) => (
                     <li key={p} className="truncate" title={p}>
                       {baseName(p)}

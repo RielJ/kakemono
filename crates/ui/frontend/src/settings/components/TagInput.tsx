@@ -38,7 +38,10 @@ export default function TagInput({
       {values.length > 0 && (
         <ul id={listId} className="contents" aria-label={label.replace(/^Add /, '')}>
           {values.map((v) => (
-            <li key={v} className="inline-flex items-center gap-0.5 h-6 pl-2 pr-0.5 rounded-[5px] bg-pressed max-w-full">
+            <li
+              key={v}
+              className="inline-flex items-center gap-0.5 h-6 pl-2 pr-0.5 rounded-[5px] bg-pressed max-w-full"
+            >
               <span className="truncate text-[12px]">{v}</span>
               <button
                 type="button"
@@ -65,7 +68,7 @@ export default function TagInput({
           }
         }}
         onBlur={add}
-        placeholder={values.length === 0 ? placeholder ?? 'Add…' : 'Add…'}
+        placeholder={values.length === 0 ? (placeholder ?? 'Add…') : 'Add…'}
         aria-label={label}
         aria-describedby={describedBy}
         aria-controls={values.length > 0 ? listId : undefined}

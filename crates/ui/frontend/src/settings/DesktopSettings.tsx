@@ -226,20 +226,20 @@ export default function DesktopSettings({
           <InUse view={view} savedDesktop={saved} os={os} />
         </div>
         {os === 'macos' && (
-            <Row
-              label="Keep wallpaper on every Space"
-              hint="Sets the wallpaper again when you switch Spaces. Turns off 'Show on all Spaces' in System Settings."
-            >
-              {({ labelId, hintId }) => (
-                <Toggle
-                  enabled={config.daemon.reapply_on_space_change}
-                  onChange={(v) => onChange({ ...config, daemon: { ...config.daemon, reapply_on_space_change: v } })}
-                  labelledBy={labelId}
-                  describedBy={hintId}
-                />
-              )}
-            </Row>
-          )}
+          <Row
+            label="Keep wallpaper on every Space"
+            hint="Sets the wallpaper again when you switch Spaces. Turns off 'Show on all Spaces' in System Settings."
+          >
+            {({ labelId, hintId }) => (
+              <Toggle
+                enabled={config.daemon.reapply_on_space_change}
+                onChange={(v) => onChange({ ...config, daemon: { ...config.daemon, reapply_on_space_change: v } })}
+                labelledBy={labelId}
+                describedBy={hintId}
+              />
+            )}
+          </Row>
+        )}
       </Group>
     )
   }
@@ -283,7 +283,10 @@ export default function DesktopSettings({
             </p>
           )}
         </div>
-        <Row label="Backend" hint={pinned ? 'Pinned: detection never changes it.' : 'Detection may replace it when the session changes.'}>
+        <Row
+          label="Backend"
+          hint={pinned ? 'Pinned: detection never changes it.' : 'Detection may replace it when the session changes.'}
+        >
           {({ labelId, hintId }) => (
             <select
               value={desktop.backend}
@@ -334,14 +337,24 @@ export default function DesktopSettings({
               onChange={(next) => set('set_command', normalizeArgv(next))}
               error={commandError}
               hintId={commandHintId}
-              emptyText={desktop.backend === 'command' ? 'No command yet. Add the program first.' : 'No custom command.'}
+              emptyText={
+                desktop.backend === 'command' ? 'No command yet. Add the program first.' : 'No custom command.'
+              }
             />
           </div>
         )}
         {showPersistent && (
-          <Row label="Keep running" hint="For setters that must stay open, like swaybg. kakemono restarts it on each change.">
+          <Row
+            label="Keep running"
+            hint="For setters that must stay open, like swaybg. kakemono restarts it on each change."
+          >
             {({ labelId, hintId }) => (
-              <Toggle enabled={desktop.persistent} onChange={(v) => set('persistent', v)} labelledBy={labelId} describedBy={hintId} />
+              <Toggle
+                enabled={desktop.persistent}
+                onChange={(v) => set('persistent', v)}
+                labelledBy={labelId}
+                describedBy={hintId}
+              />
             )}
           </Row>
         )}
@@ -387,12 +400,7 @@ export default function DesktopSettings({
             </p>
           )}
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void runDetect()}
-              disabled={detect.kind === 'running'}
-              className="btn"
-            >
+            <button type="button" onClick={() => void runDetect()} disabled={detect.kind === 'running'} className="btn">
               Re-detect
             </button>
             <button

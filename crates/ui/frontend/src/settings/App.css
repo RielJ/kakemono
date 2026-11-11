@@ -125,8 +125,13 @@ textarea {
   }
 }
 
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
 ::-webkit-scrollbar-thumb {
   background-clip: padding-box;
   background-color: var(--c-line-strong);
@@ -148,13 +153,27 @@ textarea {
     border: 1px solid var(--c-line-strong);
     color: var(--c-text);
     outline: none;
-    transition: border-color 120ms ease-out, box-shadow 120ms ease-out;
+    transition:
+      border-color 120ms ease-out,
+      box-shadow 120ms ease-out;
   }
-  .field::placeholder { color: var(--c-faint); }
-  .field:focus { border-color: var(--c-accent); box-shadow: 0 0 0 3px var(--c-accent-soft); }
-  .field:disabled { opacity: 0.5; }
-  .field[aria-invalid="true"] { border-color: var(--c-danger); }
-  .field-mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+  .field::placeholder {
+    color: var(--c-faint);
+  }
+  .field:focus {
+    border-color: var(--c-accent);
+    box-shadow: 0 0 0 3px var(--c-accent-soft);
+  }
+  .field:disabled {
+    opacity: 0.5;
+  }
+  .field[aria-invalid="true"] {
+    border-color: var(--c-danger);
+  }
+  .field-mono {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px;
+  }
 
   select.field {
     @apply appearance-none pr-7 bg-no-repeat;
@@ -169,25 +188,41 @@ textarea {
     background: var(--c-raised);
     color: var(--c-text);
     box-shadow: var(--shadow-raised);
-    transition: background-color 100ms ease-out, opacity 100ms ease-out;
+    transition:
+      background-color 100ms ease-out,
+      opacity 100ms ease-out;
   }
-  .btn:hover:not(:disabled) { background: color-mix(in srgb, var(--c-raised) 92%, var(--c-text)); }
-  .btn:active:not(:disabled) { background: color-mix(in srgb, var(--c-raised) 86%, var(--c-text)); }
-  .btn:disabled { opacity: 0.45; }
+  .btn:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--c-raised) 92%, var(--c-text));
+  }
+  .btn:active:not(:disabled) {
+    background: color-mix(in srgb, var(--c-raised) 86%, var(--c-text));
+  }
+  .btn:disabled {
+    opacity: 0.45;
+  }
 
   .btn-accent {
     background: var(--c-accent);
     color: var(--c-accent-text);
   }
-  .btn-accent:hover:not(:disabled) { background: color-mix(in srgb, var(--c-accent) 88%, black); }
-  .btn-accent:active:not(:disabled) { background: color-mix(in srgb, var(--c-accent) 80%, black); }
+  .btn-accent:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--c-accent) 88%, black);
+  }
+  .btn-accent:active:not(:disabled) {
+    background: color-mix(in srgb, var(--c-accent) 80%, black);
+  }
 
   .btn-plain {
     @apply inline-flex items-center justify-center gap-1.5 h-7 px-2 rounded-md text-[13px] font-medium;
     color: var(--c-accent);
   }
-  .btn-plain:hover:not(:disabled) { background: var(--c-accent-soft); }
-  .btn-plain:disabled { opacity: 0.45; }
+  .btn-plain:hover:not(:disabled) {
+    background: var(--c-accent-soft);
+  }
+  .btn-plain:disabled {
+    opacity: 0.45;
+  }
 }
 
 /* Native checkboxes in the accent colour. */
@@ -197,7 +232,12 @@ input[type="range"] {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { transition-duration: 0ms !important; animation-duration: 0ms !important; }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+  }
 }
 
 /* ── Sources table, Add… menu and source dialogs (General → Images) ─────────── */
@@ -288,32 +328,56 @@ input[type="range"] {
     flex-shrink: 0;
     background: var(--c-faint);
   }
-  .sources-status-ok .sources-dot { background: var(--c-ok); }
-  .sources-status-failed { color: var(--c-danger); }
-  .sources-status-failed .sources-dot { background: var(--c-danger); }
-  .sources-status-unknown .sources-dot { background: var(--c-warn); }
-  .sources-status-checking .sources-dot { animation: sources-pulse 1s ease-in-out infinite alternate; }
-  @keyframes sources-pulse { to { opacity: 0.3; } }
+  .sources-status-ok .sources-dot {
+    background: var(--c-ok);
+  }
+  .sources-status-failed {
+    color: var(--c-danger);
+  }
+  .sources-status-failed .sources-dot {
+    background: var(--c-danger);
+  }
+  .sources-status-unknown .sources-dot {
+    background: var(--c-warn);
+  }
+  .sources-status-checking .sources-dot {
+    animation: sources-pulse 1s ease-in-out infinite alternate;
+  }
+  @keyframes sources-pulse {
+    to {
+      opacity: 0.3;
+    }
+  }
   @media (prefers-reduced-motion: reduce) {
-    .sources-status-checking .sources-dot { animation: none; }
+    .sources-status-checking .sources-dot {
+      animation: none;
+    }
   }
 
   .btn-danger {
     background: var(--c-danger);
     color: #ffffff;
   }
-  .btn-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--c-danger) 88%, black); }
-  .btn-danger:active:not(:disabled) { background: color-mix(in srgb, var(--c-danger) 80%, black); }
+  .btn-danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--c-danger) 88%, black);
+  }
+  .btn-danger:active:not(:disabled) {
+    background: color-mix(in srgb, var(--c-danger) 80%, black);
+  }
 
   /* Add a source: two columns of choices (local, online) in a wider modal. */
-  .modal-panel.modal-wide { width: min(600px, 100%); }
+  .modal-panel.modal-wide {
+    width: min(600px, 100%);
+  }
   .add-grid {
     display: grid;
     grid-template-columns: 1fr;
     gap: 4px 16px;
     margin-top: 10px;
   }
-  .add-grid[data-columns="2"] { grid-template-columns: 1fr 1fr; }
+  .add-grid[data-columns="2"] {
+    grid-template-columns: 1fr 1fr;
+  }
   .add-group {
     padding: 0 10px 4px;
     font-size: 11px;
@@ -328,13 +392,18 @@ input[type="range"] {
     text-align: left;
     outline: none;
   }
-  .add-choice:hover { background: color-mix(in srgb, var(--c-line) 60%, transparent); }
+  .add-choice:hover {
+    background: color-mix(in srgb, var(--c-line) 60%, transparent);
+  }
   /* Choices take focus as the arrow keys move; the fill is the focus cue. */
   .add-choice:focus {
     background: var(--c-accent);
     color: var(--c-accent-text);
   }
-  .add-choice:focus .add-choice-desc { color: inherit; opacity: 0.85; }
+  .add-choice:focus .add-choice-desc {
+    color: inherit;
+    opacity: 0.85;
+  }
   .add-choice-desc {
     display: block;
     font-size: 12px;
@@ -352,9 +421,13 @@ input[type="range"] {
     padding: 24px;
     background: rgba(0, 0, 0, 0.18);
     transition: opacity 150ms cubic-bezier(0.23, 1, 0.32, 1);
-    @starting-style { opacity: 0; }
+    @starting-style {
+      opacity: 0;
+    }
   }
-  :root[data-theme="dark"] .modal-backdrop { background: rgba(0, 0, 0, 0.45); }
+  :root[data-theme="dark"] .modal-backdrop {
+    background: rgba(0, 0, 0, 0.45);
+  }
   .modal-panel {
     width: min(420px, 100%);
     max-height: calc(100vh - 48px);
@@ -363,8 +436,12 @@ input[type="range"] {
     border-radius: 12px;
     background: var(--c-window);
     border: 1px solid var(--c-line);
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2), 0 2px 6px rgba(0, 0, 0, 0.08);
-    transition: opacity 160ms cubic-bezier(0.23, 1, 0.32, 1), transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+    box-shadow:
+      0 12px 40px rgba(0, 0, 0, 0.2),
+      0 2px 6px rgba(0, 0, 0, 0.08);
+    transition:
+      opacity 160ms cubic-bezier(0.23, 1, 0.32, 1),
+      transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
     @starting-style {
       opacity: 0;
       transform: scale(0.97);

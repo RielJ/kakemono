@@ -71,7 +71,9 @@ describe('ArgvEditor', () => {
   })
 
   it('shows the validation message', () => {
-    render(<ArgvEditor label="Cmd" tokens={['x', '{bad}']} onChange={() => {}} error="Unknown placeholder" emptyText="" />)
+    render(
+      <ArgvEditor label="Cmd" tokens={['x', '{bad}']} onChange={() => {}} error="Unknown placeholder" emptyText="" />,
+    )
     expect(screen.getByRole('alert').textContent).toBe('Unknown placeholder')
     expect(screen.getByRole('textbox', { name: 'Cmd, token 2 of 2' }).getAttribute('aria-invalid')).toBe('true')
   })

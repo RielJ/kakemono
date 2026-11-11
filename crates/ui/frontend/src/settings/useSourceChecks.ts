@@ -33,7 +33,8 @@ export function useSourceChecks(sources: readonly SourceEntry[], internet: boole
 
   useEffect(() => {
     const live = new Set(sources.map((s) => s.id))
-    for (const id of [...keys.current.keys()]) if (!live.has(id)) keys.current.delete(id)
+    // Deleting the entry being visited is safe while iterating a Map.
+    for (const id of keys.current.keys()) if (!live.has(id)) keys.current.delete(id)
 
     const update = (id: string, key: string, check: SourceCheck) => {
       if (keys.current.get(id) !== key) return
@@ -50,12 +51,15 @@ export function useSourceChecks(sources: readonly SourceEntry[], internet: boole
       }
       update(s.id, key, { state: 'checking' })
       checkSource(s.type, s.location.trim()).then(
-        ({ count }) => update(s.id, key, count > 0 ? { state: 'ok', count } : { state: 'failed', message: 'No images found.' }),
+        ({ count }) =>
+          update(s.id, key, count > 0 ? { state: 'ok', count } : { state: 'failed', message: 'No images found.' }),
         (err: unknown) =>
           update(
             s.id,
             key,
-            isDaemonUnreachable(err) ? { state: 'unknown', message: UNREACHABLE } : { state: 'failed', message: errorMessage(err) },
+            isDaemonUnreachable(err)
+              ? { state: 'unknown', message: UNREACHABLE }
+              : { state: 'failed', message: errorMessage(err) },
           ),
       )
     }

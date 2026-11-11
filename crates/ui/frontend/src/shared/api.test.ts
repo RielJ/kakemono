@@ -123,7 +123,10 @@ describe('shared/api', () => {
     let reply: unknown = ['/p/a.jpg', '/p/b.png']
     const calls = recordIPC((cmd) => (cmd === 'plugin:dialog|open' ? reply : undefined))
     await expect(selectFiles()).resolves.toEqual(['/p/a.jpg', '/p/b.png'])
-    expect(calls[0]).toMatchObject({ cmd: 'plugin:dialog|open', args: { options: { directory: false, multiple: true } } })
+    expect(calls[0]).toMatchObject({
+      cmd: 'plugin:dialog|open',
+      args: { options: { directory: false, multiple: true } },
+    })
     reply = null
     await expect(selectFiles()).resolves.toEqual([])
     reply = '/p/c.webp'
@@ -216,7 +219,13 @@ describe('shared/api', () => {
   })
 
   it('sends current_thumbnail with no args and returns the entry or null', async () => {
-    const entry = { path: '/w/a.jpg', source: 'wallhaven', title: 'a', isCurrent: true, imageUrl: 'thumb://localhost/1' }
+    const entry = {
+      path: '/w/a.jpg',
+      source: 'wallhaven',
+      title: 'a',
+      isCurrent: true,
+      imageUrl: 'thumb://localhost/1',
+    }
     const calls = recordIPC(() => entry)
     await expect(currentThumbnail()).resolves.toEqual(entry)
     expect(calls).toEqual([{ cmd: 'current_thumbnail', args: {} }])
@@ -244,9 +253,7 @@ describe('shared/api', () => {
     const data = { path: '/d/wh-1/x.jpg', wallpaper: null }
     const calls = recordIPC(() => data)
     await expect(browseUse({ sourceId: 'wh-1', remoteId: 'x8e1k2', action: 'favorite' })).resolves.toEqual(data)
-    expect(calls).toEqual([
-      { cmd: 'browse_use', args: { sourceId: 'wh-1', remoteId: 'x8e1k2', action: 'favorite' } },
-    ])
+    expect(calls).toEqual([{ cmd: 'browse_use', args: { sourceId: 'wh-1', remoteId: 'x8e1k2', action: 'favorite' } }])
   })
 
   it('recognises the browse_use timeout as daemon_timeout', () => {

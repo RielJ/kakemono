@@ -75,6 +75,8 @@ jobs:
           cache-dependency-path: crates/ui/frontend/package-lock.json
 
       - run: npm ci
+      - run: npm run fmt:check
+      - run: npm run lint
       - run: npm run typecheck
       - run: npm run build
       - run: npm test

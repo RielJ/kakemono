@@ -34,9 +34,13 @@ function Handle({ end, vertical }: { end: StripEnd; vertical: boolean }) {
       const delta = pending
       pending = null
       busy = true
-      void pickerResize(end, delta).catch(() => {}).finally(flush)
+      void pickerResize(end, delta)
+        .catch(() => {})
+        .finally(flush)
     }
-    void pickerResizeBegin().catch(() => {}).finally(flush)
+    void pickerResizeBegin()
+      .catch(() => {})
+      .finally(flush)
 
     const onMove = (ev: PointerEvent) => {
       pending = at(ev) - origin

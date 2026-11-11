@@ -36,7 +36,8 @@ export default function ArgvEditor({
   useEffect(() => {
     if (!focus) return
     const want = refs.current.get(`${focus.index}:${focus.part}`)
-    const target = want && !(want instanceof HTMLButtonElement && want.disabled) ? want : refs.current.get(`${focus.index}:input`)
+    const target =
+      want && !(want instanceof HTMLButtonElement && want.disabled) ? want : refs.current.get(`${focus.index}:input`)
     target?.focus()
     setFocus(null)
   }, [focus])
@@ -118,7 +119,12 @@ export default function ArgvEditor({
               >
                 <Icon name="chevronDown" className="w-3.5 h-3.5" />
               </button>
-              <button type="button" onClick={() => remove(i)} aria-label={`Remove token ${i + 1}`} className={iconButton}>
+              <button
+                type="button"
+                onClick={() => remove(i)}
+                aria-label={`Remove token ${i + 1}`}
+                className={iconButton}
+              >
                 <Icon name="x" className="w-3.5 h-3.5" />
               </button>
             </li>

@@ -159,7 +159,9 @@ describe('GeneralSettings', () => {
   it('shows the rotation interval in its largest whole unit', async () => {
     await setup({ edit: (c) => void (c.daemon.interval = '1h30m') })
     expect((screen.getByRole('spinbutton', { name: 'Change wallpaper every' }) as HTMLInputElement).value).toBe('90')
-    expect((screen.getByRole('combobox', { name: 'Change wallpaper every, unit' }) as HTMLSelectElement).value).toBe('minutes')
+    expect((screen.getByRole('combobox', { name: 'Change wallpaper every, unit' }) as HTMLSelectElement).value).toBe(
+      'minutes',
+    )
   })
 
   it('keeps the download size limit a whole number of at least 10 MB', async () => {
@@ -231,17 +233,35 @@ describe('GeneralSettings', () => {
 
 describe('NowShowing', () => {
   const status = (path: string): StatusData => ({
-    current: { path, source: 'wallhaven', source_url: '', image_url: '', title: 'Forest', author: '', width: 0, height: 0, set_at: '' },
+    current: {
+      path,
+      source: 'wallhaven',
+      source_url: '',
+      image_url: '',
+      title: 'Forest',
+      author: '',
+      width: 0,
+      height: 0,
+      set_at: '',
+    },
     paused: false,
     interval: '30m',
     theme: 'dark',
     history_count: 1,
     history_index: 0,
   })
-  const thumb = (path: string): Thumbnail => ({ path, source: 'wallhaven', title: 'Forest', isCurrent: true, imageUrl: `thumb://localhost/${path.length}` })
+  const thumb = (path: string): Thumbnail => ({
+    path,
+    source: 'wallhaven',
+    title: 'Forest',
+    isCurrent: true,
+    imageUrl: `thumb://localhost/${path.length}`,
+  })
 
   async function show(s: StatusData | null, daemon: 'running' | 'stopped' = 'running') {
-    const { container } = render(<NowShowing status={s} daemon={daemon} onStatusChange={() => {}} fileManager="Finder" />)
+    const { container } = render(
+      <NowShowing status={s} daemon={daemon} onStatusChange={() => {}} fileManager="Finder" />,
+    )
     await act(async () => {})
     return () => container.querySelector('img')?.getAttribute('src') ?? null
   }

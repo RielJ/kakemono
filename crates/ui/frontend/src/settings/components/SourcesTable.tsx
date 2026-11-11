@@ -123,8 +123,7 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
     setActive(id)
   }
 
-  const onRowClick = (e: MouseEvent, id: string) =>
-    select(id, { range: e.shiftKey, add: e.metaKey || e.ctrlKey })
+  const onRowClick = (e: MouseEvent, id: string) => select(id, { range: e.shiftKey, add: e.metaKey || e.ctrlKey })
 
   const onRowKeyDown = (e: KeyboardEvent, id: string) => {
     const at = ids.indexOf(id)
@@ -254,7 +253,10 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
         await deleteSourceFiles(s.id).catch((err: unknown) => failed.push(errorMessage(err)))
       }
       if (failed.length > 0) {
-        setMessage({ tone: 'danger', text: `Removed, but the downloaded files couldn't be deleted: ${failed.join('; ')}` })
+        setMessage({
+          tone: 'danger',
+          text: `Removed, but the downloaded files couldn't be deleted: ${failed.join('; ')}`,
+        })
       }
     } finally {
       setBusy(false)
@@ -300,6 +302,7 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
       }
     >
       <div className="sources-scroll">
+        {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-element-to-interactive-role -- an ARIA grid: rows select, arrow keys move */}
         <table role="grid" aria-label="Image sources" aria-multiselectable="true" className="sources-table">
           <colgroup>
             <col className="w-[72px]" />
@@ -362,6 +365,7 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
                         type="text"
                         aria-label={`Name for ${info.label}`}
                         className="field sources-rename"
+                        // oxlint-disable-next-line jsx-a11y/no-autofocus -- opened by a double-click on this cell, so focus belongs here
                         autoFocus
                         autoComplete="off"
                         maxLength={MAX_NAME_LEN}
@@ -413,7 +417,9 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
           </tbody>
         </table>
         {sources.length === 0 && (
-          <p className="px-4 py-6 text-center text-muted">No sources yet. Choose Add… to pick images or an online source.</p>
+          <p className="px-4 py-6 text-center text-muted">
+            No sources yet. Choose Add… to pick images or an online source.
+          </p>
         )}
       </div>
       <div className="flex flex-wrap items-center gap-1.5 px-2.5 py-2">
@@ -452,7 +458,11 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
         />
       )}
       {removing && (
-        <RemoveSourceDialog sources={removing} onCancel={() => setRemoving(null)} onConfirm={(d) => void confirmRemove(d)} />
+        <RemoveSourceDialog
+          sources={removing}
+          onCancel={() => setRemoving(null)}
+          onConfirm={(d) => void confirmRemove(d)}
+        />
       )}
     </Group>
   )

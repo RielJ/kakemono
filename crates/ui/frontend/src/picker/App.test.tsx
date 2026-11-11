@@ -266,8 +266,7 @@ describe('context menu', () => {
 })
 
 describe('trash with undo', () => {
-  const statusFor = (path: string) =>
-    ({ current: { path } }) as unknown as Awaited<ReturnType<typeof api.getStatus>>
+  const statusFor = (path: string) => ({ current: { path } }) as unknown as Awaited<ReturnType<typeof api.getStatus>>
 
   async function trashCurrent() {
     vi.useFakeTimers({ shouldAdvanceTime: true })
@@ -427,6 +426,7 @@ class FakeObserver {
    * observer is made in a passive effect, which can run after the DOM update a test waited for.
    */
   static async showWhenObserved() {
+    // oxlint-disable-next-line vitest/no-standalone-expect -- a helper the tests await
     await vi.waitFor(() => expect(FakeObserver.instances.some((o) => !o.disconnected && o.targets.size > 0)).toBe(true))
     act(() => FakeObserver.showAll())
   }
@@ -471,7 +471,14 @@ describe('tabs', () => {
 
   it('passes [picker] blur_nsfw to the Sources strip', async () => {
     const nsfw = { ...REMOTE, nsfw: true }
-    const listing = { session: 's1', page: 0, restarted: false, done: true, items: [nsfw, { ...nsfw, remoteId: 'r2' }], sources: [] }
+    const listing = {
+      session: 's1',
+      page: 0,
+      restarted: false,
+      done: true,
+      items: [nsfw, { ...nsfw, remoteId: 'r2' }],
+      sources: [],
+    }
     vi.mocked(api.browsePage).mockResolvedValue(listing)
     render(<App />)
     let options = await within(await screen.findByRole('listbox', { name: 'Previews' })).findAllByRole('option')
@@ -479,9 +486,9 @@ describe('tabs', () => {
     expect(options[1].hasAttribute('data-blurred')).toBe(true)
     cleanup()
 
-    vi.mocked(api.getConfig).mockResolvedValue({ picker: { position: 'bottom', blur_nsfw: false } } as unknown as Awaited<
-      ReturnType<typeof api.getConfig>
-    >)
+    vi.mocked(api.getConfig).mockResolvedValue({
+      picker: { position: 'bottom', blur_nsfw: false },
+    } as unknown as Awaited<ReturnType<typeof api.getConfig>>)
     render(<App />)
     await vi.waitFor(() => expect(api.getConfig).toHaveBeenCalled())
     options = await within(await screen.findByRole('listbox', { name: 'Previews' })).findAllByRole('option')

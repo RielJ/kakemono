@@ -62,7 +62,9 @@ const sharedMemory: { current: BrowseMemory | null } = { current: null }
 
 function toError(err: unknown): BrowseError {
   const message = errorMessage(err)
-  return INTERNET_OFF_DAEMON.test(message) ? { kind: 'internet_off', message: INTERNET_OFF } : { kind: 'failed', message }
+  return INTERNET_OFF_DAEMON.test(message)
+    ? { kind: 'internet_off', message: INTERNET_OFF }
+    : { kind: 'failed', message }
 }
 
 /** Adds sources a filtered page didn't list, keeping the order they were first seen in. */
@@ -107,25 +109,24 @@ export function useBrowse({ memory = sharedMemory }: UseBrowseOptions = {}): Bro
   const stopped = useRef(true)
 
   /** Applies one page: a restarted session replaces the list, any other page appends. */
-  const apply = useCallback(
-    (listing: BrowseListing) => {
-      session.current = listing.session
-      page.current = listing.page
-      memoryRef.current.current = { session: listing.session, filter: filterRef.current, at: Date.now() }
-      setItems((prev) => {
-        const base = listing.restarted || listing.page === 0 ? [] : prev
-        const have = new Set(base.map(key))
-        const next = base.concat(listing.items.filter((t) => !have.has(key(t)))).slice(0, MAX_ITEMS)
-        count.current = next.length
-        return next
-      })
-      setStatuses(listing.sources)
-      setSources((known) => (filterRef.current === null ? mergeSources(listing.sources, known) : mergeSources(known, listing.sources)))
-      setDone(listing.done)
-      stopped.current = listing.done
-    },
-    [],
-  )
+  const apply = useCallback((listing: BrowseListing) => {
+    session.current = listing.session
+    page.current = listing.page
+    memoryRef.current.current = { session: listing.session, filter: filterRef.current, at: Date.now() }
+    setItems((prev) => {
+      const base = listing.restarted || listing.page === 0 ? [] : prev
+      const have = new Set(base.map(key))
+      const next = base.concat(listing.items.filter((t) => !have.has(key(t)))).slice(0, MAX_ITEMS)
+      count.current = next.length
+      return next
+    })
+    setStatuses(listing.sources)
+    setSources((known) =>
+      filterRef.current === null ? mergeSources(listing.sources, known) : mergeSources(known, listing.sources),
+    )
+    setDone(listing.done)
+    stopped.current = listing.done
+  }, [])
 
   /** (Re)starts at page 0 of `from` (a session to resume, or `null` for a new one). */
   const start = useCallback(
@@ -168,6 +169,7 @@ export function useBrowse({ memory = sharedMemory }: UseBrowseOptions = {}): Bro
     start(resume?.filter ?? null, resume?.session ?? null)
     return () => {
       // Answers after unmount are dropped.
+      // oxlint-disable-next-line react-hooks/exhaustive-deps -- a counter, not a DOM ref; bumping the live value is the point
       generation.current++
     }
   }, [start, resume])

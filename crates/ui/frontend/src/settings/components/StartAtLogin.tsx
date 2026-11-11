@@ -62,11 +62,7 @@ export default function StartAtLogin({ variant = 'row' }: { variant?: 'row' | 'l
     )
   }
   return (
-    <Row
-      label="Start at login"
-      hint={hint}
-      error={error}
-    >
+    <Row label="Start at login" hint={hint} error={error}>
       {({ labelId, hintId }) => (
         <Toggle
           enabled={state.kind === 'ready' && state.enabled}

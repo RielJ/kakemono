@@ -16,7 +16,9 @@ const trigger = () => screen.getByRole('button', { name: 'Add…' })
 const dialog = () => screen.getByRole('dialog', { name: 'Add a source' })
 const choice = (name: RegExp) => within(dialog()).getByRole('button', { name })
 const names = (group: string) =>
-  [...within(dialog()).getByRole('region', { name: group }).querySelectorAll('[data-choice] strong')].map((s) => s.textContent)
+  [...within(dialog()).getByRole('region', { name: group }).querySelectorAll('[data-choice] strong')].map(
+    (s) => s.textContent,
+  )
 
 describe('AddSourceMenu', () => {
   it('opens a dialog: local types on the left, online types A–Z on the right, each with a description', async () => {
@@ -24,7 +26,12 @@ describe('AddSourceMenu', () => {
     expect(trigger().getAttribute('aria-haspopup')).toBe('dialog')
     expect(screen.queryByRole('dialog')).toBeNull()
     await user.click(trigger())
-    expect(names('On this Mac')).toEqual(['Images', 'Folders', 'Sequential album by file name', 'Sequential album by file date'])
+    expect(names('On this Mac')).toEqual([
+      'Images',
+      'Folders',
+      'Sequential album by file name',
+      'Sequential album by file date',
+    ])
     expect(names('Online')).toEqual(['APOD', 'Bing', 'Reddit', 'Unsplash', 'Wallhaven'])
     expect(choice(/^Wallhaven/).textContent).toContain('Wallpapers from wallhaven.cc for a search or a URL.')
     expect(document.activeElement).toBe(choice(/^Images/))

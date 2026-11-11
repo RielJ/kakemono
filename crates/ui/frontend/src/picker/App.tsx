@@ -19,7 +19,9 @@ interface Notice {
 
 /** A form control handles its own arrow keys (the Sources filter is a radio group). */
 function isFormControl(target: EventTarget | null): boolean {
-  return target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement
+  return (
+    target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement
+  )
 }
 
 export default function App() {
@@ -131,7 +133,15 @@ export default function App() {
 
   let panel: React.ReactNode
   if (tab === 'sources') {
-    panel = <BrowseStrip key={`sources:${shows}`} vertical={vertical} notices={notices} blurNsfw={blurNsfw} sourceNames={sourceNames} />
+    panel = (
+      <BrowseStrip
+        key={`sources:${shows}`}
+        vertical={vertical}
+        notices={notices}
+        blurNsfw={blurNsfw}
+        sourceNames={sourceNames}
+      />
+    )
   } else {
     panel = <ThumbnailStrip key={`${tab}:${shows}`} tab={tab} vertical={vertical} notices={notices} />
   }

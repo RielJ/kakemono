@@ -42,6 +42,7 @@ class FakeObserver {
    * observer is made in a passive effect, which can run after the DOM update a test waited for.
    */
   static async showWhenObserved() {
+    // oxlint-disable-next-line vitest/no-standalone-expect -- a helper the tests await
     await vi.waitFor(() => expect(FakeObserver.instances.some((o) => !o.disconnected && o.targets.size > 0)).toBe(true))
     act(() => FakeObserver.showAll())
   }
@@ -70,10 +71,22 @@ function item(n: number, over: Partial<RemoteThumb> = {}): RemoteThumb {
 }
 
 const range = (from: number, n: number) => Array.from({ length: n }, (_, i) => item(from + i))
-const ACTIVE = (source_id: string, kind: string): BrowseSourceStatus => ({ source_id, kind, state: { state: 'active' } })
+const ACTIVE = (source_id: string, kind: string): BrowseSourceStatus => ({
+  source_id,
+  kind,
+  state: { state: 'active' },
+})
 
 function listing(over: Partial<BrowseListing> = {}): BrowseListing {
-  return { session: 's1', page: 0, restarted: false, done: false, items: range(0, 10), sources: [ACTIVE('wh', 'wallhaven')], ...over }
+  return {
+    session: 's1',
+    page: 0,
+    restarted: false,
+    done: false,
+    items: range(0, 10),
+    sources: [ACTIVE('wh', 'wallhaven')],
+    ...over,
+  }
 }
 
 function deferred<T>() {
@@ -98,7 +111,13 @@ function renderStrip({
   sourceNames,
 }: { blurNsfw?: boolean; vertical?: boolean; sourceNames?: ReadonlyMap<string, string> } = {}) {
   render(
-    <BrowseStrip vertical={vertical} notices={notices} blurNsfw={blurNsfw} sourceNames={sourceNames} memory={{ current: null }} />,
+    <BrowseStrip
+      vertical={vertical}
+      notices={notices}
+      blurNsfw={blurNsfw}
+      sourceNames={sourceNames}
+      memory={{ current: null }}
+    />,
   )
 }
 
@@ -241,12 +260,11 @@ describe('BrowseStrip', () => {
       await strip()
       fireEvent.contextMenu(screen.getAllByRole('option')[2], { clientX: 10, clientY: 10 })
       const menu = await screen.findByRole('menu')
-      expect(within(menu).getAllByRole('menuitem').map((m) => m.textContent)).toEqual([
-        'Set as Wallpaper',
-        'Add to Favorites',
-        'Download',
-        'Reset Position',
-      ])
+      expect(
+        within(menu)
+          .getAllByRole('menuitem')
+          .map((m) => m.textContent),
+      ).toEqual(['Set as Wallpaper', 'Add to Favorites', 'Download', 'Reset Position'])
       fireEvent.click(within(menu).getByRole('menuitem', { name: 'Download' }))
       expect(browseUse).toHaveBeenCalledExactlyOnceWith({ sourceId: 'wh', remoteId: 'r2', action: 'download' })
       await vi.waitFor(() => expect(notices.say).toHaveBeenLastCalledWith('Downloaded'))
@@ -305,7 +323,9 @@ describe('BrowseStrip', () => {
 
   describe('display', () => {
     it('labels a card "title by author — kind" and shows a placeholder without a preview', async () => {
-      browsePage.mockResolvedValue(listing({ items: [item(0, { imageUrl: null }), item(1, { author: '' }), item(2, { title: '' })] }))
+      browsePage.mockResolvedValue(
+        listing({ items: [item(0, { imageUrl: null }), item(1, { author: '' }), item(2, { title: '' })] }),
+      )
       renderStrip()
       const list = await strip()
       const options = within(list).getAllByRole('option')
@@ -332,7 +352,11 @@ describe('BrowseStrip', () => {
           items: [item(0), item(1, { sourceId: 'un', kind: 'unsplash' })],
           sources: [
             ACTIVE('wh', 'wallhaven'),
-            { source_id: 'un', kind: 'unsplash', state: { state: 'rate_limited', message: 'rate limit reached', retry_after_secs: 60 } },
+            {
+              source_id: 'un',
+              kind: 'unsplash',
+              state: { state: 'rate_limited', message: 'rate limit reached', retry_after_secs: 60 },
+            },
           ],
         }),
       )
@@ -388,7 +412,11 @@ describe('BrowseStrip', () => {
         listing({
           sources: [
             ACTIVE('wh', 'wallhaven'),
-            { source_id: 'un', kind: 'unsplash', state: { state: 'rate_limited', message: 'rate limit reached', retry_after_secs: 60 } },
+            {
+              source_id: 'un',
+              kind: 'unsplash',
+              state: { state: 'rate_limited', message: 'rate limit reached', retry_after_secs: 60 },
+            },
           ],
         }),
       )
@@ -420,17 +448,18 @@ describe('BrowseStrip', () => {
     })
 
     it('lists All and each source, and [ / ] cycle it', async () => {
-      browsePage.mockImplementation(async ({ source }) => listing({ session: source ?? 'all', sources: source ? three.filter((s) => s.source_id === source) : three }))
+      browsePage.mockImplementation(async ({ source }) =>
+        listing({ session: source ?? 'all', sources: source ? three.filter((s) => s.source_id === source) : three }),
+      )
       const user = userEvent.setup()
       renderStrip()
       await strip()
       const group = await screen.findByRole('radiogroup', { name: 'Source' })
-      expect(within(group).getAllByRole('radio').map((r) => r.getAttribute('aria-label') ?? r.closest('label')?.textContent)).toEqual([
-        'All',
-        'wallhaven (wh)',
-        'bing (bg)',
-        'reddit (rd)',
-      ])
+      expect(
+        within(group)
+          .getAllByRole('radio')
+          .map((r) => r.getAttribute('aria-label') ?? r.closest('label')?.textContent),
+      ).toEqual(['All', 'wallhaven (wh)', 'bing (bg)', 'reddit (rd)'])
       expect(within(group).getByRole('radio', { name: 'All' })).toHaveProperty('checked', true)
 
       await user.keyboard(']')

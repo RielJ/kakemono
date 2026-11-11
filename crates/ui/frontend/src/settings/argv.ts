@@ -49,9 +49,7 @@ export function normalizeArgv(argv: readonly string[]): string[] | null {
  * tokens with whitespace, quotes, `\`, `$` or a backtick are single-quoted.
  */
 export function shellWordsJoin(argv: readonly string[]): string {
-  return argv
-    .map((t) => (t !== '' && !/[\s'"\\$`]/.test(t) ? t : `'${t.replaceAll("'", "'\\''")}'`))
-    .join(' ')
+  return argv.map((t) => (t !== '' && !/[\s'"\\$`]/.test(t) ? t : `'${t.replaceAll("'", "'\\''")}'`)).join(' ')
 }
 
 /** Backends that set the wallpaper without an argv (`BackendKind::uses_command` is false). */
@@ -101,7 +99,9 @@ export function checkDaemonBackend({
 
   const argv = saved.set_command
   if (saved.backend === 'command' && argv === null) {
-    return daemon.name === 'unconfigured' ? { kind: 'match' } : { kind: 'stale', expected: 'command (no set_command yet)' }
+    return daemon.name === 'unconfigured'
+      ? { kind: 'match' }
+      : { kind: 'stale', expected: 'command (no set_command yet)' }
   }
   if (!usesCommand(saved.backend)) {
     return daemon.name === saved.backend ? { kind: 'match' } : { kind: 'stale', expected: saved.backend }

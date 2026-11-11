@@ -25,9 +25,7 @@ export function layoutSummary(position: PickerPosition, orientation: PickerOrien
   const vertical = isVertical({ position, orientation })
   const along = (position === 'left' || position === 'right') === vertical
   const dir = vertical ? 'A vertical column' : 'A horizontal row'
-  return along
-    ? `${dir} along the full ${position} edge.`
-    : `${dir}, centred on the ${position} edge.`
+  return along ? `${dir} along the full ${position} edge.` : `${dir}, centred on the ${position} edge.`
 }
 
 /**
@@ -76,11 +74,36 @@ function Preview({ position, orientation }: { position: PickerPosition; orientat
       role="img"
       aria-label={layoutSummary(position, orientation)}
     >
-      <rect x={0} y={0} width={W} height={H} rx={6} className="fill-[var(--c-window)] stroke-[var(--c-line-strong)]" strokeWidth={1} />
+      <rect
+        x={0}
+        y={0}
+        width={W}
+        height={H}
+        rx={6}
+        className="fill-[var(--c-window)] stroke-[var(--c-line-strong)]"
+        strokeWidth={1}
+      />
       <g className="transition-all duration-200 motion-reduce:transition-none">
-        <rect x={x} y={y} width={w} height={h} rx={4} className="fill-[var(--c-accent-soft)] stroke-[var(--c-accent)]" strokeWidth={1} />
+        <rect
+          x={x}
+          y={y}
+          width={w}
+          height={h}
+          rx={4}
+          className="fill-[var(--c-accent-soft)] stroke-[var(--c-accent)]"
+          strokeWidth={1}
+        />
         {cells.map((c, i) => (
-          <rect key={i} x={c.x} y={c.y} width={Math.max(c.w, 0)} height={Math.max(c.h, 0)} rx={1.5} className="fill-[var(--c-accent)]" opacity={i === 1 ? 0.9 : 0.45} />
+          <rect
+            key={i}
+            x={c.x}
+            y={c.y}
+            width={Math.max(c.w, 0)}
+            height={Math.max(c.h, 0)}
+            rx={1.5}
+            className="fill-[var(--c-accent)]"
+            opacity={i === 1 ? 0.9 : 0.45}
+          />
         ))}
       </g>
     </svg>
@@ -123,7 +146,12 @@ export default function PickerSettings({
           <div className="flex-1 min-w-0 space-y-3">
             <Field label="Screen edge">
               {(labelId) => (
-                <Segmented value={picker.position} options={POSITIONS} onChange={(v) => set('position', v)} labelledBy={labelId} />
+                <Segmented
+                  value={picker.position}
+                  options={POSITIONS}
+                  onChange={(v) => set('position', v)}
+                  labelledBy={labelId}
+                />
               )}
             </Field>
             <Field label="Orientation">

@@ -72,7 +72,13 @@ const commit = async (input: HTMLElement, text: string) => {
 }
 
 beforeEach(() => {
-  vi.mocked(api.desktopBackend).mockResolvedValue({ version: '2', pid: 1, backend: { name: 'macos', detail: '' }, theme: 'light', apply: null })
+  vi.mocked(api.desktopBackend).mockResolvedValue({
+    version: '2',
+    pid: 1,
+    backend: { name: 'macos', detail: '' },
+    theme: 'light',
+    apply: null,
+  })
   vi.mocked(api.detectDesktop).mockResolvedValue('')
 })
 
@@ -163,7 +169,11 @@ describe('AdvancedSettings', () => {
     const s = setup()
     await s.render()
     const appearance = screen.getByRole('radiogroup', { name: 'Appearance' })
-    expect(within(appearance).getAllByRole('radio').map((r) => r.textContent)).toEqual(['Light', 'Dark', 'System'])
+    expect(
+      within(appearance)
+        .getAllByRole('radio')
+        .map((r) => r.textContent),
+    ).toEqual(['Light', 'Dark', 'System'])
     await userEvent.click(within(appearance).getByRole('radio', { name: 'System' }))
     expect(s.patch()).toEqual({ ui: { appearance: 'system' } })
   })
@@ -202,6 +212,15 @@ describe('AdvancedSettings', () => {
     const desktop = group('Desktop')
     expect(desktop.getByRole('combobox', { name: 'Backend' })).toBeTruthy()
     expect(desktop.getByText('Wallpaper command', { selector: 'p' })).toBeTruthy()
-    expect(headings()).toEqual(['Folders', 'Wallpaper', 'Desktop', 'Detection', 'Hooks', 'Daemon', 'Appearance', 'Provider keys'])
+    expect(headings()).toEqual([
+      'Folders',
+      'Wallpaper',
+      'Desktop',
+      'Detection',
+      'Hooks',
+      'Daemon',
+      'Appearance',
+      'Provider keys',
+    ])
   })
 })

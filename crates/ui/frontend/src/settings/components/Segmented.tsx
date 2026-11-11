@@ -25,7 +25,8 @@ export default function Segmented<T extends string>({
   const index = options.findIndex((o) => o.value === value)
 
   const onKeyDown = (e: KeyboardEvent) => {
-    const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0
+    const step =
+      e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0
     if (!step) return
     e.preventDefault()
     const next = (Math.max(index, 0) + step + options.length) % options.length

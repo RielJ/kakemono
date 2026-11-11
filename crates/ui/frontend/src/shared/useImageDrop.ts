@@ -95,10 +95,7 @@ function urlName(url: URL): string {
   }
 }
 
-type Plan =
-  | { kind: 'file'; file: File }
-  | { kind: 'url'; url: string; name: string }
-  | { kind: 'refuse'; text: string }
+type Plan = { kind: 'file'; file: File } | { kind: 'url'; url: string; name: string } | { kind: 'refuse'; text: string }
 
 /** What a drop does: an image File first, then the first http(s) or file URL. */
 function planDrop(dt: DataTransfer): Plan {

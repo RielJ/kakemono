@@ -19,7 +19,10 @@ export interface SentinelOptions {
   rootMargin?: string
 }
 
-export function useSentinel(ref: RefObject<Element | null>, { onVisible, busy, rootMargin = '0px' }: SentinelOptions): void {
+export function useSentinel(
+  ref: RefObject<Element | null>,
+  { onVisible, busy, rootMargin = '0px' }: SentinelOptions,
+): void {
   const latest = useRef(onVisible)
   useEffect(() => {
     latest.current = onVisible

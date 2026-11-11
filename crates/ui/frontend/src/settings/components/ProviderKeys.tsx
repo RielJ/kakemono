@@ -7,8 +7,18 @@ import TextField from './TextField'
 
 /** Display labels for Wallhaven's option codes; the Sources table summary uses them too. */
 export const PURITY: Record<string, string> = { '100': 'SFW', '110': 'SFW + sketchy', '111': 'All' }
-export const SORTING: Record<string, string> = { random: 'Random', toplist: 'Top list', date_added: 'Newest', hot: 'Hot' }
-export const CATEGORIES: Record<string, string> = { '100': 'General', '010': 'Anime', '001': 'People', '111': 'All categories' }
+export const SORTING: Record<string, string> = {
+  random: 'Random',
+  toplist: 'Top list',
+  date_added: 'Newest',
+  hot: 'Hot',
+}
+export const CATEGORIES: Record<string, string> = {
+  '100': 'General',
+  '010': 'Anime',
+  '001': 'People',
+  '111': 'All categories',
+}
 
 type WallhavenChoice = 'purity' | 'sorting' | 'categories'
 

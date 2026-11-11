@@ -91,7 +91,11 @@ describe('useConfigStore', () => {
 
 describe('useConfigStore commit', () => {
   /** Settles a promise from outside `act`, so a rejection doesn't go unhandled. */
-  const settle = (p: Promise<void>) => p.then(() => 'resolved' as const, (e: unknown) => e)
+  const settle = (p: Promise<void>) =>
+    p.then(
+      () => 'resolved' as const,
+      (e: unknown) => e,
+    )
 
   it('writes at once, without the delay, and resolves after the save with the patch', async () => {
     const save = vi.fn().mockResolvedValue(ok)
@@ -123,7 +127,9 @@ describe('useConfigStore commit', () => {
     let state = 'pending'
     let pending!: Promise<unknown>
     act(() => {
-      pending = settle(result.current.commit(withRotation(result.current.config!, false))).then((s) => (state = String(s)))
+      pending = settle(result.current.commit(withRotation(result.current.config!, false))).then(
+        (s) => (state = String(s)),
+      )
     })
     await act(async () => vi.advanceTimersByTimeAsync(0))
     expect(state).toBe('pending')

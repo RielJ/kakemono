@@ -9,7 +9,13 @@ import TabBar, { PANEL_ID } from './TabBar'
 afterEach(cleanup)
 
 /** A TabBar that owns its selection, like the App will. */
-function Harness({ vertical = false, onSelect = () => {} }: { vertical?: boolean; onSelect?: (id: PickerTabId) => void }) {
+function Harness({
+  vertical = false,
+  onSelect = () => {},
+}: {
+  vertical?: boolean
+  onSelect?: (id: PickerTabId) => void
+}) {
   const [active, setActive] = useState<PickerTabId>(DEFAULT_TAB)
   return (
     <TabBar

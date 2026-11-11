@@ -371,8 +371,10 @@ A reply is `{"ok":true,"data":{...}}` or `{"ok":false,"error":"..."}`. The comma
 ```sh
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
-cd crates/ui/frontend && npm ci && npm test && npm run build
+cd crates/ui/frontend && npm ci && npm run fmt:check && npm run lint && npm run typecheck && npm test && npm run build
 ```
+
+The frontend uses [oxlint](https://oxc.rs/docs/guide/usage/linter) (`.oxlintrc.json`) and [oxfmt](https://oxc.rs/docs/guide/usage/formatter) (`.oxfmtrc.json`); `npm run fmt` formats it. Both skip the generated `src/shared/bindings`.
 
 `scripts/gate.sh full` runs the Rust checks that CI runs, plus cross-target clippy. To run CI's Linux and Windows jobs from a Mac before you push:
 

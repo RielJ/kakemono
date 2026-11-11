@@ -87,6 +87,7 @@ export default function AddSourceMenu({
       </button>
       {open && (
         <Modal title="Add a source" onClose={() => setOpen(false)} className={internet ? 'modal-wide' : undefined}>
+          {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- arrow keys move between the choice buttons inside */}
           <div ref={grid} className="add-grid" data-columns={internet ? 2 : 1} onKeyDown={onGridKeyDown}>
             <section data-column aria-label="On this Mac">
               <h3 className="add-group">On this Mac</h3>

@@ -32,10 +32,13 @@ const isDigit = (c: string) => c >= '0' && c <= '9'
 function fail(kind: DurationErrorKind, input: string, unit?: string): DurationResult {
   const q = JSON.stringify(input)
   const message =
-    kind === 'missing_unit' ? `time: missing unit in duration ${q}`
-    : kind === 'unknown_unit' ? `time: unknown unit ${JSON.stringify(unit)} in duration ${q}`
-    : kind === 'negative' ? `time: duration ${q} is negative`
-    : `time: invalid duration ${q}`
+    kind === 'missing_unit'
+      ? `time: missing unit in duration ${q}`
+      : kind === 'unknown_unit'
+        ? `time: unknown unit ${JSON.stringify(unit)} in duration ${q}`
+        : kind === 'negative'
+          ? `time: duration ${q} is negative`
+          : `time: invalid duration ${q}`
   return unit === undefined ? { ok: false, kind, message } : { ok: false, kind, unit, message }
 }
 

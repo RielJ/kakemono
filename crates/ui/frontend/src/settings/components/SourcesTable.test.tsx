@@ -100,7 +100,11 @@ describe('SourcesTable', () => {
   it('shows one row per source with its enabled box, type and location', async () => {
     await setup()
     expect(rows()).toHaveLength(4)
-    const cells = rows().map((r) => within(r).getAllByRole('gridcell').map((c) => c.textContent))
+    const cells = rows().map((r) =>
+      within(r)
+        .getAllByRole('gridcell')
+        .map((c) => c.textContent),
+    )
     expect(cells.map((c) => c.slice(1))).toEqual([
       ['Bing', '—', 'OK'],
       ['Wallhaven', 'nature', 'OK'],
@@ -110,7 +114,9 @@ describe('SourcesTable', () => {
     const boxes = rows().map((r) => within(r).getByRole('checkbox'))
     expect(boxes.map((b) => (b as HTMLInputElement).checked)).toEqual([true, true, false, false])
     // A long location is cut by CSS; the full text stays in a tooltip.
-    expect(within(row(2)).getByText('/home/u/Pictures/Wallpapers').getAttribute('title')).toBe('/home/u/Pictures/Wallpapers')
+    expect(within(row(2)).getByText('/home/u/Pictures/Wallpapers').getAttribute('title')).toBe(
+      '/home/u/Pictures/Wallpapers',
+    )
   })
 
   it('shows an empty state when there are no sources', async () => {
@@ -408,9 +414,16 @@ describe('SourcesTable', () => {
     it('adds Bing after a name-only dialog as a new enabled row', async () => {
       const { last, user } = await setup({ sources: SOURCES.slice(1) })
       await choose(user, /^Bing/)
-      await user.click(within(screen.getByRole('dialog', { name: 'Add Bing source' })).getByRole('button', { name: 'OK' }))
+      await user.click(
+        within(screen.getByRole('dialog', { name: 'Add Bing source' })).getByRole('button', { name: 'OK' }),
+      )
       const added = last().sources[last().sources.length - 1]
-      expect(added).toEqual({ id: expect.stringMatching(/^bing-[0-9a-f]{4}$/), type: 'bing', location: '', enabled: true })
+      expect(added).toEqual({
+        id: expect.stringMatching(/^bing-[0-9a-f]{4}$/),
+        type: 'bing',
+        location: '',
+        enabled: true,
+      })
       expect(screen.queryByRole('dialog')).toBeNull()
       expect(rows()).toHaveLength(4)
     })
@@ -432,7 +445,12 @@ describe('SourcesTable', () => {
       await user.click(within(dialog).getByRole('button', { name: 'OK' }))
       expect(screen.queryByRole('dialog')).toBeNull()
       const added = last().sources[4]
-      expect(added).toEqual({ id: expect.stringMatching(/^wh-[0-9a-f]{4}$/), type: 'wallhaven', location: 'forest', enabled: true })
+      expect(added).toEqual({
+        id: expect.stringMatching(/^wh-[0-9a-f]{4}$/),
+        type: 'wallhaven',
+        location: 'forest',
+        enabled: true,
+      })
       expect(row(4).getAttribute('aria-selected')).toBe('true')
       await act(async () => {})
       expect(api.checkSource).toHaveBeenCalledWith('wallhaven', 'forest')
@@ -466,7 +484,11 @@ describe('SourcesTable', () => {
       await choose(user, /^Images/)
       await act(async () => {})
       await user.click(button('OK'))
-      expect(last().sources.slice(4).map((s) => [s.type, s.location, s.enabled])).toEqual([
+      expect(
+        last()
+          .sources.slice(4)
+          .map((s) => [s.type, s.location, s.enabled]),
+      ).toEqual([
         ['images', '/p/a.jpg', true],
         ['images', '/p/b.png', true],
       ])
@@ -502,7 +524,11 @@ describe('SourcesTable', () => {
       await user.type(within(dialog).getAllByRole('textbox')[0], 'https://wallhaven.cc/hot')
       await user.type(within(dialog).getByRole('textbox', { name: /^Name/ }), 'wallhaven-hot')
       await user.click(within(dialog).getByRole('button', { name: 'OK' }))
-      expect(last().sources[4]).toMatchObject({ type: 'wallhaven', location: 'https://wallhaven.cc/hot', name: 'wallhaven-hot' })
+      expect(last().sources[4]).toMatchObject({
+        type: 'wallhaven',
+        location: 'https://wallhaven.cc/hot',
+        name: 'wallhaven-hot',
+      })
       expect(within(row(4)).getByText('wallhaven-hot')).toBeTruthy()
       expect(within(row(4)).getByText('Wallhaven')).toBeTruthy()
     })

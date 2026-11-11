@@ -233,7 +233,9 @@ export default function BrowseStrip({ vertical, notices, blurNsfw, sourceNames =
   } else if (items.length === 0) {
     body = (
       <div className="state state-stack">
-        <span>{browse.sources.length === 0 ? 'No online sources are enabled. Add one in Settings.' : 'No previews to show.'}</span>
+        <span>
+          {browse.sources.length === 0 ? 'No online sources are enabled. Add one in Settings.' : 'No previews to show.'}
+        </span>
         {notes.map((n) => (
           <span key={n} className="state-note">
             {n}
@@ -253,7 +255,9 @@ export default function BrowseStrip({ vertical, notices, blurNsfw, sourceNames =
 
   return (
     <>
-      {browse.sources.length > 1 && <FilterCard sources={browse.sources} names={sourceNames} filter={browse.filter} onChange={browse.setFilter} />}
+      {browse.sources.length > 1 && (
+        <FilterCard sources={browse.sources} names={sourceNames} filter={browse.filter} onChange={browse.setFilter} />
+      )}
       {body}
       <div
         ref={listRef}
@@ -386,6 +390,7 @@ function RemoteOption({ id, item, names, active, busy, blurred, onClick, onConte
   const [broken, setBroken] = useState(false)
   const label = remoteLabel(item, names)
   return (
+    // oxlint-disable-next-line jsx-a11y/click-events-have-key-events -- the listbox handles keys (aria-activedescendant)
     <div
       id={id}
       role="option"
@@ -401,7 +406,14 @@ function RemoteOption({ id, item, names, active, busy, blurred, onClick, onConte
       onPointerLeave={() => onHover(false)}
     >
       {item.imageUrl && !broken ? (
-        <img src={item.imageUrl} alt="" loading="lazy" decoding="async" draggable={false} onError={() => setBroken(true)} />
+        <img
+          src={item.imageUrl}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          draggable={false}
+          onError={() => setBroken(true)}
+        />
       ) : (
         <span className="placeholder">
           <Icon name="image" />

@@ -6,7 +6,17 @@ import { parseGoDuration } from '../duration'
 const LineCheckbox = createContext<string | null>(null)
 
 /** Hint, error and warning text under a line, linked to its control with `aria-describedby`. */
-function LineNotes({ id, hint, error, warning }: { id: string; hint?: ReactNode; error?: string | null; warning?: string | null }) {
+function LineNotes({
+  id,
+  hint,
+  error,
+  warning,
+}: {
+  id: string
+  hint?: ReactNode
+  error?: string | null
+  warning?: string | null
+}) {
   return (
     <div id={id} className="mt-0.5 text-[12px] leading-snug">
       {hint !== undefined && <p className="text-muted">{hint}</p>}
@@ -225,7 +235,15 @@ export function joinInterval(count: number, unit: IntervalUnit): string {
 const UNITS: readonly IntervalUnit[] = ['minutes', 'hours', 'days']
 
 /** "[N] [minutes|hours|days]" for a Go duration key such as `daemon.interval`. */
-export function IntervalField({ value, onChange, label }: { value: string; onChange: (value: string) => void; label: string }) {
+export function IntervalField({
+  value,
+  onChange,
+  label,
+}: {
+  value: string
+  onChange: (value: string) => void
+  label: string
+}) {
   const { count, unit } = splitInterval(value)
   return (
     <span className="inline-flex items-center gap-1.5">

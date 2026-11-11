@@ -1,4 +1,4 @@
-@import '../shared/tokens.css';
+@import "../shared/tokens.css";
 
 /* Picker. Tokens and the reduced-motion switch live in shared/tokens.css. */
 
@@ -210,7 +210,7 @@ body {
 }
 
 /* Selected: accent icon on a raised chip (colour plus surface, not colour alone). */
-.tab[aria-selected='true'] {
+.tab[aria-selected="true"] {
   background: var(--surface);
   color: var(--accent);
   box-shadow: inset 0 0 0 1px var(--border);
@@ -280,7 +280,7 @@ body {
 }
 
 .option::after {
-  content: '';
+  content: "";
   position: absolute;
   inset: 0;
   border-radius: inherit;
@@ -294,7 +294,7 @@ body {
   }
 }
 
-.option[aria-selected='true']::after {
+.option[aria-selected="true"]::after {
   box-shadow: inset 0 0 0 2px var(--accent);
 }
 
@@ -406,7 +406,7 @@ body {
   color: var(--accent-text);
 }
 
-.menu-item[aria-disabled='true'] {
+.menu-item[aria-disabled="true"] {
   color: var(--text-muted);
   background: none;
   opacity: 0.6;
@@ -616,7 +616,7 @@ body {
 }
 
 /* `browse_use` is downloading the full image (can take a while): dimmed, with a mark. */
-.option[aria-busy='true'] img {
+.option[aria-busy="true"] img {
   opacity: 0.55;
 }
 

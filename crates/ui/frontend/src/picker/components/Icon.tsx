@@ -3,14 +3,7 @@
  * icon package. Decorative: the element they sit in carries the label.
  */
 const PATHS = {
-  gripVertical: [
-    'M9 12h.01',
-    'M9 5h.01',
-    'M9 19h.01',
-    'M15 12h.01',
-    'M15 5h.01',
-    'M15 19h.01',
-  ],
+  gripVertical: ['M9 12h.01', 'M9 5h.01', 'M9 19h.01', 'M15 12h.01', 'M15 5h.01', 'M15 19h.01'],
   gripHorizontal: ['M12 9h.01', 'M19 9h.01', 'M5 9h.01', 'M12 15h.01', 'M19 15h.01', 'M5 15h.01'],
   check: ['M20 6 9 17l-5-5'],
   image: [

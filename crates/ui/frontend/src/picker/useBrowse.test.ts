@@ -26,9 +26,14 @@ function item(n: number, sourceId = 'wh'): RemoteThumb {
   }
 }
 
-const range = (from: number, n: number, sourceId = 'wh') => Array.from({ length: n }, (_, i) => item(from + i, sourceId))
+const range = (from: number, n: number, sourceId = 'wh') =>
+  Array.from({ length: n }, (_, i) => item(from + i, sourceId))
 
-const ACTIVE = (source_id: string, kind = 'wallhaven'): BrowseSourceStatus => ({ source_id, kind, state: { state: 'active' } })
+const ACTIVE = (source_id: string, kind = 'wallhaven'): BrowseSourceStatus => ({
+  source_id,
+  kind,
+  state: { state: 'active' },
+})
 
 function listing(over: Partial<BrowseListing> = {}): BrowseListing {
   return { session: 's1', page: 0, restarted: false, done: false, items: [], sources: [ACTIVE('wh')], ...over }

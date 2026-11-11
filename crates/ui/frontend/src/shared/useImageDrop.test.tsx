@@ -9,7 +9,17 @@ const ipc = vi.hoisted(() => ({
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: ipc.invoke }))
 
-const INFO = { path: '/m/a.jpg', source: 'manual', source_url: '', image_url: '', title: '', author: '', width: 0, height: 0, set_at: '' }
+const INFO = {
+  path: '/m/a.jpg',
+  source: 'manual',
+  source_url: '',
+  image_url: '',
+  title: '',
+  author: '',
+  width: 0,
+  height: 0,
+  set_at: '',
+}
 
 interface FakeTransfer {
   data?: Record<string, string>
@@ -47,7 +57,8 @@ function setup() {
   return { hook, notices, onNotice, last }
 }
 
-const png = (name = 'a.png', bytes = [0x89, 0x50, 0x4e, 0x47]) => new File([new Uint8Array(bytes)], name, { type: 'image/png' })
+const png = (name = 'a.png', bytes = [0x89, 0x50, 0x4e, 0x47]) =>
+  new File([new Uint8Array(bytes)], name, { type: 'image/png' })
 
 beforeEach(() => {
   ipc.invoke.mockReset()
@@ -71,7 +82,11 @@ describe('useImageDrop', () => {
 
   it('skips # comment lines in text/uri-list', async () => {
     const { last } = setup()
-    drop(transfer({ data: { 'text/uri-list': '# dragged from a page\r\nhttps://x.example/b.png\r\nhttps://x.example/c.png' } }))
+    drop(
+      transfer({
+        data: { 'text/uri-list': '# dragged from a page\r\nhttps://x.example/b.png\r\nhttps://x.example/c.png' },
+      }),
+    )
 
     await waitFor(() => expect(last()?.kind).toBe('done'))
     expect(ipc.invoke).toHaveBeenCalledWith('fetch_dropped_url', { url: 'https://x.example/b.png' })
@@ -79,7 +94,9 @@ describe('useImageDrop', () => {
 
   it('falls back to the <img src> in text/html', async () => {
     const { last } = setup()
-    drop(transfer({ data: { 'text/html': '<meta charset="utf-8"><img alt="x" src="https://cdn.example/p/c.webp?w=2">' } }))
+    drop(
+      transfer({ data: { 'text/html': '<meta charset="utf-8"><img alt="x" src="https://cdn.example/p/c.webp?w=2">' } }),
+    )
 
     await waitFor(() => expect(last()?.kind).toBe('done'))
     expect(ipc.invoke).toHaveBeenCalledWith('fetch_dropped_url', { url: 'https://cdn.example/p/c.webp?w=2' })
@@ -94,7 +111,11 @@ describe('useImageDrop', () => {
 
   it('ignores data: and blob: URLs with a message', async () => {
     const { last } = setup()
-    drop(transfer({ data: { 'text/uri-list': 'data:image/png;base64,AAAA', 'text/html': '<img src="blob:https://x/1">' } }))
+    drop(
+      transfer({
+        data: { 'text/uri-list': 'data:image/png;base64,AAAA', 'text/html': '<img src="blob:https://x/1">' },
+      }),
+    )
 
     await waitFor(() => expect(last()).toEqual({ kind: 'error', text: MESSAGES.embedded }))
     expect(ipc.invoke).not.toHaveBeenCalled()

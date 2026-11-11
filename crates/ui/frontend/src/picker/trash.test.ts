@@ -7,7 +7,17 @@ function status(path: string | null): StatusData {
     current:
       path === null
         ? null
-        : { path, source: 'local', source_url: '', image_url: '', title: '', author: '', width: 0, height: 0, set_at: '' },
+        : {
+            path,
+            source: 'local',
+            source_url: '',
+            image_url: '',
+            title: '',
+            author: '',
+            width: 0,
+            height: 0,
+            set_at: '',
+          },
     paused: false,
     interval: '30m',
     theme: 'dark',

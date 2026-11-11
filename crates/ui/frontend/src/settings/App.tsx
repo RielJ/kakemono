@@ -54,7 +54,15 @@ function savedText(outcome: SaveOutcome): string {
 }
 
 /** Where every change reports back: a quiet line in the section header, never a button bar. */
-function SaveIndicator({ status, onRetry, onRevert }: { status: SaveStatus; onRetry: () => void; onRevert: () => void }) {
+function SaveIndicator({
+  status,
+  onRetry,
+  onRevert,
+}: {
+  status: SaveStatus
+  onRetry: () => void
+  onRevert: () => void
+}) {
   // "Saved" fades after a moment; warnings and errors stay until the next change.
   const [fresh, setFresh] = useState(true)
   useEffect(() => {

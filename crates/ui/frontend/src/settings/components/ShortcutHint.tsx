@@ -18,12 +18,7 @@ function CopyLine({ text, state, onCopy }: { text: string; state: CopyState; onC
           {message.kind === 'copied' ? 'Copied' : 'Couldn’t copy; select the text instead'}
         </span>
       )}
-      <button
-        type="button"
-        className="btn shrink-0"
-        aria-label={`Copy ${text}`}
-        onClick={() => onCopy(text)}
-      >
+      <button type="button" className="btn shrink-0" aria-label={`Copy ${text}`} onClick={() => onCopy(text)}>
         Copy
       </button>
     </div>
@@ -42,8 +37,8 @@ const MACOS: readonly HowTo[] = [
     name: 'Shortcuts app',
     steps: (
       <>
-        Make a shortcut with a <b>Run Shell Script</b> action that runs the command. In the
-        shortcut’s details, choose <b>Add Keyboard Shortcut</b>.
+        Make a shortcut with a <b>Run Shell Script</b> action that runs the command. In the shortcut’s details, choose{' '}
+        <b>Add Keyboard Shortcut</b>.
       </>
     ),
   },
@@ -51,8 +46,7 @@ const MACOS: readonly HowTo[] = [
     name: 'Raycast',
     steps: (
       <>
-        Create a <b>Script Command</b> that runs the command, then give it a hotkey in Raycast’s
-        Extensions settings.
+        Create a <b>Script Command</b> that runs the command, then give it a hotkey in Raycast’s Extensions settings.
       </>
     ),
   },
@@ -72,8 +66,7 @@ const LINUX: readonly HowTo[] = [
     name: 'GNOME',
     steps: (
       <>
-        Settings → Keyboard → <b>View and Customize Shortcuts</b> → Custom Shortcuts. Add one with
-        the command.
+        Settings → Keyboard → <b>View and Customize Shortcuts</b> → Custom Shortcuts. Add one with the command.
       </>
     ),
   },
@@ -81,8 +74,7 @@ const LINUX: readonly HowTo[] = [
     name: 'KDE Plasma',
     steps: (
       <>
-        System Settings → Keyboard → Shortcuts → <b>Add New</b> → Command or Script. Paste the
-        command and record a key.
+        System Settings → Keyboard → Shortcuts → <b>Add New</b> → Command or Script. Paste the command and record a key.
       </>
     ),
   },
@@ -121,8 +113,7 @@ const WINDOWS: readonly HowTo[] = [
     name: 'Windows',
     steps: (
       <>
-        Make a desktop shortcut that runs the command, then set a <b>Shortcut key</b> in its
-        Properties.
+        Make a desktop shortcut that runs the command, then set a <b>Shortcut key</b> in its Properties.
       </>
     ),
   },

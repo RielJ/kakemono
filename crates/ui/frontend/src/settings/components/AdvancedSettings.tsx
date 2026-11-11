@@ -78,7 +78,10 @@ export default function AdvancedSettings({
             />
           )}
         </Row>
-        <Row label="Save manually downloaded wallpapers to" hint="Images you drop on the window or fetch from a link. Empty uses a manual folder inside Downloads.">
+        <Row
+          label="Save manually downloaded wallpapers to"
+          hint="Images you drop on the window or fetch from a link. Empty uses a manual folder inside Downloads."
+        >
           {({ labelId, hintId }) => (
             <PathField
               value={daemon.manual_dir ?? ''}
@@ -166,7 +169,10 @@ export default function AdvancedSettings({
               <tbody className="divide-y divide-line">
                 {HOOK_ENV.map((v) => (
                   <tr key={v.name}>
-                    <th scope="row" className="py-1.5 pr-4 text-left font-mono font-normal text-[11px] whitespace-nowrap">
+                    <th
+                      scope="row"
+                      className="py-1.5 pr-4 text-left font-mono font-normal text-[11px] whitespace-nowrap"
+                    >
                       {v.name}
                     </th>
                     <td className="py-1.5 text-muted">{v.text}</td>
@@ -200,14 +206,14 @@ export default function AdvancedSettings({
         {appInfo && (
           <Row
             label="Config file"
-            hint={
-              <span className="font-mono text-[11px] break-all selectable">
-                {appInfo.config_path}
-              </span>
-            }
+            hint={<span className="font-mono text-[11px] break-all selectable">{appInfo.config_path}</span>}
           >
             {() => (
-              <button type="button" className="btn" onClick={() => void revealInFinder(appInfo.config_path).catch(() => {})}>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => void revealInFinder(appInfo.config_path).catch(() => {})}
+              >
                 Show in {fileManager}
               </button>
             )}

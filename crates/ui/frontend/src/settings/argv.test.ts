@@ -95,9 +95,9 @@ describe('checkDaemonBackend', () => {
     expect(linux({ backend: 'swaybg', set_command: argv }, 'swaybg', 'swaybg -i {path} (kept running)').kind).toBe(
       'match',
     )
-    expect(
-      linux({ backend: 'command', set_command: argv, persistent: true }, 'command', 'swaybg -i {path}').kind,
-    ).toBe('stale')
+    expect(linux({ backend: 'command', set_command: argv, persistent: true }, 'command', 'swaybg -i {path}').kind).toBe(
+      'stale',
+    )
     // `persistent` is ignored by non-command backends.
     expect(linux({ backend: 'gnome', persistent: true }, 'gnome', 'gsettings set x').kind).toBe('match')
   })

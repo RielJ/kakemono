@@ -1,0 +1,28 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["eslint", "typescript", "unicorn", "oxc", "react", "jsx-a11y", "vitest", "import"],
+  "env": { "browser": true, "es2024": true },
+  "categories": {
+    "correctness": "error"
+  },
+  "rules": {
+    // vitest: `expect(value, message)` is valid in Vitest.
+    "vitest/valid-expect": ["error", { "maxArgs": 2 }],
+    // vi.mocked(...) types the mocks; type parameters on every vi.fn() add nothing.
+    "vitest/require-mock-type-parameters": "off",
+
+    // The app doesn't use the React Compiler. These rules flag patterns that are valid without
+    // it (latest-value refs read in render, state synced in effects).
+    "react/set-state-in-effect": "off",
+    "react/refs": "off",
+    "react/immutability": "off",
+
+    // The picker and Settings build ARIA composite widgets (listbox, grid, tablist, menu,
+    // radiogroup) with keyboard handling and roving focus on the container, which these
+    // single-element rules can't see. Other jsx-a11y rules stay on.
+    "jsx-a11y/prefer-tag-over-role": "off",
+    "jsx-a11y/interactive-supports-focus": "off",
+    "jsx-a11y/no-redundant-roles": "off"
+  },
+  "ignorePatterns": ["dist/**", "src/shared/bindings/**"]
+}

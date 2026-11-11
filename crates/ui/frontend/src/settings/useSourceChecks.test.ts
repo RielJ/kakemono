@@ -96,6 +96,9 @@ describe('useSourceChecks', () => {
     vi.mocked(api.checkSource).mockRejectedValue({ kind: 'daemon_unreachable', message: 'refused' })
     const { result } = renderHook(() => useSourceChecks([row('dir', 'folder', '/p')], true))
     await flush()
-    expect(result.current.get('dir')).toEqual({ state: 'unknown', message: 'Couldn’t check: kakemono’s background service isn’t answering.' })
+    expect(result.current.get('dir')).toEqual({
+      state: 'unknown',
+      message: 'Couldn’t check: kakemono’s background service isn’t answering.',
+    })
   })
 })

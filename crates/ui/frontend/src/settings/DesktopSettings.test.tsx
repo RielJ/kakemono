@@ -67,23 +67,28 @@ describe('DesktopSettings on macOS and Windows', () => {
   it.each([
     ['macos', 'NSWorkspace setDesktopImageURL (current Space of every screen)'],
     ['windows', 'IDesktopWallpaper'],
-  ])('%s shows only the native backend, with no selects (Display mode moved to the Wallpaper group)', async (os, detail) => {
-    vi.mocked(api.desktopBackend).mockResolvedValue(report(os, detail))
-    await renderPanel({ saved: testConfig(), os })
-    expect(screen.getByText(os)).toBeTruthy()
-    expect(screen.getByText(detail)).toBeTruthy()
-    expect(screen.getByRole('heading', { name: 'Desktop' })).toBeTruthy()
-    expect(screen.queryAllByRole('combobox')).toHaveLength(0)
-    expect(screen.queryByRole('button', { name: /Test|Re-detect/ })).toBeNull()
-    expect(screen.queryByText('Wallpaper command')).toBeNull()
-    // The only switch is macOS's "Keep wallpaper on every Space".
-    if (os === 'macos') {
-      expect(screen.getByRole('switch', { name: 'Keep wallpaper on every Space' })).toBeTruthy()
-    } else {
-      expect(screen.queryByRole('switch')).toBeNull()
-    }
-    expect(api.detectDesktop).not.toHaveBeenCalled()
-  })
+  ])(
+    '%s shows only the native backend, with no selects (Display mode moved to the Wallpaper group)',
+    async (os, detail) => {
+      vi.mocked(api.desktopBackend).mockResolvedValue(report(os, detail))
+      await renderPanel({ saved: testConfig(), os })
+      expect(screen.getByText(os)).toBeTruthy()
+      expect(screen.getByText(detail)).toBeTruthy()
+      expect(screen.getByRole('heading', { name: 'Desktop' })).toBeTruthy()
+      expect(screen.queryAllByRole('combobox')).toHaveLength(0)
+      expect(screen.queryByRole('button', { name: /Test|Re-detect/ })).toBeNull()
+      expect(screen.queryByText('Wallpaper command')).toBeNull()
+      // The only switch is macOS's "Keep wallpaper on every Space".
+      if (os === 'macos') {
+        // oxlint-disable-next-line vitest/no-conditional-expect -- the test runs once per OS
+        expect(screen.getByRole('switch', { name: 'Keep wallpaper on every Space' })).toBeTruthy()
+      } else {
+        // oxlint-disable-next-line vitest/no-conditional-expect -- the test runs once per OS
+        expect(screen.queryByRole('switch')).toBeNull()
+      }
+      expect(api.detectDesktop).not.toHaveBeenCalled()
+    },
+  )
 })
 
 describe('DesktopSettings on Linux', () => {
@@ -125,7 +130,10 @@ describe('DesktopSettings on Linux', () => {
   it('Test shows a failed reload as the daemon worded it', async () => {
     vi.mocked(api.desktopBackend).mockResolvedValue(report('command', 'setbg {path}'))
     vi.mocked(api.detectDesktop).mockResolvedValue('')
-    vi.mocked(api.testDesktop).mockRejectedValue({ kind: 'daemon', message: 'reload: [desktop] set_command: command is empty' })
+    vi.mocked(api.testDesktop).mockRejectedValue({
+      kind: 'daemon',
+      message: 'reload: [desktop] set_command: command is empty',
+    })
     await renderPanel({ saved: command, os: 'linux' })
     await userEvent.click(screen.getByRole('button', { name: 'Test' }))
     expect(screen.getByRole('alert').textContent).toBe('reload: [desktop] set_command: command is empty')

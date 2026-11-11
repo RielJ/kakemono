@@ -45,7 +45,12 @@ export default function RemoveSourceDialog({
         <button type="button" className="btn" onClick={onCancel}>
           Cancel
         </button>
-        <button type="button" className="btn btn-danger" data-autofocus onClick={() => onConfirm(online && deleteFiles)}>
+        <button
+          type="button"
+          className="btn btn-danger"
+          data-autofocus
+          onClick={() => onConfirm(online && deleteFiles)}
+        >
           Remove
         </button>
       </div>

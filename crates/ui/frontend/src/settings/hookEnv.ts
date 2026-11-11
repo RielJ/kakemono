@@ -9,4 +9,11 @@ export const HOOK_ENV: readonly { name: string; text: string }[] = [
 ]
 
 /** Copied from the daemon's environment; everything else is cleared. */
-export const PASSED_THROUGH = ['PATH', 'HOME', 'DISPLAY', 'WAYLAND_DISPLAY', 'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS']
+export const PASSED_THROUGH = [
+  'PATH',
+  'HOME',
+  'DISPLAY',
+  'WAYLAND_DISPLAY',
+  'XDG_RUNTIME_DIR',
+  'DBUS_SESSION_BUS_ADDRESS',
+]

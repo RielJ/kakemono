@@ -43,7 +43,15 @@ function config(): Config {
       name_regex: '',
     },
     favorites: { dir: '/home/u/Pictures/Wallpapers/favorites' },
-    picker: { position: 'bottom', orientation: 'auto', force_x11: false, close_on_blur: true, blur_nsfw: true, placement: 'edge', custom: null },
+    picker: {
+      position: 'bottom',
+      orientation: 'auto',
+      force_x11: false,
+      close_on_blur: true,
+      blur_nsfw: true,
+      placement: 'edge',
+      custom: null,
+    },
     desktop: {
       backend: 'auto',
       set_command: null,

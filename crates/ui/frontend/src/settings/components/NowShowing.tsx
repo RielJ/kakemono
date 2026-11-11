@@ -172,7 +172,12 @@ export default function NowShowing({
           icon="chevronLeft"
           disabled={busy || !running || (status?.history_index ?? 0) <= 0}
         />
-        <Action onClick={() => void run(nextWallpaper)} label="Next wallpaper" icon="chevronRight" disabled={busy || !running} />
+        <Action
+          onClick={() => void run(nextWallpaper)}
+          label="Next wallpaper"
+          icon="chevronRight"
+          disabled={busy || !running}
+        />
         <Action
           onClick={() => void run(paused ? resumeWallpaper : pauseWallpaper)}
           label={paused ? 'Resume rotation' : 'Pause rotation'}
@@ -180,8 +185,18 @@ export default function NowShowing({
           disabled={busy || !running}
         />
         <span className="w-px h-4 bg-line mx-1" aria-hidden="true" />
-        <Action onClick={() => void run(() => favoriteWallpaper())} label="Favorite" icon="heart" disabled={busy || !current} />
-        <Action onClick={() => void run(trashWallpaper)} label="Move to Trash" icon="trash" disabled={busy || !current} />
+        <Action
+          onClick={() => void run(() => favoriteWallpaper())}
+          label="Favorite"
+          icon="heart"
+          disabled={busy || !current}
+        />
+        <Action
+          onClick={() => void run(trashWallpaper)}
+          label="Move to Trash"
+          icon="trash"
+          disabled={busy || !current}
+        />
         <Action
           onClick={() => {
             if (current?.path) void run(() => revealInFinder(current.path))

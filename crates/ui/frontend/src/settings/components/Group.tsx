@@ -105,8 +105,7 @@ export function Row({
 
 /** Inline status line inside a panel: a note, a warning, or an error. */
 export function Note({ tone = 'muted', children }: { tone?: 'muted' | 'warn' | 'danger'; children: ReactNode }) {
-  const cls =
-    tone === 'warn' ? 'text-warn bg-warn-soft' : tone === 'danger' ? 'text-danger' : 'text-muted'
+  const cls = tone === 'warn' ? 'text-warn bg-warn-soft' : tone === 'danger' ? 'text-danger' : 'text-muted'
   return (
     <p
       role={tone === 'muted' ? undefined : tone === 'danger' ? 'alert' : 'status'}

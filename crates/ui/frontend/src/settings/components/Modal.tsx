@@ -54,7 +54,9 @@ export default function Modal({
   }
 
   return createPortal(
+    // oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- backdrop click closes; Escape does the same from the keyboard
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && close.current()}>
+      {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- the dialog traps Tab focus */}
       <div
         ref={panel}
         role="dialog"
