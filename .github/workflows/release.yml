@@ -5,6 +5,13 @@ name: Release
 # workflow artifacts; a `v*` tag also creates a draft GitHub release with
 # every artifact and a SHA256SUMS file.
 #
+# Asset names carry the OS and arch but no version, so the README can link to
+# releases/latest/download/<name>:
+#   app:  kakemono-<os>-<arch>.dmg | .deb | .rpm | .AppImage | .msi | -setup.exe
+#   CLI:  kakemono-cli-<os>-<arch>.tar.gz (.zip on Windows)
+# with <os>-<arch> one of macos-arm64, macos-x64, linux-x64, linux-arm64,
+# windows-x64 (the matrix `asset` value).
+#
 # Bundles are unsigned: no Apple Developer ID, notarization or Authenticode
 # secrets yet.
 
@@ -26,7 +33,7 @@ env:
   RUST_BACKTRACE: "1"
 
 jobs:
-  # CLI archives: kakemono-<version>-<target>.tar.gz (zip on Windows).
+  # CLI archives: kakemono-cli-<asset>.tar.gz (zip on Windows).
   cli:
     name: cli (${{ matrix.target }})
     strategy:
@@ -34,15 +41,20 @@ jobs:
       matrix:
         include:
           - target: aarch64-apple-darwin
+            asset: macos-arm64
             os: macos-latest
           - target: x86_64-apple-darwin
+            asset: macos-x64
             os: macos-latest
           - target: x86_64-unknown-linux-gnu
+            asset: linux-x64
             os: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
+            asset: linux-arm64
             os: ubuntu-22.04
             cross: true
           - target: x86_64-pc-windows-msvc
+            asset: windows-x64
             os: windows-latest
     runs-on: ${{ matrix.os }}
     defaults:
@@ -74,9 +86,15 @@ jobs:
       - name: Package
         id: package
         run: |
+          # Asset names leave the version out, so check it here instead.
           version="$(cargo metadata --no-deps --format-version 1 \
             | jq -r '.packages[] | select(.name == "kakemono") | .version')"
-          name="kakemono-${version}-${{ matrix.target }}"
+          tag="$GITHUB_REF_NAME"
+          if [[ "$GITHUB_REF_TYPE" == tag && "$tag" != "v$version" ]]; then
+            echo "tag $tag does not match Cargo.toml version $version"
+            exit 1
+          fi
+          name="kakemono-cli-${{ matrix.asset }}"
           mkdir -p "dist/$name"
           cp README.md "dist/$name/"
           if [[ "${{ matrix.target }}" == *windows* ]]; then
@@ -105,12 +123,16 @@ jobs:
       matrix:
         include:
           - target: aarch64-apple-darwin
+            asset: macos-arm64
             os: macos-latest
           - target: x86_64-apple-darwin
+            asset: macos-x64
             os: macos-latest
           - target: x86_64-unknown-linux-gnu
+            asset: linux-x64
             os: ubuntu-22.04
           - target: x86_64-pc-windows-msvc
+            asset: windows-x64
             os: windows-latest
     runs-on: ${{ matrix.os }}
     defaults:
@@ -206,17 +228,32 @@ jobs:
             $found.FullName
           }
 
-      # The .app directory is not uploaded; the dmg carries it.
+      # Copies each bundle to dist/kakemono-<asset><suffix>, e.g.
+      # kakemono_0.2.0_aarch64.dmg -> kakemono-macos-arm64.dmg. The .app
+      # directory is not uploaded; the dmg carries it.
+      - name: Name the bundles
+        run: |
+          bundle="target/${{ matrix.target }}/release/bundle"
+          mkdir -p dist
+          shopt -s nullglob
+          # Quoted: the globs expand inside the bundle folder, not here.
+          for pair in 'dmg/*.dmg:.dmg' 'deb/*.deb:.deb' 'rpm/*.rpm:.rpm' \
+            'appimage/*.AppImage:.AppImage' 'msi/*.msi:.msi' \
+            'nsis/*.exe:-setup.exe'; do
+            files=("$bundle"/${pair%%:*})
+            (( ${#files[@]} == 0 )) && continue
+            if (( ${#files[@]} > 1 )); then
+              echo "more than one ${pair%%:*}: ${files[*]}"
+              exit 1
+            fi
+            cp -- "${files[0]}" "dist/kakemono-${{ matrix.asset }}${pair#*:}"
+          done
+          ls -l dist
+
       - uses: actions/upload-artifact@v4
         with:
           name: ui-${{ matrix.target }}
-          path: |
-            target/${{ matrix.target }}/release/bundle/dmg/*.dmg
-            target/${{ matrix.target }}/release/bundle/deb/*.deb
-            target/${{ matrix.target }}/release/bundle/rpm/*.rpm
-            target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
-            target/${{ matrix.target }}/release/bundle/msi/*.msi
-            target/${{ matrix.target }}/release/bundle/nsis/*.exe
+          path: dist/*
           if-no-files-found: error
 
   release:
@@ -232,26 +269,56 @@ jobs:
           path: dist
           merge-multiple: true
 
-      # upload-artifact keeps each UI bundle's folder (dmg/, deb/, msi/...).
-      # Release assets are flat files; the names already carry the version
-      # and arch, so a clash means two jobs built the same file.
-      - name: Flatten the bundle folders
-        working-directory: dist
-        run: |
-          for f in */*; do
-            name="${f##*/}"
-            if [[ -e "$name" ]]; then
-              echo "two artifacts are named $name"
-              exit 1
-            fi
-            mv -- "$f" .
-          done
-          rmdir -- */
-          ls -l
-
       - name: SHA256SUMS
         working-directory: dist
-        run: sha256sum -- * > SHA256SUMS
+        run: |
+          ls -l
+          sha256sum -- * > SHA256SUMS
+
+      # A download table goes above the generated changelog. The step
+      # fails if a linked asset is missing.
+      - name: Write the download table
+        working-directory: dist
+        run: |
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download"
+          base="$base/$GITHUB_REF_NAME"
+          for f in kakemono-{macos-arm64,macos-x64}.dmg \
+            kakemono-linux-x64.{deb,rpm,AppImage} \
+            kakemono-windows-x64{-setup.exe,.msi} \
+            kakemono-cli-{macos-arm64,macos-x64,linux-x64,linux-arm64}.tar.gz \
+            kakemono-cli-windows-x64.zip; do
+            [[ -e "$f" ]] || { echo "missing asset $f"; exit 1; }
+          done
+          link() { printf '[%s](%s/%s)' "$2" "$base" "$1"; }
+          {
+            echo '## Download'
+            echo
+            echo '| Platform | App (includes the CLI) | CLI only |'
+            echo '|---|---|---|'
+            echo "| macOS, Apple silicon" \
+              "| $(link kakemono-macos-arm64.dmg .dmg)" \
+              "| $(link kakemono-cli-macos-arm64.tar.gz .tar.gz) |"
+            echo "| macOS, Intel" \
+              "| $(link kakemono-macos-x64.dmg .dmg)" \
+              "| $(link kakemono-cli-macos-x64.tar.gz .tar.gz) |"
+            echo "| Linux, x86_64" \
+              "| $(link kakemono-linux-x64.deb .deb)" \
+              "· $(link kakemono-linux-x64.rpm .rpm)" \
+              "· $(link kakemono-linux-x64.AppImage .AppImage)" \
+              "| $(link kakemono-cli-linux-x64.tar.gz .tar.gz) |"
+            echo "| Linux, ARM64 | —" \
+              "| $(link kakemono-cli-linux-arm64.tar.gz .tar.gz) |"
+            echo "| Windows, x64" \
+              "| $(link kakemono-windows-x64-setup.exe -setup.exe)" \
+              "· $(link kakemono-windows-x64.msi .msi)" \
+              "| $(link kakemono-cli-windows-x64.zip .zip) |"
+            echo
+            echo "The builds are not signed. The" \
+              "[README](https://github.com/$GITHUB_REPOSITORY#install)" \
+              'explains the first-run warning on each system.' \
+              '`SHA256SUMS` lists a checksum for every file.'
+          } > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
 
       - name: Create the draft release
         env:
@@ -259,4 +326,5 @@ jobs:
         run: >-
           gh release create "$GITHUB_REF_NAME" dist/*
           --repo "$GITHUB_REPOSITORY" --draft --verify-tag --generate-notes
+          --notes "$(cat "$RUNNER_TEMP/notes.md")"
           --title "kakemono $GITHUB_REF_NAME"
