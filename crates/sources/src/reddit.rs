@@ -1,4 +1,5 @@
-//! Reddit provider: image posts from the hot listing of one subreddit (one `[[sources]]` row).
+//! Reddit provider: image posts from one listing (hot by default; see [`Sort`]) of one subreddit
+//! (one `[[sources]]` row).
 //!
 //! Port of Go `internal/providers/reddit/reddit.go`. `fetch` reads the post `url` only, like Go.
 //! `browse` also reads `preview` images, whose URLs Reddit HTML-escapes (`&amp;`) unless asked
@@ -78,10 +79,117 @@ impl std::fmt::Display for Subreddit {
     }
 }
 
+/// The time range of a `top` or `controversial` listing (Reddit's `t` parameter).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TimeRange {
+    /// `t=hour`.
+    Hour,
+    /// `t=day`.
+    Day,
+    /// `t=week`.
+    Week,
+    /// `t=month`.
+    Month,
+    /// `t=year`.
+    Year,
+    /// `t=all`.
+    All,
+}
+
+impl TimeRange {
+    /// The `t` value Reddit takes.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Hour => "hour",
+            Self::Day => "day",
+            Self::Week => "week",
+            Self::Month => "month",
+            Self::Year => "year",
+            Self::All => "all",
+        }
+    }
+
+    /// The range named by a `t` value (ASCII case ignored); `None` for anything else.
+    #[must_use]
+    pub fn parse(t: &str) -> Option<Self> {
+        [
+            Self::Hour,
+            Self::Day,
+            Self::Week,
+            Self::Month,
+            Self::Year,
+            Self::All,
+        ]
+        .into_iter()
+        .find(|range| range.as_str().eq_ignore_ascii_case(t))
+    }
+}
+
+/// Which listing of the subreddit to read, as in `reddit.com/r/x/<sort>/?t=<range>`.
+///
+/// Only `top` and `controversial` take a time range; `None` sends no `t`, so Reddit uses its
+/// own default, as the website does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Sort {
+    /// `/hot` (the default).
+    #[default]
+    Hot,
+    /// `/new`.
+    New,
+    /// `/rising`.
+    Rising,
+    /// `/top`, with an optional time range.
+    Top(Option<TimeRange>),
+    /// `/controversial`, with an optional time range.
+    Controversial(Option<TimeRange>),
+}
+
+impl Sort {
+    /// The listing named by a sort path segment (`hot`, `new`, `rising`, `top`, `controversial`;
+    /// ASCII case ignored) and a `t` value. `t` counts only for `top` and `controversial`, and
+    /// an unknown `t` is dropped. `None` when `sort` is not one of the five.
+    #[must_use]
+    pub fn parse(sort: &str, t: Option<&str>) -> Option<Self> {
+        let range = t.and_then(TimeRange::parse);
+        let parsed = match sort.to_ascii_lowercase().as_str() {
+            "hot" => Self::Hot,
+            "new" => Self::New,
+            "rising" => Self::Rising,
+            "top" => Self::Top(range),
+            "controversial" => Self::Controversial(range),
+            _ => return None,
+        };
+        Some(parsed)
+    }
+
+    /// The sort path segment: `/r/{subreddit}/{segment}.json`.
+    #[must_use]
+    pub fn path_segment(self) -> &'static str {
+        match self {
+            Self::Hot => "hot",
+            Self::New => "new",
+            Self::Rising => "rising",
+            Self::Top(_) => "top",
+            Self::Controversial(_) => "controversial",
+        }
+    }
+
+    /// The time range, if this listing has one.
+    #[must_use]
+    pub fn time_range(self) -> Option<TimeRange> {
+        match self {
+            Self::Top(range) | Self::Controversial(range) => range,
+            Self::Hot | Self::New | Self::Rising => None,
+        }
+    }
+}
+
 /// The Reddit provider.
 #[derive(Debug, Clone)]
 pub struct Reddit {
     subreddit: Subreddit,
+    sort: Sort,
     client: Client,
     base_url: url::Url,
 }
@@ -102,25 +210,46 @@ impl Reddit {
     ) -> Self {
         Self {
             subreddit,
+            sort: Sort::Hot,
             client,
             base_url,
         }
     }
 
-    /// `{base}/r/{subreddit}/hot.json?limit=100`.
-    fn feed_url(&self) -> url::Url {
-        let path = format!("/r/{}/hot.json", self.subreddit);
-        http::endpoint(&self.base_url, &path, &[("limit", LIMIT)])
+    /// Read the `sort` listing instead of the hot one.
+    #[must_use]
+    pub fn with_sort(mut self, sort: Sort) -> Self {
+        self.sort = sort;
+        self
     }
 
-    /// `{base}/r/{subreddit}/hot.json?[after={after}&]limit=25&raw_json=1`.
+    /// `/r/{subreddit}/{sort}.json`.
+    fn listing_path(&self) -> String {
+        format!("/r/{}/{}.json", self.subreddit, self.sort.path_segment())
+    }
+
+    /// Appends `t` when the sort has a time range.
+    fn push_range<'a>(&self, params: &mut Vec<(&'a str, &'a str)>) {
+        if let Some(range) = self.sort.time_range() {
+            params.push(("t", range.as_str()));
+        }
+    }
+
+    /// `{base}/r/{subreddit}/{sort}.json?limit=100[&t={range}]`.
+    fn feed_url(&self) -> url::Url {
+        let mut params = vec![("limit", LIMIT)];
+        self.push_range(&mut params);
+        http::endpoint(&self.base_url, &self.listing_path(), &params)
+    }
+
+    /// `{base}/r/{subreddit}/{sort}.json?[after={after}&]limit=25&raw_json=1[&t={range}]`.
     fn browse_url(&self, after: Option<&str>) -> url::Url {
-        let path = format!("/r/{}/hot.json", self.subreddit);
         let mut params = vec![("limit", BROWSE_LIMIT), ("raw_json", "1")];
         if let Some(after) = after {
             params.push(("after", after));
         }
-        http::endpoint(&self.base_url, &path, &params)
+        self.push_range(&mut params);
+        http::endpoint(&self.base_url, &self.listing_path(), &params)
     }
 }
 
@@ -130,7 +259,7 @@ impl Provider for Reddit {
         "reddit"
     }
 
-    /// Fetches the hot listing of the subreddit; `query` is ignored.
+    /// Fetches the subreddit's listing (see [`Sort`]); `query` is ignored.
     async fn fetch(&self, _query: &str) -> Result<Vec<WallpaperResult>, ProviderError> {
         let response = http::get_with_retry(&self.client, self.feed_url())
             .await
@@ -148,7 +277,7 @@ impl Provider for Reddit {
         MEDIA_HOSTS
     }
 
-    /// One hot-listing batch of 25 posts, from `cursor` (Reddit's `after`) on; `query` is
+    /// One listing batch of 25 posts, from `cursor` (Reddit's `after`) on; `query` is
     /// ignored. Ends when the listing's `after` is empty.
     async fn browse(
         &self,

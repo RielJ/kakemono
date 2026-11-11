@@ -8,7 +8,7 @@
 //! How `location` maps, per type:
 //!
 //! - **Reddit:** `x`, `r/x`, `/r/x` or `https://(www.|old.)reddit.com/r/x/...` give the
-//!   subreddit `x`.
+//!   subreddit `x`. A URL's sort and `t` (`/r/x/top/?t=year`) pick the listing; hot otherwise.
 //! - **Wallhaven:** keywords pass through as the query. A `wallhaven.cc/search?...` URL sets the
 //!   query from `q`, overrides `categories`, `purity` and `sorting`, and adds `topRange`,
 //!   `order`, `atleast`, `resolutions`, `ratios` and `colors` to every request;
@@ -26,7 +26,7 @@ use crate::apod::Apod;
 use crate::bing::Bing;
 use crate::http::default_base_url;
 use crate::provider::{Provider, ProviderError};
-use crate::reddit::{Reddit, Subreddit};
+use crate::reddit::{Reddit, Sort, Subreddit};
 use crate::unsplash::Unsplash;
 use crate::wallhaven::{Wallhaven, WallhavenOverrides};
 
@@ -170,11 +170,10 @@ fn build_online_at(
         SourceType::Reddit => {
             let subreddit = reddit_location(location)?;
             (
-                Arc::new(Reddit::for_subreddit_with_base_url(
-                    subreddit,
-                    http,
-                    origins.reddit.clone(),
-                )),
+                Arc::new(
+                    Reddit::for_subreddit_with_base_url(subreddit, http, origins.reddit.clone())
+                        .with_sort(reddit_sort(location)),
+                ),
                 String::new(),
             )
         }
@@ -213,8 +212,37 @@ fn build_online_at(
     })
 }
 
+/// The listing named by a Reddit `location` URL: `reddit.com/r/x/<sort>/?t=<range>`, where
+/// `<sort>` is `hot`, `new`, `rising`, `top` or `controversial` and `t` (`hour`, `day`, `week`,
+/// `month`, `year`, `all`) counts for `top` and `controversial` only.
+///
+/// Anything else is [`Sort::Hot`]: a bare name (`x`, `r/x`), a URL without a sort, a post URL
+/// (`/r/x/comments/...`), or a location [`reddit_location`] rejects. An unknown `t` is dropped,
+/// so Reddit uses its default range.
+pub(crate) fn reddit_sort(location: &str) -> Sort {
+    let Ok(Some(url)) = url_like(location.trim(), REDDIT_BARE_HOSTS) else {
+        return Sort::Hot;
+    };
+    let segments: Vec<&str> = url
+        .path_segments()
+        .map(|s| s.filter(|s| !s.is_empty()).collect())
+        .unwrap_or_default();
+    let [r, _, sort, ..] = segments.as_slice() else {
+        return Sort::Hot;
+    };
+    if !r.eq_ignore_ascii_case("r") {
+        return Sort::Hot;
+    }
+    let t = url
+        .query_pairs()
+        .find(|(k, _)| k == "t")
+        .map(|(_, v)| v.into_owned());
+    Sort::parse(sort, t.as_deref()).unwrap_or_default()
+}
+
 /// The subreddit named by a Reddit `location`: `x`, `r/x`, `/r/x/` or a `reddit.com/r/x/...`
-/// URL (any `*.reddit.com` host; the sort and other path parts are ignored). A name is
+/// URL (any `*.reddit.com` host; the sort is read by [`reddit_sort`], other path parts are
+/// ignored). A name is
 /// `[A-Za-z0-9_+]{1,50}` (`+` joins subreddits, as Reddit allows).
 ///
 /// Errors: [`ProviderError::NotConfigured`] (`reddit: ...`) for anything else.
@@ -482,6 +510,67 @@ mod tests {
     }
 
     #[test]
+    fn reddit_sort_comes_from_the_url() {
+        use crate::reddit::TimeRange;
+        for (loc, want) in [
+            (
+                "https://www.reddit.com/r/EarthPorn/top/?t=year",
+                Sort::Top(Some(TimeRange::Year)),
+            ),
+            ("reddit.com/r/wallpapers/top", Sort::Top(None)),
+            ("https://old.reddit.com/r/wallpapers/new/", Sort::New),
+            ("https://www.reddit.com/r/wallpapers/rising", Sort::Rising),
+            (
+                "https://www.reddit.com/r/wallpapers/controversial/?t=WEEK",
+                Sort::Controversial(Some(TimeRange::Week)),
+            ),
+            ("https://www.reddit.com/r/wallpapers/hot/?t=year", Sort::Hot),
+            (
+                "https://www.reddit.com/r/wallpapers/top/?t=forever",
+                Sort::Top(None),
+            ),
+            ("https://www.reddit.com/r/wallpapers/", Sort::Hot),
+            (
+                "https://www.reddit.com/r/wallpapers/comments/abc/title/",
+                Sort::Hot,
+            ),
+            ("r/wallpapers", Sort::Hot),
+            ("wallpapers", Sort::Hot),
+        ] {
+            assert_eq!(reddit_sort(loc), want, "{loc}");
+        }
+    }
+
+    #[tokio::test]
+    async fn reddit_row_with_top_url_fetches_the_top_listing() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/r/EarthPorn/top.json"))
+            .and(query_param("t", "month"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"data": {"children": []}})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let origins = Origins {
+            reddit: server.uri().parse().unwrap(),
+            ..Origins::default()
+        };
+        let row = entry(
+            "rd-1",
+            SourceType::Reddit,
+            "https://www.reddit.com/r/EarthPorn/top/?t=month",
+        );
+        let src = build_online_at(&row, &Config::default(), Client::new(), &origins).unwrap();
+        src.provider.fetch(&src.query).await.unwrap();
+    }
+
+    #[test]
     fn reddit_rejects_non_subreddits() {
         for bad in [
             "",
@@ -657,7 +746,6 @@ mod tests {
             enabled: true,
             kind,
             location: location.into(),
-            ..Default::default()
         }
     }
 
@@ -791,7 +879,7 @@ mod tests {
         let row = entry(
             "rd-1",
             SourceType::Reddit,
-            "https://www.reddit.com/r/EarthPorn/top/?t=week",
+            "https://www.reddit.com/r/EarthPorn/",
         );
         let src = build_online_at(&row, &Config::default(), Client::new(), &origins).unwrap();
         assert!(src.provider.fetch(&src.query).await.unwrap().is_empty());

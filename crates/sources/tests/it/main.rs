@@ -11,6 +11,7 @@ mod common;
 mod guard;
 mod http;
 mod reddit;
+mod reddit_sort;
 mod unsplash;
 mod wallhaven_api;
 mod wallhaven_scrape;
