@@ -77,11 +77,14 @@ function Action({
 export default function NowShowing({
   status,
   daemon,
+  rotating,
   onStatusChange,
   fileManager,
 }: {
   status: StatusData | null
   daemon: DaemonState
+  /** `daemon.rotation_enabled`. Off, there is no interval to report and nothing to pause. */
+  rotating: boolean
   /** Called after an action so the parent can refresh the status. */
   onStatusChange: () => void
   /** "Finder", "Explorer" or "the file manager". */
@@ -149,14 +152,23 @@ export default function NowShowing({
           <div role="status" aria-live="polite" className="mt-0.5 text-[12px] text-muted min-h-4">
             {error ? <span className="text-danger break-words">{error}</span> : meta}
           </div>
-          {running && status && (
+          {running && status && (rotating || status.theme) && (
             <p className="mt-auto pt-2 text-[12px] text-muted flex items-center gap-1.5">
-              <span
-                className={`inline-block w-1.5 h-1.5 rounded-full ${paused ? 'bg-warn' : 'bg-ok'}`}
-                aria-hidden="true"
-              />
-              {paused ? 'Paused' : `Changes every ${status.interval}`}
-              {status.theme && <span className="text-faint">· {status.theme} mode</span>}
+              {rotating && (
+                <>
+                  <span
+                    className={`inline-block w-1.5 h-1.5 rounded-full ${paused ? 'bg-warn' : 'bg-ok'}`}
+                    aria-hidden="true"
+                  />
+                  {paused ? 'Paused' : `Changes every ${status.interval}`}
+                </>
+              )}
+              {status.theme && (
+                <span className="text-faint">
+                  {rotating && '· '}
+                  {status.theme} mode
+                </span>
+              )}
             </p>
           )}
         </div>
@@ -178,12 +190,14 @@ export default function NowShowing({
           icon="chevronRight"
           disabled={busy || !running}
         />
-        <Action
-          onClick={() => void run(paused ? resumeWallpaper : pauseWallpaper)}
-          label={paused ? 'Resume rotation' : 'Pause rotation'}
-          icon={paused ? 'play' : 'pause'}
-          disabled={busy || !running}
-        />
+        {rotating && (
+          <Action
+            onClick={() => void run(paused ? resumeWallpaper : pauseWallpaper)}
+            label={paused ? 'Resume rotation' : 'Pause rotation'}
+            icon={paused ? 'play' : 'pause'}
+            disabled={busy || !running}
+          />
+        )}
         <span className="w-px h-4 bg-line mx-1" aria-hidden="true" />
         <Action
           onClick={() => void run(() => favoriteWallpaper())}

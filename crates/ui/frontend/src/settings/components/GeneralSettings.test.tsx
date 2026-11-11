@@ -258,9 +258,9 @@ describe('NowShowing', () => {
     imageUrl: `thumb://localhost/${path.length}`,
   })
 
-  async function show(s: StatusData | null, daemon: 'running' | 'stopped' = 'running') {
+  async function show(s: StatusData | null, daemon: 'running' | 'stopped' = 'running', rotating = true) {
     const { container } = render(
-      <NowShowing status={s} daemon={daemon} onStatusChange={() => {}} fileManager="Finder" />,
+      <NowShowing status={s} daemon={daemon} rotating={rotating} onStatusChange={() => {}} fileManager="Finder" />,
     )
     await act(async () => {})
     return () => container.querySelector('img')?.getAttribute('src') ?? null
@@ -282,6 +282,30 @@ describe('NowShowing', () => {
   it('shows the placeholder when there is no current thumbnail', async () => {
     const src = await show(status('/w/a.jpg'))
     expect(src()).toBeNull()
+  })
+
+  it('says how often the wallpaper changes while rotation is on', async () => {
+    vi.mocked(api.currentThumbnail).mockResolvedValue(null)
+    await show(status('/w/a.jpg'))
+    expect(screen.getByText(/Changes every 30m/)).toBeTruthy()
+  })
+
+  it('drops the interval but keeps the theme while rotation is off', async () => {
+    vi.mocked(api.currentThumbnail).mockResolvedValue(null)
+    await show(status('/w/a.jpg'), 'running', false)
+    expect(screen.queryByText(/Changes every/)).toBeNull()
+    expect(screen.queryByText(/Paused/)).toBeNull()
+    expect(screen.getByText(/dark mode/)).toBeTruthy()
+  })
+
+  it('offers pause only while rotation is on', async () => {
+    vi.mocked(api.currentThumbnail).mockResolvedValue(null)
+    await show(status('/w/a.jpg'))
+    expect(screen.getByRole('button', { name: 'Pause rotation' })).toBeTruthy()
+    cleanup()
+    await show(status('/w/a.jpg'), 'running', false)
+    expect(screen.queryByRole('button', { name: /(Pause|Resume) rotation/ })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Next wallpaper' })).toBeTruthy()
   })
 
   it('asks for no thumbnail while the daemon is stopped', async () => {

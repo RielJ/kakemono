@@ -50,7 +50,13 @@ export default function GeneralSettings({
 
   return (
     <>
-      <NowShowing status={status} daemon={daemon} onStatusChange={onStatusChange} fileManager={fileManager} />
+      <NowShowing
+        status={status}
+        daemon={daemon}
+        rotating={d.rotation_enabled}
+        onStatusChange={onStatusChange}
+        fileManager={fileManager}
+      />
 
       <Group>
         <StartAtLogin variant="line" />
