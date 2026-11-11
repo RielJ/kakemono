@@ -23,6 +23,8 @@ pub enum Simple {
     Favorite,
     /// `trash`: move the current wallpaper to the trash dir; the daemon advances.
     Trash,
+    /// `quit`: stop the daemon.
+    Quit,
 }
 
 /// What a [`Simple`] command prints after the daemon answered `ok`.
@@ -44,6 +46,7 @@ impl Simple {
             Simple::Resume => Request::Resume,
             Simple::Favorite => Request::Favorite,
             Simple::Trash => Request::Trash { expected: None },
+            Simple::Quit => Request::Quit,
         }
     }
 
@@ -54,6 +57,7 @@ impl Simple {
             Simple::Resume => Reply::Line("▶  Auto-rotation resumed."),
             Simple::Favorite => Reply::Line("✓ Wallpaper saved to favorites."),
             Simple::Trash => Reply::LineThenWallpaper("🗑  Wallpaper trashed.  Switching to next…"),
+            Simple::Quit => Reply::Line("■  Daemon stopping."),
         }
     }
 }

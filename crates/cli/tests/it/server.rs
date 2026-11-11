@@ -429,6 +429,27 @@ async fn second_lock_attempt_fails_while_daemon_runs() {
     drop(lock::acquire(&rt).unwrap());
 }
 
+/// `quit` answers `{"ok":true}` and asks the daemon to stop; serving itself stops only when
+/// the daemon cancels `shutdown`, so the answer always reaches the client.
+#[tokio::test]
+async fn quit_answers_and_requests_shutdown() {
+    let mut quit = None;
+    let d = start_with(|srv| {
+        quit = Some(srv.quit_requested());
+        srv
+    })
+    .await;
+    let quit = quit.unwrap();
+    assert!(!quit.is_cancelled());
+
+    let lines = raw_exchange(&d.endpoint, &[r#"{"cmd":"quit"}"#]).await;
+    assert_eq!(lines, [r#"{"ok":true}"#]);
+    tokio::time::timeout(STEP, quit.cancelled())
+        .await
+        .expect("quit requested");
+    d.stop().await;
+}
+
 #[tokio::test]
 async fn shutdown_removes_the_socket() {
     let d = start().await;

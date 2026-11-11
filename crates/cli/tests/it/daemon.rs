@@ -206,6 +206,39 @@ fn foreground_stops_on_sigint() {
     assert!(log.contains("daemon shutting down (SIGINT)"), "{log}");
 }
 
+/// `kakemono quit` takes the same path as SIGTERM: socket and PID file removed, state saved.
+#[test]
+fn foreground_stops_on_quit_and_cleans_up() {
+    let env = Env::quiet();
+    let mut cmd = env.cmd();
+    env.daemon_args(&mut cmd);
+    let mut child = cmd
+        .arg("-f")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    env.wait_ready(&mut child);
+    let pid_file = env.find(|n| n == PID_FILE_NAME).remove(0);
+
+    let out = env
+        .cmd()
+        .arg("--socket")
+        .arg(&env.socket)
+        .arg("quit")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let status = wait_exit(&mut child);
+    let log = stderr_of(&mut child);
+    assert!(status.success(), "{status}\n{log}");
+    assert!(log.contains("daemon shutting down (quit request)"), "{log}");
+    assert!(log.contains("daemon stopped"), "{log}");
+    assert!(!env.socket.exists(), "socket removed");
+    assert!(!pid_file.exists(), "PID file removed");
+    assert_eq!(env.find(|n| n == "state.json").len(), 1, "state saved");
+}
+
 #[test]
 fn foreground_creates_a_missing_config() {
     let env = Env::quiet();

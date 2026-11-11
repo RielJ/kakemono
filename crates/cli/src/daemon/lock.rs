@@ -10,7 +10,7 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 /// Lock file name inside the runtime dir.
-pub const LOCK_FILE_NAME: &str = "daemon.lock";
+pub use kakemono_config::paths::DAEMON_LOCK_FILE_NAME as LOCK_FILE_NAME;
 
 /// Why [`acquire`] failed.
 #[derive(Debug, thiserror::Error)]

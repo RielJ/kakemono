@@ -264,6 +264,16 @@ async fn every_client_command_prints_go_text() {
     d.stop().await;
 }
 
+/// `quit` prints one line; the daemon's own shutdown is covered in `server.rs`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn quit_prints_a_line() {
+    let d = start().await;
+    let out = run_args(&d, &["quit"]).await;
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(out.stdout, "■  Daemon stopping.\n");
+    d.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn daemon_error_exits_1_with_message() {
     let d = start().await;

@@ -165,6 +165,10 @@ pub enum Request {
     Subscribe,
     /// New: daemon version string.
     Version,
+    /// New: stop the daemon. It answers `{"ok":true}`, then shuts down as on SIGTERM (state
+    /// saved, socket removed). The app's updater uses it to restart the daemon on the new
+    /// binary.
+    Quit,
     /// New: diagnostics report. With `apply`, the daemon first re-sets the current wallpaper
     /// through its own setter and reports the outcome. Wire: `args.apply`, written only when
     /// `true`, so the plain form stays `{"cmd":"doctor"}`.
@@ -257,6 +261,7 @@ impl Request {
             Self::Reload => "reload",
             Self::Subscribe => "subscribe",
             Self::Version => "version",
+            Self::Quit => "quit",
             Self::Doctor { .. } => "doctor",
             Self::CheckSource { .. } => "check_source",
             Self::Fetch { .. } => "fetch",
@@ -369,6 +374,7 @@ impl TryFrom<Command> for Request {
             "reload" => Self::Reload,
             "subscribe" => Self::Subscribe,
             "version" => Self::Version,
+            "quit" => Self::Quit,
             // Missing, `null` or `false` = report only.
             "doctor" => match cmd.args.get("apply") {
                 None | Some(Value::Null) => Self::Doctor { apply: false },

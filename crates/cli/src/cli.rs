@@ -107,6 +107,13 @@ pub enum Commands {
     /// Resume automatic wallpaper rotation
     #[command(long_about = "Tell the daemon to restart the auto-rotation timer after a pause.")]
     Resume,
+    /// Stop the daemon
+    #[command(
+        long_about = "Tell the daemon to exit.  It saves its state and removes its socket first.  \
+        The login service from \"service install\" restarts only a daemon that failed, so it \
+        stays stopped until the next login or \"kakemono daemon\"."
+    )]
+    Quit,
     /// Reveal the current wallpaper, or open the download or favorites folder
     Open {
         /// Open the download folder
@@ -351,6 +358,7 @@ fn run_command(ctx: &Context, out: &mut dyn Write, command: Commands) -> anyhow:
         Commands::Status { json } => block_on(simple::status(ctx, out, json)),
         Commands::Pause => block_on(simple::run(ctx, out, Simple::Pause)),
         Commands::Resume => block_on(simple::run(ctx, out, Simple::Resume)),
+        Commands::Quit => block_on(simple::run(ctx, out, Simple::Quit)),
         Commands::Completions { shell } => {
             // `generate` panics when a write fails, so render to memory first.
             let mut script = Vec::new();

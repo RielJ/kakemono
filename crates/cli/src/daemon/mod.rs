@@ -11,7 +11,7 @@
 //! 3. Write `<runtime_dir>/daemon.pid` (removed on exit).
 //! 4. [`kakemono_platform::host`] owns the main thread; inside its runtime: bind the socket, build
 //!    the engine, then run the IPC server and the rotation loop until SIGINT/SIGTERM (Ctrl-C,
-//!    Ctrl-Break, console close or shutdown on Windows).
+//!    Ctrl-Break, console close or shutdown on Windows) or a `quit` request.
 //! 5. Stop the server (in-flight requests get `SHUTDOWN_GRACE`) and the rotation loop, then save
 //!    `state.json`.
 //!
@@ -261,6 +261,7 @@ impl Daemon {
             Box::pin(kakemono_platform::linux::detect::env::capture_with_dbus())
         });
 
+        let quit = server.quit_requested();
         let shutdown = CancellationToken::new();
         let serving = tokio::spawn(server.serve(listener, shutdown.clone()));
         let rotating = tokio::spawn({
@@ -275,8 +276,11 @@ impl Daemon {
             "daemon started ({rotation})"
         );
 
-        let signal = wait_for_stop_signal().await?;
-        tracing::info!("daemon shutting down ({signal})");
+        let reason = tokio::select! {
+            signal = wait_for_stop_signal() => signal?,
+            () = quit.cancelled() => "quit request",
+        };
+        tracing::info!("daemon shutting down ({reason})");
         shutdown.cancel();
         if let Err(e) = serving.await {
             tracing::warn!(error = %e, "IPC server task failed");

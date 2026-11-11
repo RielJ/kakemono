@@ -240,6 +240,7 @@ fn golden_request_round_trips_every_variant() {
         Request::Version,
         Request::Doctor { apply: false },
         Request::Doctor { apply: true },
+        Request::Quit,
     ];
     for req in all {
         let cmd = Command::from(req.clone());
@@ -753,4 +754,15 @@ fn golden_ok_data_matches_go_bytes() {
         let out = kakemono_protocol::codec::to_string_go(&typed).expect("ser");
         assert_eq!(out, line, "{name}");
     }
+}
+
+/// New in Rust: `quit` stops the daemon (the updater uses it). Bare command, no args.
+#[test]
+fn quit_command_on_the_wire() {
+    let cmd: Command = serde_json::from_str(r#"{"cmd":"quit"}"#).expect("parse");
+    assert_eq!(Request::try_from(cmd), Ok(Request::Quit));
+    assert_eq!(
+        serde_json::to_string(&Command::from(Request::Quit)).expect("serialize"),
+        r#"{"cmd":"quit"}"#
+    );
 }

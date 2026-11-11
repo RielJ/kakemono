@@ -9,7 +9,7 @@
 //! - One response line per request line, in order, on the same connection.
 //! - A line that is not JSON gets `{"ok":false,"error":"invalid JSON: ..."}` and the connection
 //!   stays open. Unknown keys are ignored; a missing `cmd` is `unknown command: ""`.
-//! - `pause`, `resume` and `favorite` answer `{"ok":true}` (no `data`).
+//! - `pause`, `resume`, `favorite` and `quit` answer `{"ok":true}` (no `data`).
 //! - Every line goes through `codec::write_line_json` (Go's `<`/`>`/`&` escaping).
 
 use std::fmt;
@@ -196,6 +196,8 @@ pub struct Server {
     config_loader: ConfigLoader,
     env_probe: Option<EnvProbe>,
     max_connections: usize,
+    /// Cancelled by a `quit` request; the daemon then shuts down ([`Server::quit_requested`]).
+    quit: CancellationToken,
 }
 
 /// How many connections [`Server::serve`] serves at once by default. Each can buffer up to
@@ -222,7 +224,14 @@ impl Server {
             config_loader: Arc::new(config_loader),
             env_probe: None,
             max_connections: MAX_CONNECTIONS,
+            quit: CancellationToken::new(),
         }
+    }
+
+    /// Cancelled once a client sends `quit`. The server keeps serving: the daemon watches this
+    /// token and cancels `serve`'s `shutdown`, so the `quit` answer is written first.
+    pub fn quit_requested(&self) -> CancellationToken {
+        self.quit.clone()
     }
 
     /// Serves at most `max` connections at once (at least 1) instead of [`MAX_CONNECTIONS`].
@@ -347,6 +356,11 @@ impl Server {
             Request::Status => data(Ok::<_, String>(self.engine.status())),
             Request::Reload => self.reload().await,
             Request::Version => data(Ok::<_, String>(VersionData::current())),
+            Request::Quit => {
+                tracing::info!("server: quit requested");
+                self.quit.cancel();
+                Response::ok()
+            }
             Request::Doctor { apply } => self.doctor(apply).await,
             Request::CheckSource { kind, location } => self.check_source(&kind, &location).await,
             Request::Fetch { url } => data(self.engine.fetch_url(&url).await),

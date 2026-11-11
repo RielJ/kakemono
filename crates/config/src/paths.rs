@@ -21,6 +21,9 @@ pub const CONFIG_ENV: &str = "KAKEMONO_CONFIG";
 pub const CONFIG_FILE_NAME: &str = "config.toml";
 /// State file name.
 pub const STATE_FILE_NAME: &str = "state.json";
+/// The daemon's single-instance lock, in [`Paths::runtime_dir`]. The running daemon holds it
+/// until it exits, so the UI's updater takes it to know the old daemon is gone.
+pub const DAEMON_LOCK_FILE_NAME: &str = "daemon.lock";
 
 /// The documented default config written by [`init`].
 pub const TEMPLATE: &str = include_str!("template.toml");
