@@ -342,7 +342,7 @@ describe('SourcesTable', () => {
       await choose(user, /^Wallhaven/)
       const dialog = screen.getByRole('dialog', { name: 'Add Wallhaven source' })
       expect(dialog.textContent).toContain('Enter keywords or paste URL here:')
-      await user.type(within(dialog).getByRole('textbox'), 'forest')
+      await user.type(within(dialog).getAllByRole('textbox')[0], 'forest')
       await user.click(within(dialog).getByRole('button', { name: 'OK' }))
       expect(screen.queryByRole('dialog')).toBeNull()
       const added = last().sources[4]
@@ -354,7 +354,7 @@ describe('SourcesTable', () => {
       vi.mocked(api.checkSource).mockRejectedValue({ kind: 'daemon', message: 'no images found' })
       const { changes, commits, user } = await setup()
       await choose(user, /^Wallhaven/)
-      await user.type(screen.getByRole('textbox'), 'zzzz')
+      await user.type(screen.getAllByRole('textbox')[0], 'zzzz')
       await user.click(button('OK'))
       expect(screen.getByRole('dialog')).toBeTruthy()
       await user.click(button('Cancel'))
@@ -380,7 +380,7 @@ describe('SourcesTable', () => {
       const { last, user } = await setup()
       await user.click(within(row(1)).getByText('Wallhaven'))
       await user.click(button('Edit…'))
-      const field = screen.getByRole('textbox') as HTMLInputElement
+      const field = screen.getAllByRole('textbox')[0] as HTMLInputElement
       expect(field.value).toBe('nature')
       await user.clear(field)
       await user.type(field, 'ocean')
@@ -394,6 +394,38 @@ describe('SourcesTable', () => {
       await user.click(within(row(1)).getByText('Wallhaven'))
       await user.keyboard('{Enter}')
       expect(screen.getByRole('dialog', { name: 'Edit Wallhaven source' })).toBeTruthy()
+    })
+
+    it('saves a name typed in Add, and a named row shows the name with its type', async () => {
+      vi.mocked(api.checkSource).mockResolvedValue({ count: 5 })
+      const { last, user } = await setup()
+      await choose(user, /^Wallhaven/)
+      const dialog = screen.getByRole('dialog', { name: 'Add Wallhaven source' })
+      await user.type(within(dialog).getAllByRole('textbox')[0], 'https://wallhaven.cc/hot')
+      await user.type(within(dialog).getByRole('textbox', { name: /^Name/ }), 'wallhaven-hot')
+      await user.click(within(dialog).getByRole('button', { name: 'OK' }))
+      expect(last().sources[4]).toMatchObject({ type: 'wallhaven', location: 'https://wallhaven.cc/hot', name: 'wallhaven-hot' })
+      expect(within(row(4)).getByText('wallhaven-hot')).toBeTruthy()
+      expect(within(row(4)).getByText('Wallhaven')).toBeTruthy()
+    })
+
+    it('Edit changes the name; clearing it removes the name', async () => {
+      vi.mocked(api.checkSource).mockResolvedValue({ count: 2 })
+      const named = [{ ...SOURCES[1], name: 'Nature picks' }]
+      const { last, user } = await setup({ sources: named })
+      await user.click(within(row(0)).getByText('Nature picks'))
+      await user.click(button('Edit…'))
+      const name = screen.getByRole('textbox', { name: /^Name/ }) as HTMLInputElement
+      expect(name.value).toBe('Nature picks')
+      await user.clear(name)
+      await user.type(name, 'Forest')
+      await user.click(button('OK'))
+      expect(last().sources[0]).toEqual({ ...SOURCES[1], name: 'Forest' })
+      await user.click(button('Edit…'))
+      await user.clear(screen.getByRole('textbox', { name: /^Name/ }))
+      await user.click(button('OK'))
+      expect(last().sources[0]).toEqual(SOURCES[1])
+      expect('name' in last().sources[0]).toBe(false)
     })
 
     it('hides online types from Add… when Internet access is off', async () => {

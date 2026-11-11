@@ -21,6 +21,8 @@ interface Props {
   notices: Notices
   /** `[picker] blur_nsfw`: NSFW previews stay blurred until hovered or keyboard-focused. */
   blurNsfw: boolean
+  /** `[[sources]]` names by row id; a named source shows its name instead of its type. */
+  sourceNames?: ReadonlyMap<string, string>
   /** Where the browse session outlives the strip (tests pass their own). */
   memory?: UseBrowseOptions['memory']
 }
@@ -32,18 +34,27 @@ const DONE_TEXT: Record<BrowseAction, string> = {
   download: 'Downloaded',
 }
 
-/** "title by author — kind", a card's accessible name. A blank title falls back to the id. */
-export function remoteLabel(t: RemoteThumb): string {
+const NO_NAMES: ReadonlyMap<string, string> = new Map()
+
+/** What a tile's caption says: the source's name, or its type when unnamed. */
+const caption = (t: RemoteThumb, names: ReadonlyMap<string, string>) => names.get(t.sourceId) || t.kind
+
+/**
+ * "title by author — source", a card's accessible name: the source's name, or its type when
+ * unnamed. A blank title falls back to the id.
+ */
+export function remoteLabel(t: RemoteThumb, names: ReadonlyMap<string, string> = NO_NAMES): string {
   const title = t.title || t.remoteId
-  return `${title}${t.author ? ` by ${t.author}` : ''} — ${t.kind}`
+  return `${title}${t.author ? ` by ${t.author}` : ''} — ${caption(t, names)}`
 }
 
-/** "kind (id)", how the filter and the notes name a source. */
-const sourceName = (s: BrowseSourceStatus) => `${s.kind} (${s.source_id})`
+/** How the filter and the notes name a source: its name, or "kind (id)" when unnamed. */
+const sourceName = (s: BrowseSourceStatus, names: ReadonlyMap<string, string>) =>
+  names.get(s.source_id) || `${s.kind} (${s.source_id})`
 
-/** "kind (id): message" for each source that can't give previews right now. */
-function problems(statuses: BrowseSourceStatus[]): string[] {
-  return statuses.flatMap((s) => ('message' in s.state ? [`${sourceName(s)}: ${s.state.message}`] : []))
+/** "source: message" for each source that can't give previews right now. */
+function problems(statuses: BrowseSourceStatus[], names: ReadonlyMap<string, string>): string[] {
+  return statuses.flatMap((s) => ('message' in s.state ? [`${sourceName(s, names)}: ${s.state.message}`] : []))
 }
 
 /** Empty pages asked for in a row before the strip says there is nothing to show. */
@@ -57,7 +68,7 @@ const itemKey = (t: RemoteThumb) => `${t.sourceId}\u0000${t.remoteId}`
  * through `browse_use`; there is no trash. With more than one source a filter card comes
  * first, and `[`/`]` cycle it from anywhere in the tab.
  */
-export default function BrowseStrip({ vertical, notices, blurNsfw, memory }: Props) {
+export default function BrowseStrip({ vertical, notices, blurNsfw, sourceNames = NO_NAMES, memory }: Props) {
   const { say } = notices
   const browse = useBrowse({ memory })
   const { items, loading, loadingMore, done, capped, error, moreError, loadMore, cycleFilter } = browse
@@ -191,7 +202,7 @@ export default function BrowseStrip({ vertical, notices, blurNsfw, memory }: Pro
     return () => el.removeEventListener('wheel', onWheel)
   }, [vertical, loading])
 
-  const notes = problems(browse.statuses)
+  const notes = problems(browse.statuses, sourceNames)
 
   const menuItems: MenuItem[] = activeItem
     ? [
@@ -242,7 +253,7 @@ export default function BrowseStrip({ vertical, notices, blurNsfw, memory }: Pro
 
   return (
     <>
-      {browse.sources.length > 1 && <FilterCard sources={browse.sources} filter={browse.filter} onChange={browse.setFilter} />}
+      {browse.sources.length > 1 && <FilterCard sources={browse.sources} names={sourceNames} filter={browse.filter} onChange={browse.setFilter} />}
       {body}
       <div
         ref={listRef}
@@ -269,6 +280,7 @@ export default function BrowseStrip({ vertical, notices, blurNsfw, memory }: Pro
               key={k}
               id={optionId(i)}
               item={item}
+              names={sourceNames}
               active={i === activeIndex}
               busy={busy.has(k)}
               blurred={blurNsfw && item.nsfw && !revealed}
@@ -320,7 +332,7 @@ export default function BrowseStrip({ vertical, notices, blurNsfw, memory }: Pro
         <ContextMenu
           x={menu.x}
           y={menu.y}
-          label={remoteLabel(activeItem)}
+          label={remoteLabel(activeItem, sourceNames)}
           items={menuItems}
           onClose={() => {
             setMenu(null)
@@ -334,16 +346,17 @@ export default function BrowseStrip({ vertical, notices, blurNsfw, memory }: Pro
 
 interface FilterCardProps {
   sources: BrowseSourceStatus[]
+  names: ReadonlyMap<string, string>
   filter: string | null
   onChange: (filter: string | null) => void
 }
 
 /** "All" plus one radio per source; changing it starts a new browse session. */
-function FilterCard({ sources, filter, onChange }: FilterCardProps) {
+function FilterCard({ sources, names, filter, onChange }: FilterCardProps) {
   const name = useId()
   const options: { id: string | null; label: string }[] = [
     { id: null, label: 'All' },
-    ...sources.map((s) => ({ id: s.source_id, label: sourceName(s) })),
+    ...sources.map((s) => ({ id: s.source_id, label: sourceName(s, names) })),
   ]
   return (
     <div className="filter-card" role="radiogroup" aria-label="Source">
@@ -360,6 +373,7 @@ function FilterCard({ sources, filter, onChange }: FilterCardProps) {
 interface OptionProps {
   id: string
   item: RemoteThumb
+  names: ReadonlyMap<string, string>
   active: boolean
   busy: boolean
   blurred: boolean
@@ -368,9 +382,9 @@ interface OptionProps {
   onHover: (on: boolean) => void
 }
 
-function RemoteOption({ id, item, active, busy, blurred, onClick, onContextMenu, onHover }: OptionProps) {
+function RemoteOption({ id, item, names, active, busy, blurred, onClick, onContextMenu, onHover }: OptionProps) {
   const [broken, setBroken] = useState(false)
-  const label = remoteLabel(item)
+  const label = remoteLabel(item, names)
   return (
     <div
       id={id}
@@ -398,7 +412,7 @@ function RemoteOption({ id, item, active, busy, blurred, onClick, onContextMenu,
           <Icon name="download" />
         </span>
       )}
-      <span className="caption">{item.kind}</span>
+      <span className="caption">{caption(item, names)}</span>
     </div>
   )
 }

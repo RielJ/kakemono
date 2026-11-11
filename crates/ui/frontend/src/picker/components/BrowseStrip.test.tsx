@@ -92,8 +92,14 @@ const STILL_DOWNLOADING = 'Still downloading in the background…'
 const notices: Notices = { say: vi.fn(), dismissUndo: vi.fn() }
 const USED: BrowseUseData = { path: '/d/wh/r0.jpg', wallpaper: null }
 
-function renderStrip({ blurNsfw = true, vertical = false } = {}) {
-  render(<BrowseStrip vertical={vertical} notices={notices} blurNsfw={blurNsfw} memory={{ current: null }} />)
+function renderStrip({
+  blurNsfw = true,
+  vertical = false,
+  sourceNames,
+}: { blurNsfw?: boolean; vertical?: boolean; sourceNames?: ReadonlyMap<string, string> } = {}) {
+  render(
+    <BrowseStrip vertical={vertical} notices={notices} blurNsfw={blurNsfw} sourceNames={sourceNames} memory={{ current: null }} />,
+  )
 }
 
 async function strip() {
@@ -317,6 +323,29 @@ describe('BrowseStrip', () => {
 
     it('remoteLabel', () => {
       expect(remoteLabel(item(5))).toBe('T5 by Ann — wallhaven')
+      expect(remoteLabel(item(5), new Map([['wh', 'wallhaven-hot']]))).toBe('T5 by Ann — wallhaven-hot')
+    })
+
+    it('a named source shows its name on the tile, in the label, the filter and the notes', async () => {
+      browsePage.mockResolvedValue(
+        listing({
+          items: [item(0), item(1, { sourceId: 'un', kind: 'unsplash' })],
+          sources: [
+            ACTIVE('wh', 'wallhaven'),
+            { source_id: 'un', kind: 'unsplash', state: { state: 'rate_limited', message: 'rate limit reached', retry_after_secs: 60 } },
+          ],
+        }),
+      )
+      renderStrip({ sourceNames: new Map([['wh', 'wallhaven-hot']]) })
+      const list = await strip()
+      const options = within(list).getAllByRole('option')
+      expect(options.map((o) => o.querySelector('.caption')?.textContent)).toEqual(['wallhaven-hot', 'unsplash'])
+      expect(options[0].getAttribute('aria-label')).toBe('T0 by Ann — wallhaven-hot')
+      const group = await screen.findByRole('radiogroup', { name: 'Source' })
+      expect(within(group).getByRole('radio', { name: 'wallhaven-hot' })).toBeTruthy()
+      expect(within(group).getByRole('radio', { name: 'unsplash (un)' })).toBeTruthy()
+      // An unnamed source keeps "kind (id)".
+      expect(screen.getByText('unsplash (un): rate limit reached')).toBeTruthy()
     })
 
     it('shows internet-off, a failure with Retry, and an empty session', async () => {

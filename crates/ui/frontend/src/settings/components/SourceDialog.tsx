@@ -13,22 +13,36 @@ type Phase =
 
 const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p
 
+/** Longest name, as `MAX_NAME_LEN` in kakemono-config; the config cuts longer ones on load. */
+const MAX_NAME_LEN = 64
+
+/** Name hints per type; other types get a generic one. */
+const NAME_PLACEHOLDER: Partial<Record<SourceType, string>> = {
+  wallhaven: 'e.g. wallhaven-hot',
+  unsplash: 'e.g. unsplash-mountains',
+  reddit: 'e.g. earthporn-top-year',
+  folder: 'e.g. my-wallpapers',
+}
+
 /**
  * Add or edit one source's location, after Variety: the type's instruction, one field, OK and
  * Cancel. OK checks the entry with the daemon (`check_source`), shows "Just a moment to check
  * for images…" meanwhile, and finishes only when images were found; an error stays inline.
  * Path types open the system picker at once when adding (Images picks several files).
- * `onDone` gets one location per row to add; `initial` makes it an edit.
+ * `onDone` gets one location per row to add and the optional name, trimmed (empty for none);
+ * `initial` makes it an edit, and `initialName` fills the name.
  */
 export default function SourceDialog({
   kind,
   initial,
+  initialName,
   onDone,
   onCancel,
 }: {
   kind: SourceType
   initial?: string
-  onDone: (locations: string[]) => void
+  initialName?: string
+  onDone: (locations: string[], name: string) => void
   onCancel: () => void
 }) {
   const info = SOURCE_TYPES[kind]
@@ -36,10 +50,12 @@ export default function SourceDialog({
   const editing = initial !== undefined
   const pick = input.kind === 'path' ? input.pick : null
   const [text, setText] = useState(initial ?? '')
+  const [name, setName] = useState(initialName ?? '')
   // Several picked image files; empty when the field holds the one location.
   const [many, setMany] = useState<string[]>([])
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
   const fieldId = useId()
+  const nameId = useId()
   const messageId = useId()
   const alive = useRef(true)
   const autoPicked = useRef(false)
@@ -67,7 +83,7 @@ export default function SourceDialog({
       }
       if (!alive.current) return
     }
-    onDone(locs)
+    onDone(locs, name.trim())
   }
 
   /** Opens the system picker; `auto` (Add) closes the dialog when the user cancels it. */
@@ -149,6 +165,23 @@ export default function SourceDialog({
             </button>
           )}
         </div>
+        {many.length === 0 && (
+          <div className="mt-2.5">
+            <label htmlFor={nameId} className="block mb-1.5">
+              Name <span className="text-muted">(optional)</span>
+            </label>
+            <input
+              id={nameId}
+              type="text"
+              autoComplete="off"
+              maxLength={MAX_NAME_LEN}
+              value={name}
+              placeholder={NAME_PLACEHOLDER[kind] ?? 'e.g. my-wallpapers'}
+              onChange={(e) => setName(e.target.value)}
+              className="field w-full"
+            />
+          </div>
+        )}
         <div className="mt-2 min-h-[18px] text-[12px] leading-snug">
           <p role="status" className="text-muted">
             {checking ? 'Just a moment to check for images…' : ''}
@@ -169,7 +202,7 @@ export default function SourceDialog({
             Cancel
           </button>
           {error?.unreachable && (
-            <button type="button" className="btn" onClick={() => onDone(locations())}>
+            <button type="button" className="btn" onClick={() => onDone(locations(), name.trim())}>
               Add anyway
             </button>
           )}

@@ -8,7 +8,14 @@ export type SourceEntry = {
 /**
  * `[a-z0-9-]{1,32}`; names the download folder `downloads/<id>/`.
  */
-id: string, enabled: boolean, type: SourceType, 
+id: string, 
+/**
+ * Optional label the UI and CLI show instead of the type, e.g. `"wallhaven-hot"`. Any text,
+ * trimmed and capped at [`MAX_NAME_LEN`](crate::MAX_NAME_LEN) characters on load and save;
+ * empty means no name and is left out of the file. Only a label: the id still names the
+ * download folder.
+ */
+name?: string, enabled: boolean, type: SourceType, 
 /**
  * Keywords, URL, subreddit or path; empty for `bing` and `apod`. `~` is expanded at load for
  * local types.

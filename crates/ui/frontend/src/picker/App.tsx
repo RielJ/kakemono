@@ -24,6 +24,7 @@ function isFormControl(target: EventTarget | null): boolean {
 export default function App() {
   const [layout, setLayout] = useState(DEFAULT_LAYOUT)
   const [blurNsfw, setBlurNsfw] = useState(true)
+  const [sourceNames, setSourceNames] = useState<ReadonlyMap<string, string>>(new Map())
   const [tab, setTab] = useState<PickerTabId>(DEFAULT_TAB)
   // Bumped on every show: the strip remounts, so it starts again at the first page, scrolled
   // to the start.
@@ -42,6 +43,8 @@ export default function App() {
           setLayout(toLayout(cfg.picker))
           // Older configs have no key: the default is to blur.
           setBlurNsfw(cfg.picker.blur_nsfw !== false)
+          // Named sources show their name on the Sources tab instead of their type.
+          setSourceNames(new Map((cfg.sources ?? []).flatMap((s) => (s.name ? [[s.id, s.name] as const] : []))))
         })
         .catch(() => {})
     }
@@ -127,7 +130,7 @@ export default function App() {
 
   let panel: React.ReactNode
   if (tab === 'sources') {
-    panel = <BrowseStrip key={`sources:${shows}`} vertical={vertical} notices={notices} blurNsfw={blurNsfw} />
+    panel = <BrowseStrip key={`sources:${shows}`} vertical={vertical} notices={notices} blurNsfw={blurNsfw} sourceNames={sourceNames} />
   } else {
     panel = <ThumbnailStrip key={`${tab}:${shows}`} tab={tab} vertical={vertical} notices={notices} />
   }

@@ -21,7 +21,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::bail;
-use kakemono_config::{Config, ConfigError, Loaded, SourceType, expand_tilde};
+use kakemono_config::{Config, ConfigError, Loaded, SourceEntry, SourceType, expand_tilde};
 use kakemono_engine::files::{Protect, counted_bytes};
 use kakemono_platform::api::Theme;
 use kakemono_platform::linux::detect::env::{BINARIES, DBUS_NAMES, ENV_VARS, PROCESSES};
@@ -422,9 +422,10 @@ fn sources_report(
     let expand = |p: &Path| expand_tilde(p, home).unwrap_or_else(|| p.to_owned());
     let favorites: PathBuf = expand(&cfg.favorites.dir);
     for row in enabled.iter().filter(|s| s.kind.is_local()) {
+        let source = source_label(row);
         let location = row.location.trim();
         if location.is_empty() {
-            lines.push(format!("warning:    source {:?} has no location", row.id));
+            lines.push(format!("warning:    source {source} has no location"));
             continue;
         }
         let path = expand(Path::new(location));
@@ -433,17 +434,25 @@ fn sources_report(
         }
         if path == favorites {
             lines.push(format!(
-                "info:       source {:?}: favorites folder not created yet (made on first favorite)",
-                row.id
+                "info:       source {source}: favorites folder not created yet (made on first favorite)"
             ));
         } else {
             lines.push(format!(
-                "warning:    source {:?}: {location} does not exist",
-                row.id
+                "warning:    source {source}: {location} does not exist"
             ));
         }
     }
     lines
+}
+
+/// `"id"`, or `"id" (name)` for a row with a display name.
+fn source_label(row: &SourceEntry) -> String {
+    let name = row.name.trim();
+    if name.is_empty() {
+        format!("{:?}", row.id)
+    } else {
+        format!("{:?} ({name})", row.id)
+    }
 }
 
 fn write_sources(out: &mut dyn Write, lines: &[String]) -> anyhow::Result<()> {
@@ -677,6 +686,27 @@ mod tests {
         let mut cfg = cfg;
         cfg.favorites.dir = "~/fav".into();
         insta::assert_snapshot!("doctor_sources_missing_local", report(&cfg, Some(0)));
+    }
+
+    #[test]
+    fn sources_warnings_name_a_named_row() {
+        let mut named = row("dir-gone", SourceType::Folder, "/gone/pics", true);
+        named.name = "My pictures".into();
+        let cfg = sources_cfg(
+            vec![named, row("dir-blank", SourceType::Folder, "", true)],
+            true,
+        );
+        let text = report(&cfg, Some(0));
+        assert!(
+            text.contains(
+                "warning:    source \"dir-gone\" (My pictures): /gone/pics does not exist"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("warning:    source \"dir-blank\" has no location"),
+            "{text}"
+        );
     }
 
     #[test]
