@@ -33,7 +33,8 @@ use tauri::{
 use crate::commands::CommandError;
 use crate::picker_place::{
     self, Fallback, HyprPlacer, NoopPlacer, PICKER_TITLE, Placer, PlacerKind, Rect, Restore,
-    SwayPlacer, SystemRunner, TauriPlacer, edge_rect, floating_size, tauri_monitor,
+    StripEnd, SwayPlacer, SystemRunner, TauriPlacer, edge_rect, floating_size, resize_strip,
+    tauri_monitor,
 };
 use crate::windows::PICKER_LABEL;
 
@@ -61,9 +62,18 @@ const SETTLE_TRIES: u32 = 12;
 pub struct Session {
     shown_at: Option<Instant>,
     close_on_blur: bool,
-    /// Where the app put the window (or first saw it, on Wayland). `None` = unknown, so no
-    /// capture counts as a drop.
-    placed_at: Option<(i32, i32)>,
+    /// Where the app put the window (or first saw it, on Wayland), and its length along the
+    /// strip (0 = unknown). `None` = unknown, so no capture counts as a drop.
+    placed_at: Option<(i32, i32, u32)>,
+    /// The window and limits when a resize handle was grabbed.
+    resize: Option<ResizeStart>,
+    /// The length the user chose by resizing, in px (0 = span the edge). A move that runs
+    /// past the screen edge shrinks the window but not this, so moving back restores it.
+    chosen_length: u32,
+    /// The strip's length when it spans its edge, in px (0 = unknown).
+    edge_length: u32,
+    /// A resize handle moved the window since the last drop was handled.
+    resized_by_hand: bool,
     move_gen: u64,
 }
 
@@ -73,6 +83,43 @@ impl Session {
         self.shown_at = Some(now);
         self.close_on_blur = close_on_blur;
         self.placed_at = None;
+        self.resize = None;
+        self.chosen_length = 0;
+        self.edge_length = 0;
+        self.resized_by_hand = false;
+    }
+
+    /// The saved `[picker] custom.length` (0 = span the edge).
+    pub fn chose_length(&mut self, length: u32) {
+        self.chosen_length = length;
+    }
+
+    /// The strip's length when it spans its edge on this monitor.
+    pub fn set_edge_length(&mut self, length: u32) {
+        self.edge_length = length;
+    }
+
+    /// A resize handle moved the window; the next drop sets the chosen length.
+    pub fn resized_by_hand(&mut self) {
+        self.resized_by_hand = true;
+    }
+
+    /// The length to restore a drop at, given the `captured` one. After a manual resize the
+    /// captured length becomes the chosen one. After a move it's the chosen length (else the
+    /// edge length), so a strip shrunk at the screen edge grows back when moved away.
+    pub fn drop_length(&mut self, captured: u32) -> u32 {
+        if std::mem::take(&mut self.resized_by_hand) && captured != 0 {
+            self.chosen_length = captured;
+        }
+        [self.chosen_length, self.edge_length, captured]
+            .into_iter()
+            .find(|&l| l != 0)
+            .unwrap_or(0)
+    }
+
+    /// The length to write to `[picker] custom` (0 = span the edge).
+    pub fn saved_length(&self) -> u32 {
+        self.chosen_length
     }
 
     pub fn hidden(&mut self) {
@@ -88,14 +135,20 @@ impl Session {
                 .is_some_and(|at| now.saturating_duration_since(at) >= BLUR_GRACE)
     }
 
-    pub fn placed(&mut self, x: i32, y: i32) {
-        self.placed_at = Some((x, y));
+    /// The app put the window at `(x, y)`, `length` px long (0 when the placer can't tell).
+    pub fn placed(&mut self, x: i32, y: i32, length: u32) {
+        self.placed_at = Some((x, y, length));
     }
 
-    /// Whether `captured` is a user drag away from where the picker was put.
+    /// Whether `captured` is a user drag or resize away from where the picker was put.
     pub fn is_drop(&self, captured: &PickerCustom) -> bool {
-        self.placed_at.is_some_and(|(x, y)| {
-            (captured.x - x).abs() > DROP_TOLERANCE || (captured.y - y).abs() > DROP_TOLERANCE
+        self.placed_at.is_some_and(|(x, y, length)| {
+            let resized = length != 0
+                && captured.length != 0
+                && captured.length.abs_diff(length) > DROP_TOLERANCE.unsigned_abs();
+            (captured.x - x).abs() > DROP_TOLERANCE
+                || (captured.y - y).abs() > DROP_TOLERANCE
+                || resized
         })
     }
 
@@ -109,6 +162,16 @@ impl Session {
     pub fn move_settled(&self, generation: u64) -> bool {
         self.move_gen == generation
     }
+}
+
+/// What [`picker_resize`] works from: the window when the handle was grabbed, in physical px.
+#[derive(Debug, Clone, Copy)]
+struct ResizeStart {
+    rect: Rect,
+    area: Rect,
+    vertical: bool,
+    min_len: u32,
+    scale: f64,
 }
 
 /// Managed state: the session's placer kind and the [`Session`].
@@ -142,10 +205,15 @@ impl PickerState {
     }
 }
 
-fn placer_for<R: Runtime>(kind: PlacerKind, window: &WebviewWindow<R>) -> Box<dyn Placer> {
+/// The placer for `kind`. `vertical` is whether the strip runs top to bottom.
+fn placer_for<R: Runtime>(
+    kind: PlacerKind,
+    window: &WebviewWindow<R>,
+    vertical: bool,
+) -> Box<dyn Placer> {
     let pid = std::process::id();
     match kind {
-        PlacerKind::Tauri => Box::new(TauriPlacer::new(window.clone())),
+        PlacerKind::Tauri => Box::new(TauriPlacer::new(window.clone(), vertical)),
         PlacerKind::Hyprland => Box::new(HyprPlacer::new(SystemRunner, pid)),
         PlacerKind::Sway => Box::new(SwayPlacer::new(SystemRunner, pid)),
         PlacerKind::Noop => Box::new(NoopPlacer),
@@ -169,11 +237,17 @@ fn load_picker() -> PickerConfig {
         })
 }
 
+/// Whether the strip runs top to bottom with this config.
+fn is_vertical(config: &PickerConfig) -> bool {
+    config.orientation.is_vertical(config.position)
+}
+
 fn save_custom(custom: &PickerCustom) -> Result<(), ConfigError> {
-    let patch = json!({ "picker": {
-        "placement": "custom",
-        "custom": { "x": custom.x, "y": custom.y, "monitor": custom.monitor },
-    }});
+    let mut saved = json!({ "x": custom.x, "y": custom.y, "monitor": custom.monitor });
+    if custom.length != 0 {
+        saved["length"] = custom.length.into();
+    }
+    let patch = json!({ "picker": { "placement": "custom", "custom": saved }});
     kakemono_config::edit::apply_patch(&config_path()?, &patch)
 }
 
@@ -218,7 +292,9 @@ fn on_event<R: Runtime>(app: &AppHandle<R>, event: &WindowEvent) {
                 spawn_hide(app);
             }
         }
-        WindowEvent::Moved(_) if state.kind().positions_itself() => {
+        // A drag moves the window; a resize handle changes its size (and moves it from the
+        // start end). Either one is saved once the events stop.
+        WindowEvent::Moved(_) | WindowEvent::Resized(_) if state.kind().positions_itself() => {
             let generation = state.with(Session::bump_move);
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
@@ -231,7 +307,8 @@ fn on_event<R: Runtime>(app: &AppHandle<R>, event: &WindowEvent) {
                     let kind = state.kind();
                     let _ = tauri::async_runtime::spawn_blocking(move || {
                         let state = window.state::<PickerState>();
-                        capture_and_save(&state, placer_for(kind, &window).as_ref());
+                        let vertical = is_vertical(&load_picker());
+                        capture_and_save(&state, placer_for(kind, &window, vertical).as_ref());
                     })
                     .await;
                 }
@@ -255,14 +332,37 @@ fn spawn_hide<R: Runtime>(app: &AppHandle<R>) {
     });
 }
 
-/// Reads the window's position and saves it when the user dragged it.
+/// Reads the window's position and length and saves them when the user dragged or resized it.
+/// A drop that leaves part of the strip off the screen is fitted first (shorter along the
+/// strip, moved back across it), and the fitted spot is saved.
 fn capture_and_save(state: &PickerState, placer: &dyn Placer) {
     match placer.capture() {
         Ok(Some(captured)) if state.with(|s| s.is_drop(&captured)) => {
-            match save_custom(&captured) {
+            let wanted = PickerCustom {
+                length: state.with(|s| s.drop_length(captured.length)),
+                ..captured.clone()
+            };
+            // Where the window ended up, and its length after fitting the screen.
+            let (x, y, shown) = match placer.restore(&wanted) {
+                Ok(Restore::Placed { x, y, length }) => (x, y, length),
+                Ok(Restore::Fallback(_)) => (captured.x, captured.y, captured.length),
+                Err(err) => {
+                    tracing::warn!(error = %err, "cannot move the picker back on screen");
+                    (captured.x, captured.y, captured.length)
+                }
+            };
+            // The chosen length is saved, not the fitted one, so a strip shrunk at the screen
+            // edge opens at its full length once there is room again.
+            let saved = PickerCustom {
+                x,
+                y,
+                length: state.with(|s| s.saved_length()),
+                ..captured
+            };
+            match save_custom(&saved) {
                 Ok(()) => {
-                    tracing::info!(?captured, "picker position saved");
-                    state.with(|s| s.placed(captured.x, captured.y));
+                    tracing::info!(?saved, shown, "picker position saved");
+                    state.with(|s| s.placed(x, y, shown));
                 }
                 Err(err) => tracing::warn!(error = %err, "cannot save picker position"),
             }
@@ -316,6 +416,7 @@ fn show_with<R: Runtime>(
         PickerPlacement::Custom => config.custom.clone(),
         PickerPlacement::Edge => None,
     };
+    state.with(|s| s.chose_length(custom.as_ref().map_or(0, |c| c.length)));
 
     if state.kind().positions_itself() {
         place_tier1(app, &window, config, custom.as_ref())?;
@@ -336,9 +437,10 @@ fn show_with<R: Runtime>(
     if !state.kind().positions_itself() && state.kind() != PlacerKind::Noop {
         let kind = state.kind();
         let window = window.clone();
+        let vertical = is_vertical(config);
         tauri::async_runtime::spawn_blocking(move || {
             let state = window.state::<PickerState>();
-            settle(&state, placer_for(kind, &window).as_ref(), custom);
+            settle(&state, placer_for(kind, &window, vertical).as_ref(), custom);
         });
     }
     Ok(window)
@@ -389,10 +491,12 @@ fn place_tier1<R: Runtime>(
     window.set_size(PhysicalSize::new(edge.w, edge.h))?;
 
     let state = app.state::<PickerState>();
+    let edge_length = if is_vertical(config) { edge.h } else { edge.w };
+    state.with(|s| s.set_edge_length(edge_length));
     if let Some(custom) = custom {
-        match TauriPlacer::new(window.clone()).restore(custom) {
-            Ok(Restore::Placed { x, y }) => {
-                state.with(|s| s.placed(x, y));
+        match TauriPlacer::new(window.clone(), is_vertical(config)).restore(custom) {
+            Ok(Restore::Placed { x, y, length }) => {
+                state.with(|s| s.placed(x, y, length));
                 return Ok(());
             }
             Ok(Restore::Fallback(fallback)) => {
@@ -406,7 +510,8 @@ fn place_tier1<R: Runtime>(
         }
     }
     window.set_position(PhysicalPosition::new(edge.x, edge.y))?;
-    state.with(|s| s.placed(edge.x, edge.y));
+    let length = if is_vertical(config) { edge.h } else { edge.w };
+    state.with(|s| s.placed(edge.x, edge.y, length));
     Ok(())
 }
 
@@ -417,8 +522,8 @@ fn settle(state: &PickerState, placer: &dyn Placer, mut custom: Option<PickerCus
         std::thread::sleep(SETTLE_STEP);
         if let Some(saved) = &custom {
             match placer.restore(saved) {
-                Ok(Restore::Placed { x, y }) => {
-                    state.with(|s| s.placed(x, y));
+                Ok(Restore::Placed { x, y, length }) => {
+                    state.with(|s| s.placed(x, y, length));
                     return;
                 }
                 Ok(Restore::Fallback(Fallback::NotMapped)) => continue,
@@ -434,7 +539,7 @@ fn settle(state: &PickerState, placer: &dyn Placer, mut custom: Option<PickerCus
         }
         match placer.capture() {
             Ok(Some(at)) => {
-                state.with(|s| s.placed(at.x, at.y));
+                state.with(|s| s.placed(at.x, at.y, at.length));
                 return;
             }
             Ok(None) => {}
@@ -459,7 +564,8 @@ pub async fn hide<R: Runtime>(app: AppHandle<R>) -> Result<(), CommandError> {
     let probe = window.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = probe.state::<PickerState>();
-        capture_and_save(&state, placer_for(kind, &probe).as_ref());
+        let vertical = is_vertical(&load_picker());
+        capture_and_save(&state, placer_for(kind, &probe, vertical).as_ref());
     })
     .await?;
     window.hide()?;
@@ -492,6 +598,69 @@ pub async fn reset_picker_position<R: Runtime>(app: AppHandle<R>) -> Result<(), 
     {
         show_async(&app).await?;
     }
+    Ok(())
+}
+
+/// `picker_resize_begin`: a resize handle was grabbed. Remembers the window, its monitor's
+/// work area and the limits that [`picker_resize`] works from.
+#[tauri::command]
+pub async fn picker_resize_begin<R: Runtime>(app: AppHandle<R>) -> Result<(), CommandError> {
+    let Some(window) = app.get_webview_window(PICKER_LABEL) else {
+        return Ok(());
+    };
+    let config = tauri::async_runtime::spawn_blocking(load_picker).await?;
+    let (pos, size) = (window.outer_position()?, window.outer_size()?);
+    let Some(monitor) = window.current_monitor()? else {
+        return Ok(());
+    };
+    let area = monitor.work_area();
+    let scale = monitor.scale_factor();
+    let start = ResizeStart {
+        rect: Rect::new(pos.x, pos.y, size.width, size.height),
+        area: Rect::new(
+            area.position.x,
+            area.position.y,
+            area.size.width,
+            area.size.height,
+        ),
+        vertical: is_vertical(&config),
+        min_len: picker_place::min_length_px(scale),
+        scale,
+    };
+    app.state::<PickerState>().with(|s| s.resize = Some(start));
+    Ok(())
+}
+
+/// `picker_resize`: the grabbed `end` of the strip is `delta` logical px from where it was
+/// grabbed. Resizes along the strip only, inside the work area and down to
+/// [`picker_place::MIN_LENGTH`]. The `Resized` events save the result once they stop.
+#[tauri::command]
+pub async fn picker_resize<R: Runtime>(
+    app: AppHandle<R>,
+    end: StripEnd,
+    delta: f64,
+) -> Result<(), CommandError> {
+    let Some(start) = app.state::<PickerState>().with(|s| s.resize) else {
+        return Ok(());
+    };
+    let Some(window) = app.get_webview_window(PICKER_LABEL) else {
+        return Ok(());
+    };
+    // Saturating float → int; a drag is at most a few thousand px.
+    let delta = (delta * start.scale).round() as i32;
+    let rect = resize_strip(
+        start.rect,
+        end,
+        delta,
+        start.area,
+        start.vertical,
+        start.min_len,
+    );
+    app.state::<PickerState>().with(|s| s.resized_by_hand());
+    if end == StripEnd::Start {
+        window.set_position(PhysicalPosition::new(rect.x, rect.y))?;
+    }
+    window.set_size(PhysicalSize::new(rect.w, rect.h))?;
     Ok(())
 }
 
@@ -534,6 +703,7 @@ mod tests {
             x,
             y,
             monitor: "DP-1".into(),
+            length: 0,
         }
     }
 
@@ -644,7 +814,7 @@ mod tests {
             !s.is_drop(&custom(500, 900)),
             "unknown baseline never saves"
         );
-        s.placed(0, 1280);
+        s.placed(0, 1280, 0);
         assert!(!s.is_drop(&custom(0, 1280)));
         assert!(!s.is_drop(&custom(2, 1278)), "rounding noise");
         assert!(s.is_drop(&custom(300, 700)));
@@ -652,6 +822,74 @@ mod tests {
         assert!(
             !s.is_drop(&custom(300, 700)),
             "showing again resets the baseline"
+        );
+    }
+
+    #[test]
+    fn moving_back_from_the_edge_restores_the_chosen_length() {
+        let mut s = Session::default();
+        s.shown(Instant::now(), true);
+        s.chose_length(200);
+        s.set_edge_length(3024);
+        // Dropped near the screen edge: fitted to 150, but the chosen length stays 200.
+        assert_eq!(s.drop_length(150), 200);
+        assert_eq!(s.saved_length(), 200);
+        // Dragged back: restored at 200 again.
+        assert_eq!(s.drop_length(150), 200);
+    }
+
+    #[test]
+    fn a_manual_resize_sets_the_chosen_length() {
+        let mut s = Session::default();
+        s.shown(Instant::now(), true);
+        s.chose_length(200);
+        s.resized_by_hand();
+        assert_eq!(s.drop_length(400), 400);
+        assert_eq!(s.saved_length(), 400);
+        // The resize is used up: the next drop is a move again.
+        assert_eq!(s.drop_length(150), 400);
+    }
+
+    #[test]
+    fn without_a_chosen_length_a_move_restores_the_edge_length() {
+        let mut s = Session::default();
+        s.shown(Instant::now(), true);
+        s.chose_length(0);
+        s.set_edge_length(3024);
+        assert_eq!(s.drop_length(1800), 3024);
+        assert_eq!(s.saved_length(), 0, "still spans the edge on the next show");
+        // A placer that can't tell the edge length keeps what it captured.
+        s.set_edge_length(0);
+        assert_eq!(s.drop_length(1800), 1800);
+    }
+
+    #[test]
+    fn showing_forgets_the_last_lengths() {
+        let mut s = Session::default();
+        s.shown(Instant::now(), true);
+        s.chose_length(200);
+        s.set_edge_length(3024);
+        s.resized_by_hand();
+        s.shown(Instant::now(), true);
+        assert_eq!(s.saved_length(), 0);
+        assert_eq!(s.drop_length(150), 150);
+    }
+
+    #[test]
+    fn a_resize_is_a_drop_too() {
+        let mut s = Session::default();
+        s.shown(Instant::now(), true);
+        s.placed(0, 1280, 3024);
+        let at = |length| PickerCustom {
+            length,
+            ..custom(0, 1280)
+        };
+        assert!(!s.is_drop(&at(3024)));
+        assert!(!s.is_drop(&at(3022)), "rounding noise");
+        assert!(s.is_drop(&at(1800)));
+        assert!(
+            !s.is_drop(&at(0)),
+            "a placer that can't read the length doesn't count it"
         );
     }
 

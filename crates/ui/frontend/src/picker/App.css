@@ -71,6 +71,45 @@ body {
   pointer-events: none;
 }
 
+/* ── Resize handles ──────────────────────────────────────────────────────── */
+/* Thin strips on both ends of the picker; they resize it along the strip only. */
+.resize-handle {
+  position: absolute;
+  z-index: 5;
+}
+
+.resize-left,
+.resize-right {
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.resize-left {
+  left: 0;
+}
+
+.resize-right {
+  right: 0;
+}
+
+.resize-top,
+.resize-bottom {
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.resize-top {
+  top: 0;
+}
+
+.resize-bottom {
+  bottom: 0;
+}
+
 /* ── Tab bar ────────────────────────────────────────────────────────────────────────── */
 /*
  * Horizontal picker (160 px tall): a 32 px column that replaces the 20 px grip column. A 12 px

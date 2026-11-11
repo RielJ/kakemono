@@ -159,25 +159,194 @@ pub enum Fallback {
     Unsupported,
 }
 
-/// Checks `custom` (at window `size`) against the current monitors. `Ok` is the rect to use.
+/// Checks `custom` (at window `size`) against the current monitors. `Ok` is the rect to use:
+/// the saved spot moved, if it has to be, so the whole picker is on the monitor it covers
+/// most. Tiles under a part hanging off the screen could be neither seen nor scrolled to.
 pub fn check_custom(
     custom: &PickerCustom,
     size: (u32, u32),
     monitors: &[Monitor],
 ) -> Result<Rect, Fallback> {
+    let rect = Rect::new(custom.x, custom.y, size.0, size.1);
+    let monitor = visible_on(custom, rect, monitors)?;
+    Ok(clamp_into(rect, monitor.rect))
+}
+
+/// Shortest strip length, in logical px: about two thumbnails.
+pub const MIN_LENGTH: f64 = 320.0;
+
+/// [`MIN_LENGTH`] in physical px at `scale`.
+pub fn min_length_px(scale: f64) -> u32 {
+    // Saturating float → int; scale factors are small positive numbers.
+    (MIN_LENGTH * scale).round() as u32
+}
+
+/// One end of the strip, along its direction: left/right when horizontal, top/bottom when
+/// vertical.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StripEnd {
+    Start,
+    End,
+}
+
+/// A span on one axis: `pos` and `len`, in i64 so sums can't overflow.
+#[derive(Debug, Clone, Copy)]
+struct Span {
+    pos: i64,
+    len: i64,
+}
+
+impl Span {
+    fn end(self) -> i64 {
+        self.pos + self.len
+    }
+}
+
+/// `rect`'s spans as (along the strip, across it).
+fn spans(rect: Rect, vertical: bool) -> (Span, Span) {
+    let x = Span {
+        pos: rect.x.into(),
+        len: rect.w.into(),
+    };
+    let y = Span {
+        pos: rect.y.into(),
+        len: rect.h.into(),
+    };
+    if vertical { (y, x) } else { (x, y) }
+}
+
+/// The rect with spans (along, across). Values come from i32/u32 inputs clamped to an i32/u32
+/// area, so the casts don't truncate.
+fn from_spans(along: Span, across: Span, vertical: bool) -> Rect {
+    let (x, y) = if vertical {
+        (across, along)
+    } else {
+        (along, across)
+    };
+    Rect::new(x.pos as i32, y.pos as i32, x.len as u32, y.len as u32)
+}
+
+/// `span` moved the least distance that puts it inside `area`; it starts at `area`'s start
+/// when it is longer.
+fn clamp_span(span: Span, area: Span) -> Span {
+    let pos = span.pos.min(area.end() - span.len).max(area.pos);
+    Span { pos, ..span }
+}
+
+/// The strip `rect` (running vertically when `vertical`) made to fit `area`. Along its
+/// direction it keeps the part on the screen, so it ends at the screen edge and its tiles
+/// scroll; if less than `min_len` would be left, it slides back to keep `min_len`. Across its
+/// direction it can't get shorter, so it moves back onto the screen.
+pub fn fit_strip(rect: Rect, area: Rect, vertical: bool, min_len: u32) -> Rect {
+    let (along, across) = spans(rect, vertical);
+    let (area_along, area_across) = spans(area, vertical);
+    let min = i64::from(min_len).min(area_along.len);
+    let mut start = along.pos.max(area_along.pos);
+    let mut end = along.end().min(area_along.end());
+    if end - start < min {
+        if start + min <= area_along.end() {
+            end = start + min;
+        } else {
+            end = area_along.end();
+            start = end - min;
+        }
+    }
+    let along = Span {
+        pos: start,
+        len: end - start,
+    };
+    from_spans(along, clamp_span(across, area_across), vertical)
+}
+
+/// The strip `start` with its `end` edge dragged `delta` px along its direction. The dragged
+/// edge stays inside `area`, and the strip stays at least `min_len` long; the other edge
+/// doesn't move unless the minimum needs it to.
+pub fn resize_strip(
+    start: Rect,
+    end: StripEnd,
+    delta: i32,
+    area: Rect,
+    vertical: bool,
+    min_len: u32,
+) -> Rect {
+    let (along, across) = spans(start, vertical);
+    let (area_along, _) = spans(area, vertical);
+    let min = i64::from(min_len).min(area_along.len);
+    let delta = i64::from(delta);
+    let along = match end {
+        StripEnd::End => {
+            let edge = (along.end() + delta).clamp(along.pos + min, area_along.end());
+            Span {
+                pos: along.pos,
+                len: edge - along.pos,
+            }
+        }
+        StripEnd::Start => {
+            let edge = (along.pos + delta).clamp(area_along.pos, along.end() - min);
+            Span {
+                pos: edge,
+                len: along.end() - edge,
+            }
+        }
+    };
+    // A strip that started too short (or off the screen) is fitted, so the result is valid.
+    fit_strip(from_spans(along, across, vertical), area, vertical, min_len)
+}
+
+/// [`check_custom`] for a strip that can change its length: the saved spot at `size`, fitted
+/// with [`fit_strip`] to the monitor under its start corner (where the user dropped its
+/// left or top end), else the monitor it covers most.
+pub fn fit_custom(
+    custom: &PickerCustom,
+    size: (u32, u32),
+    monitors: &[Monitor],
+    vertical: bool,
+    min_len: u32,
+) -> Result<Rect, Fallback> {
+    let rect = Rect::new(custom.x, custom.y, size.0, size.1);
+    let covered = visible_on(custom, rect, monitors)?;
+    let monitor = monitor_at(monitors, rect.x, rect.y).unwrap_or(covered);
+    Ok(fit_strip(rect, monitor.rect, vertical, min_len))
+}
+
+/// The monitor `rect` covers most, if `custom`'s monitor exists and `rect` overlaps some
+/// monitor by [`MIN_VISIBLE`].
+fn visible_on<'a>(
+    custom: &PickerCustom,
+    rect: Rect,
+    monitors: &'a [Monitor],
+) -> Result<&'a Monitor, Fallback> {
     if !monitors.iter().any(|m| m.name == custom.monitor) {
         return Err(Fallback::MonitorMissing);
     }
-    let rect = Rect::new(custom.x, custom.y, size.0, size.1);
-    let visible = monitors.iter().any(|m| {
-        let (w, h) = rect.overlap(&m.rect);
-        w >= MIN_VISIBLE.min(i64::from(size.0)) && h >= MIN_VISIBLE.min(i64::from(size.1))
-    });
-    if visible {
-        Ok(rect)
-    } else {
-        Err(Fallback::OffScreen)
-    }
+    monitors
+        .iter()
+        .filter_map(|m| {
+            let (w, h) = rect.overlap(&m.rect);
+            let visible =
+                w >= MIN_VISIBLE.min(i64::from(rect.w)) && h >= MIN_VISIBLE.min(i64::from(rect.h));
+            visible.then_some((w * h, m))
+        })
+        .max_by_key(|(area, _)| *area)
+        .map(|(_, m)| m)
+        .ok_or(Fallback::OffScreen)
+}
+
+/// `rect` moved the least distance that puts it inside `area`. On an axis where it is bigger
+/// than `area`, it starts at `area`'s start.
+pub fn clamp_into(rect: Rect, area: Rect) -> Rect {
+    let axis = |pos: i32, size: u32, start: i32, span: u32| -> i32 {
+        let last = i64::from(start) + i64::from(span) - i64::from(size);
+        // In range: `last` is between `start` and `pos`, both i32.
+        i64::from(pos).min(last).max(i64::from(start)) as i32
+    };
+    Rect::new(
+        axis(rect.x, rect.w, area.x, area.w),
+        axis(rect.y, rect.h, area.y, area.h),
+        rect.w,
+        rect.h,
+    )
 }
 
 // ── Platform selection ──────────────────────────────────────────────────────
@@ -239,8 +408,8 @@ pub fn needs_x11_relaunch(os: &str, force_x11: bool, env: &dyn Fn(&str) -> Optio
 /// Result of [`Placer::restore`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Restore {
-    /// Moved to `(x, y)`.
-    Placed { x: i32, y: i32 },
+    /// Moved to `(x, y)` and, when `length` isn't 0, resized to `length` px along the strip.
+    Placed { x: i32, y: i32, length: u32 },
     /// Not moved; use the edge placement.
     Fallback(Fallback),
 }
@@ -440,6 +609,7 @@ impl<R: Runner> Placer for HyprPlacer<R> {
         Ok(Restore::Placed {
             x: rect.x,
             y: rect.y,
+            length: 0,
         })
     }
 
@@ -458,7 +628,12 @@ impl<R: Runner> Placer for HyprPlacer<R> {
                 monitor_at(&all, x, y).map(|m| m.name.clone())
             })
             .unwrap_or_default();
-        Ok(Some(PickerCustom { x, y, monitor }))
+        Ok(Some(PickerCustom {
+            x,
+            y,
+            monitor,
+            length: 0,
+        }))
     }
 }
 
@@ -578,6 +753,7 @@ impl<R: Runner> Placer for SwayPlacer<R> {
         Ok(Restore::Placed {
             x: rect.x,
             y: rect.y,
+            length: 0,
         })
     }
 
@@ -586,6 +762,7 @@ impl<R: Runner> Placer for SwayPlacer<R> {
             x: rect.x,
             y: rect.y,
             monitor,
+            length: 0,
         }))
     }
 }
@@ -595,19 +772,42 @@ impl<R: Runner> Placer for SwayPlacer<R> {
 /// macOS, Windows and X11: Tauri reads `outer_position` and calls `set_position`.
 pub struct TauriPlacer<Rt: tauri::Runtime> {
     window: tauri::WebviewWindow<Rt>,
+    vertical: bool,
 }
 
 impl<Rt: tauri::Runtime> TauriPlacer<Rt> {
-    pub fn new(window: tauri::WebviewWindow<Rt>) -> Self {
-        Self { window }
+    /// `vertical`: the strip runs top to bottom, so its length is the window's height.
+    pub fn new(window: tauri::WebviewWindow<Rt>, vertical: bool) -> Self {
+        Self { window, vertical }
     }
 
+    /// The strip's length: the window's width, or its height when vertical.
+    fn length(&self, size: tauri::PhysicalSize<u32>) -> u32 {
+        if self.vertical {
+            size.height
+        } else {
+            size.width
+        }
+    }
+
+    /// The monitors' work areas, so a restored picker stays clear of the Dock or taskbar.
     fn monitors(&self) -> Result<Vec<Monitor>, PlaceError> {
         Ok(self
             .window
             .available_monitors()?
             .iter()
-            .map(tauri_monitor)
+            .map(|m| {
+                let area = m.work_area();
+                Monitor {
+                    name: m.name().cloned().unwrap_or_default(),
+                    rect: Rect::new(
+                        area.position.x,
+                        area.position.y,
+                        area.size.width,
+                        area.size.height,
+                    ),
+                }
+            })
             .collect())
     }
 }
@@ -622,15 +822,35 @@ pub fn tauri_monitor(m: &tauri::Monitor) -> Monitor {
 }
 
 impl<Rt: tauri::Runtime> Placer for TauriPlacer<Rt> {
+    /// Puts the strip at the saved spot with the saved length (the current one when 0), made
+    /// to fit the screen with [`fit_custom`].
     fn restore(&self, custom: &PickerCustom) -> Result<Restore, PlaceError> {
-        let size = self.window.outer_size()?;
-        match check_custom(custom, (size.width, size.height), &self.monitors()?) {
+        let mut size = self.window.outer_size()?;
+        if custom.length != 0 {
+            if self.vertical {
+                size.height = custom.length;
+            } else {
+                size.width = custom.length;
+            }
+        }
+        let min_len = min_length_px(self.window.scale_factor()?);
+        let monitors = self.monitors()?;
+        match fit_custom(
+            custom,
+            (size.width, size.height),
+            &monitors,
+            self.vertical,
+            min_len,
+        ) {
             Ok(rect) => {
+                self.window
+                    .set_size(tauri::PhysicalSize::new(rect.w, rect.h))?;
                 self.window
                     .set_position(tauri::PhysicalPosition::new(rect.x, rect.y))?;
                 Ok(Restore::Placed {
                     x: rect.x,
                     y: rect.y,
+                    length: if self.vertical { rect.h } else { rect.w },
                 })
             }
             Err(fallback) => Ok(Restore::Fallback(fallback)),
@@ -650,6 +870,7 @@ impl<Rt: tauri::Runtime> Placer for TauriPlacer<Rt> {
             x: pos.x,
             y: pos.y,
             monitor,
+            length: self.length(self.window.outer_size()?),
         }))
     }
 }

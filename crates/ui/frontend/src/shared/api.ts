@@ -400,6 +400,22 @@ export function onPickerShown(handler: () => void): Promise<UnlistenFn> {
   return listen<null>(PICKER_SHOWN, () => handler())
 }
 
+/** One end of the picker strip: left/right when horizontal, top/bottom when vertical. */
+export type StripEnd = 'start' | 'end'
+
+/** A resize handle was grabbed: remembers the picker's size and the screen it is on. */
+export function pickerResizeBegin(): Promise<void> {
+  return invoke<void>('picker_resize_begin')
+}
+
+/**
+ * Resizes the picker along its strip: the grabbed `end` is `delta` logical px from where it
+ * was grabbed. Rust keeps it on the screen and at least the minimum length.
+ */
+export function pickerResize(end: StripEnd, delta: number): Promise<void> {
+  return invoke<void>('picker_resize', { end, delta })
+}
+
 /** Forgets a dragged picker position (`[picker] placement = "edge"`). */
 export function resetPickerPosition(): Promise<void> {
   return invoke<void>('reset_picker_position')

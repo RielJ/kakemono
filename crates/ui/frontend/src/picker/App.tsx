@@ -3,6 +3,7 @@ import { getAppInfo, getConfig, hidePicker, onPickerShown } from '../shared/api'
 import { useImageDrop } from '../shared/useImageDrop'
 import BrowseStrip from './components/BrowseStrip'
 import Icon from './components/Icon'
+import ResizeHandles from './components/ResizeHandles'
 import TabBar, { PANEL_ID } from './components/TabBar'
 import ThumbnailStrip, { type Notices } from './components/ThumbnailStrip'
 import { keyAction } from './keys'
@@ -151,6 +152,7 @@ export default function App() {
           <span>Drop an image to set it</span>
         </div>
       )}
+      <ResizeHandles vertical={vertical} />
       <div className="toast-region" role="status" aria-live="polite">
         {notice && (
           <div className="toast">

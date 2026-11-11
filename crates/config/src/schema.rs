@@ -367,13 +367,21 @@ pub enum PickerPlacement {
     Custom,
 }
 
-/// `[picker] custom = { x, y, monitor }`. `monitor` is the monitor name.
+/// `[picker] custom = { x, y, monitor, length }`. `monitor` is the monitor name.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct PickerCustom {
     pub x: i32,
     pub y: i32,
     pub monitor: String,
+    /// Length of the strip along its direction, in physical px, after the user resized it.
+    /// 0 (the default, left out of the file) means the length of the edge strip.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub length: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// `[desktop]`. Selects and remembers the wallpaper backend.

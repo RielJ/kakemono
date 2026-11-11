@@ -8,8 +8,8 @@ use std::sync::Mutex;
 use kakemono_config::schema::{PickerCustom, PickerOrientation, PickerPosition};
 use kakemono_ui::picker_place::{
     FLOATING_HORIZONTAL, FLOATING_VERTICAL, Fallback, HyprPlacer, Monitor, PICKER_TITLE,
-    PlaceError, Placer, PlacerKind, Rect, Restore, Runner, SwayPlacer, check_custom, edge_rect,
-    floating_size, needs_x11_relaunch, placer_kind,
+    PlaceError, Placer, PlacerKind, Rect, Restore, Runner, StripEnd, SwayPlacer, check_custom,
+    edge_rect, fit_custom, fit_strip, floating_size, needs_x11_relaunch, placer_kind, resize_strip,
 };
 
 const PID: u32 = 4242;
@@ -72,6 +72,7 @@ fn custom(x: i32, y: i32, monitor: &str) -> PickerCustom {
         x,
         y,
         monitor: monitor.into(),
+        length: 0,
     }
 }
 
@@ -157,7 +158,14 @@ fn picker_place_hyprland_restore_argv() {
     let runner = hypr();
     let placer = HyprPlacer::new(&runner, PID);
     let restored = placer.restore(&custom(1500, 1200, "DP-1")).unwrap();
-    assert_eq!(restored, Restore::Placed { x: 1500, y: 1200 });
+    assert_eq!(
+        restored,
+        Restore::Placed {
+            x: 1500,
+            y: 1200,
+            length: 0
+        }
+    );
     insta::assert_snapshot!(runner.calls(), @r"
     hyprctl clients -j
     hyprctl monitors -j
@@ -167,12 +175,20 @@ fn picker_place_hyprland_restore_argv() {
 
 #[test]
 fn picker_place_hyprland_scaled_monitor_uses_layout_px() {
-    // eDP-1 is 2880x1800 at scale 2 → 1440x900 layout px. (1000, 800) is on it.
+    // eDP-1 is 2880x1800 at scale 2 → 1440x900 layout px. At y = 800 a 160 px window hangs
+    // 60 px below it, so it moves up to 740; in physical px (1800) it would have stayed.
     let runner = hypr();
     let restored = HyprPlacer::new(&runner, PID)
         .restore(&custom(400, 800, "eDP-1"))
         .unwrap();
-    assert_eq!(restored, Restore::Placed { x: 400, y: 800 });
+    assert_eq!(
+        restored,
+        Restore::Placed {
+            x: 400,
+            y: 740,
+            length: 0
+        }
+    );
     // y = 890 leaves 10 px of a 160 px window on screen: off screen.
     let runner = hypr();
     let restored = HyprPlacer::new(&runner, PID)
@@ -238,7 +254,14 @@ fn picker_place_sway_restore_argv() {
     let restored = SwayPlacer::new(&runner, PID)
         .restore(&custom(100, 700, "eDP-1"))
         .unwrap();
-    assert_eq!(restored, Restore::Placed { x: 100, y: 700 });
+    assert_eq!(
+        restored,
+        Restore::Placed {
+            x: 100,
+            y: 700,
+            length: 0
+        }
+    );
     insta::assert_snapshot!(runner.calls(), @r#"
     swaymsg -r -t get_tree
     swaymsg -r -t get_outputs
@@ -300,6 +323,59 @@ fn picker_place_custom_on_a_screen_is_used() {
 }
 
 #[test]
+fn picker_place_custom_hanging_off_a_screen_is_pulled_back_in() {
+    let mons = monitors();
+    // Past the built-in display's left edge: x snaps to 0, y is kept.
+    assert_eq!(
+        check_custom(
+            &custom(-900, 100, "Built-in Retina Display"),
+            (2000, 320),
+            &mons
+        ),
+        Ok(Rect::new(0, 100, 2000, 320))
+    );
+    // Past the Dell's bottom-right corner (it ends at 6864, 1960).
+    assert_eq!(
+        check_custom(&custom(5500, 1800, "DELL U2720Q"), (2000, 320), &mons),
+        Ok(Rect::new(4864, 1640, 2000, 320))
+    );
+    // A full-width strip dragged sideways goes back to the monitor's left edge.
+    assert_eq!(
+        check_custom(
+            &custom(700, 1644, "Built-in Retina Display"),
+            (3024, 320),
+            &mons
+        ),
+        Ok(Rect::new(0, 1644, 3024, 320))
+    );
+}
+
+#[test]
+fn picker_place_custom_straddling_two_screens_moves_onto_the_one_it_covers_most() {
+    // 1500 px on the built-in display, 500 px on the Dell.
+    assert_eq!(
+        check_custom(
+            &custom(1524, 100, "Built-in Retina Display"),
+            (2000, 320),
+            &monitors()
+        ),
+        Ok(Rect::new(1024, 100, 2000, 320))
+    );
+}
+
+#[test]
+fn picker_place_custom_bigger_than_its_screen_starts_at_the_screen_edge() {
+    assert_eq!(
+        check_custom(
+            &custom(-50, 40, "Built-in Retina Display"),
+            (4000, 320),
+            &monitors()
+        ),
+        Ok(Rect::new(0, 40, 4000, 320))
+    );
+}
+
+#[test]
 fn picker_place_off_screen_rect_falls_back_to_edge() {
     let mons = monitors();
     let size = (2000, 320);
@@ -321,6 +397,135 @@ fn picker_place_off_screen_rect_falls_back_to_edge() {
     // No monitors at all.
     assert_eq!(
         check_custom(&custom(100, 100, "LG HDR 4K"), size, &[]),
+        Err(Fallback::MonitorMissing)
+    );
+}
+
+// ── Strip fitting and resizing ─────────────────────────────────────────────
+
+/// The built-in display's area, and 320 logical px at scale 2.
+const AREA: Rect = Rect {
+    x: 0,
+    y: 0,
+    w: 3024,
+    h: 1964,
+};
+const MIN: u32 = 640;
+
+#[test]
+fn picker_fit_strip_dropped_three_quarters_across_ends_at_the_screen_edge() {
+    assert_eq!(
+        fit_strip(Rect::new(2268, 1600, 3024, 320), AREA, false, MIN),
+        Rect::new(2268, 1600, 756, 320)
+    );
+}
+
+#[test]
+fn picker_fit_strip_keeps_the_minimum_length_by_sliding_back() {
+    // Only 424 px would be left on screen: it slides left to keep 640.
+    assert_eq!(
+        fit_strip(Rect::new(2600, 1600, 3024, 320), AREA, false, MIN),
+        Rect::new(2384, 1600, 640, 320)
+    );
+}
+
+#[test]
+fn picker_fit_strip_dropped_past_the_start_keeps_its_far_end() {
+    assert_eq!(
+        fit_strip(Rect::new(-1000, 100, 3024, 320), AREA, false, MIN),
+        Rect::new(0, 100, 2024, 320)
+    );
+}
+
+#[test]
+fn picker_fit_strip_moves_back_across_its_direction() {
+    // A horizontal strip can't get shorter vertically, so it moves up instead.
+    assert_eq!(
+        fit_strip(Rect::new(100, 1800, 1000, 320), AREA, false, MIN),
+        Rect::new(100, 1644, 1000, 320)
+    );
+}
+
+#[test]
+fn picker_fit_strip_vertical_shrinks_its_height() {
+    assert_eq!(
+        fit_strip(Rect::new(100, 1000, 400, 1964), AREA, true, MIN),
+        Rect::new(100, 1000, 400, 964)
+    );
+}
+
+#[test]
+fn picker_fit_strip_on_screen_is_unchanged() {
+    let rect = Rect::new(500, 100, 2000, 320);
+    assert_eq!(fit_strip(rect, AREA, false, MIN), rect);
+}
+
+#[test]
+fn picker_fit_strip_minimum_longer_than_the_screen_is_the_screen() {
+    assert_eq!(
+        fit_strip(Rect::new(-50, 100, 5000, 320), AREA, false, 4000),
+        Rect::new(0, 100, 3024, 320)
+    );
+}
+
+#[test]
+fn picker_resize_strip_end_edge() {
+    let start = Rect::new(500, 100, 2000, 320);
+    let resize = |delta| resize_strip(start, StripEnd::End, delta, AREA, false, MIN);
+    assert_eq!(resize(300), Rect::new(500, 100, 2300, 320));
+    // Stops at the screen edge.
+    assert_eq!(resize(900), Rect::new(500, 100, 2524, 320));
+    // Stops at the minimum length.
+    assert_eq!(resize(-1500), Rect::new(500, 100, 640, 320));
+}
+
+#[test]
+fn picker_resize_strip_start_edge_keeps_the_far_end() {
+    let start = Rect::new(500, 100, 2000, 320);
+    let resize = |delta| resize_strip(start, StripEnd::Start, delta, AREA, false, MIN);
+    assert_eq!(resize(-200), Rect::new(300, 100, 2200, 320));
+    assert_eq!(resize(-900), Rect::new(0, 100, 2500, 320));
+    assert_eq!(resize(1500), Rect::new(1860, 100, 640, 320));
+}
+
+#[test]
+fn picker_resize_strip_vertical_changes_the_height() {
+    let start = Rect::new(100, 300, 400, 1000);
+    assert_eq!(
+        resize_strip(start, StripEnd::End, 200, AREA, true, MIN),
+        Rect::new(100, 300, 400, 1200)
+    );
+    assert_eq!(
+        resize_strip(start, StripEnd::Start, -100, AREA, true, MIN),
+        Rect::new(100, 200, 400, 1100)
+    );
+}
+
+#[test]
+fn picker_fit_custom_uses_the_saved_spot_and_fits_it() {
+    let mons = monitors();
+    assert_eq!(
+        fit_custom(
+            &custom(2268, 1600, "Built-in Retina Display"),
+            (3024, 320),
+            &mons,
+            false,
+            MIN
+        ),
+        Ok(Rect::new(2268, 1600, 756, 320))
+    );
+    assert_eq!(
+        fit_custom(
+            &custom(0, 5000, "DELL U2720Q"),
+            (2000, 320),
+            &mons,
+            false,
+            MIN
+        ),
+        Err(Fallback::OffScreen)
+    );
+    assert_eq!(
+        fit_custom(&custom(1, 1, "LG HDR 4K"), (2000, 320), &mons, false, MIN),
         Err(Fallback::MonitorMissing)
     );
 }

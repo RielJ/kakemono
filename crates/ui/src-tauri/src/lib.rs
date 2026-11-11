@@ -118,6 +118,8 @@ pub fn run() -> anyhow::Result<()> {
             picker::show_picker,
             picker::hide_picker,
             picker::reset_picker_position,
+            picker::picker_resize_begin,
+            picker::picker_resize,
         ])
         .setup(setup)
         .build(tauri::generate_context!())?;

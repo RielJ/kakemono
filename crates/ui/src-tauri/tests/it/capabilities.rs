@@ -139,6 +139,8 @@ fn capabilities_picker_gets_only_what_the_picker_calls() {
             "get_config",
             "hide_picker",
             "import_dropped_file",
+            "picker_resize",
+            "picker_resize_begin",
             "reset_picker_position",
             "set_file",
             "status",

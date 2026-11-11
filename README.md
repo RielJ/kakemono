@@ -187,6 +187,8 @@ In the Sources tab, Set downloads the image to the source's download folder and 
 
 Each source reports its own state under the strip. A source that the provider is rate-limiting shows `type (id): message` with the provider's text. kakemono asks it again after the wait the provider gave, or after 60 seconds. A source that needs setup, such as a missing API key, shows what to add. With internet access off in Settings, the tab says that browsing is off.
 
+Drag the picker by its grip to move it, and drag either end of the strip to make it shorter or longer. It resizes only along the strip: left and right when horizontal, top and bottom when vertical. It is never shorter than about two thumbnails. If you drop it so that it runs past the screen edge, it shrinks to end at the edge and you scroll the strip for the rest. Move it back and it grows to the length you last chose; only resizing it by hand changes that length. kakemono remembers the spot and the length (`[picker] custom`); Reset position in Settings returns it to the screen edge. On Hyprland and sway, the compositor places the picker, so it is moved back on screen but not shortened.
+
 `[picker] blur_nsfw` (default `true`, or the Blur NSFW previews switch in Settings) blurs previews that the source marks NSFW, such as Wallhaven sketchy and NSFW results, until you hover over or focus them.
 
 Privacy: the daemon fetches previews, not the picker window. It requests them only from the sources' image hosts, does not use a system proxy, and caches them for 24 hours in `<cache>/previews` (see [Files](#files)).
@@ -301,8 +303,8 @@ Filters are soft: if no image passes all of them, kakemono uses the image that p
 | `position` | `"bottom"` | The screen edge for the picker: `bottom`, `top`, `left`, or `right`. |
 | `orientation` | `"auto"` | `horizontal`, `vertical`, or `auto`: vertical on the left and right edges. |
 | `close_on_blur` | `true` | Hide the picker when it loses focus. |
-| `placement` | `"edge"` | `edge` uses `position`. `custom` uses `custom`. Dragging the picker sets both. |
-| `custom` | unset | `{ x = 10, y = 20, monitor = "DP-1" }` |
+| `placement` | `"edge"` | `edge` uses `position`. `custom` uses `custom`. Dragging or resizing the picker sets both. |
+| `custom` | unset | `{ x = 10, y = 20, monitor = "DP-1", length = 1200 }`. `length` is optional: the strip's length in physical px. Without it, the strip spans the edge. |
 | `force_x11` | `false` | Linux, Wayland: run the picker under XWayland so kakemono can place it. Experimental. |
 | `blur_nsfw` | `true` | Blur NSFW previews in the Sources tab until you hover over or focus them. |
 

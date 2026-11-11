@@ -272,10 +272,24 @@ fn serialized_config_reloads_equal() {
         x: 1,
         y: 2,
         monitor: "eDP-1".into(),
+        length: 900,
     });
     let text = toml::to_string(&cfg).unwrap();
     let back: Config = parse_str(&text, home()).unwrap();
     assert_eq!(back, cfg);
+}
+
+#[test]
+fn picker_custom_length_is_optional_and_left_out_when_zero() {
+    let cfg: Config = parse_str(
+        "[picker]\nplacement = \"custom\"\ncustom = { x = 5, y = 6, monitor = \"DP-1\" }\n",
+        home(),
+    )
+    .unwrap();
+    let custom = cfg.picker.custom.clone().unwrap();
+    assert_eq!(custom.length, 0);
+    let text = toml::to_string(&custom).unwrap();
+    assert!(!text.contains("length"), "{text}");
 }
 
 #[test]

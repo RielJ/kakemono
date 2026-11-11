@@ -42,4 +42,6 @@ pub const COMMANDS: &[&str] = &[
     "show_picker",
     "hide_picker",
     "reset_picker_position",
+    "picker_resize_begin",
+    "picker_resize",
 ];
