@@ -23,15 +23,15 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
-/// The shape of a real Go `wallpaperd` config: Wallhaven on, everything else off, seven distinct
-/// queries across `[light]` and `[dark]`, the legacy socket path, and a `[picker]` table.
+/// The shape of a real pre-`[[sources]]` config: Wallhaven on, everything else off, seven
+/// distinct queries across `[light]` and `[dark]`, a pinned socket path, and a `[picker]` table.
 const USER_SHAPE: &str = r#"[daemon]
   rotation_enabled = false
   interval = "30m"
   download_dir = "/home/u/Downloads/wallpapers/"
   cache_size = 50
   trash_dir = "/home/u/Pictures/Wallpapers/trash"
-  socket_path = "~/.config/wallpaperd/daemon.sock"
+  socket_path = "~/.config/kakemono/daemon.sock"
 
 [wallhaven]
   enabled = true

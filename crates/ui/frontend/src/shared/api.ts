@@ -310,7 +310,7 @@ export function testDesktop(): Promise<DoctorReport> {
 
 /**
  * Runs `kakemono detect` (`write`: `detect --write`) and resolves to its report text. A
- * refused `--write` (pinned or legacy config) rejects `cli_failed` with the CLI's stderr.
+ * refused `--write` (a pinned config) rejects `cli_failed` with the CLI's stderr.
  */
 export function detectDesktop(write: boolean): Promise<string> {
   return invoke<string>('detect_desktop', { write })

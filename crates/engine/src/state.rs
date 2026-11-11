@@ -13,9 +13,7 @@
 //!   album image shown. It is written only when non-empty, so a state without cursors keeps the
 //!   Go bytes, and a file without the key (Go's, or an older kakemono's) loads with no cursors.
 //!
-//! Unlike Go, [`State::save`] is atomic (temp file in the same directory, then rename), and
-//! [`State::load_or_migrate`] copies the Go app's `~/.config/wallpaperd/state.json` once into
-//! the new location without touching the old file.
+//! Unlike Go, [`State::save`] is atomic (temp file in the same directory, then rename).
 
 use std::collections::BTreeMap;
 use std::io;
@@ -48,25 +46,6 @@ pub enum StateError {
     CreateDir { path: PathBuf, source: io::Error },
     #[error("state: write {}: {source}", path.display())]
     Write { path: PathBuf, source: io::Error },
-}
-
-/// Where [`State::load_or_migrate`] got its state from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StateOrigin {
-    /// The kakemono state file existed and was read.
-    Existing,
-    /// The kakemono file was missing; the Go `wallpaperd` file was read and written to the new
-    /// path. The old file is left untouched.
-    Migrated,
-    /// Neither file existed (or the legacy file was unreadable): a fresh, empty state.
-    Fresh,
-}
-
-/// Result of [`State::load_or_migrate`].
-#[derive(Debug, Clone, PartialEq)]
-pub struct LoadedState {
-    pub state: State,
-    pub origin: StateOrigin,
 }
 
 /// Persisted runtime state: the current wallpaper, the history ring (cap [`MAX_HISTORY`]), the
@@ -112,68 +91,13 @@ impl State {
         }
     }
 
-    /// Loads `state_file`. If it does not exist and `legacy_state_file` (the Go app's file)
-    /// does, reads that once and saves it to `state_file`; the legacy file is never modified.
-    ///
-    /// An unreadable or corrupt legacy file is logged and ignored ([`StateOrigin::Fresh`]):
-    /// the user cannot fix it through kakemono. An unreadable or corrupt `state_file`, or a
-    /// failure to write the migrated copy, is an error.
+    /// [`load`](Self::load) on `paths.state_file`.
     ///
     /// # Errors
     ///
-    /// [`StateError`] for an unreadable or corrupt `state_file`, or a failed migration write.
-    pub fn load_or_migrate(
-        state_file: &Path,
-        legacy_state_file: &Path,
-    ) -> Result<LoadedState, StateError> {
-        let exists = |p: &Path| {
-            p.try_exists().map_err(|source| StateError::Read {
-                path: p.to_owned(),
-                source,
-            })
-        };
-        if exists(state_file)? || state_file == legacy_state_file {
-            return Ok(LoadedState {
-                state: Self::load(state_file)?,
-                origin: StateOrigin::Existing,
-            });
-        }
-        if !legacy_state_file.exists() {
-            return Ok(LoadedState {
-                state: Self::new(),
-                origin: StateOrigin::Fresh,
-            });
-        }
-        let state = match Self::load(legacy_state_file) {
-            Ok(state) => state,
-            Err(e) => {
-                tracing::warn!(error = %e, "ignoring unreadable legacy state file");
-                return Ok(LoadedState {
-                    state: Self::new(),
-                    origin: StateOrigin::Fresh,
-                });
-            }
-        };
-        state.save(state_file)?;
-        tracing::info!(
-            from = %legacy_state_file.display(),
-            to = %state_file.display(),
-            "migrated wallpaperd state"
-        );
-        Ok(LoadedState {
-            state,
-            origin: StateOrigin::Migrated,
-        })
-    }
-
-    /// [`load_or_migrate`](Self::load_or_migrate) with `paths.state_file` and
-    /// `paths.legacy_state_file`.
-    ///
-    /// # Errors
-    ///
-    /// Those of [`load_or_migrate`](Self::load_or_migrate).
-    pub fn load_from_paths(paths: &Paths) -> Result<LoadedState, StateError> {
-        Self::load_or_migrate(&paths.state_file, &paths.legacy_state_file)
+    /// Those of [`load`](Self::load).
+    pub fn load_from_paths(paths: &Paths) -> Result<Self, StateError> {
+        Self::load(&paths.state_file)
     }
 
     /// Writes the state to `path` atomically (temp file in the same directory, then rename),

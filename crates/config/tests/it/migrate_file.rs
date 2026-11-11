@@ -1,14 +1,13 @@
 //! Task 15: the legacy migration wired into loading ([`parse_str`]) and onto disk
-//! ([`migrate_file`], [`migrate_legacy_file`], [`migrate_config`]).
+//! ([`migrate_file`], [`migrate_config`]).
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Barrier};
 use std::time::{Duration, SystemTime};
 
-use kakemono_config::paths::{BaseDirs, ConfigSource, Os, Paths, SocketPath};
+use kakemono_config::paths::{BaseDirs, ConfigSource, Os, Paths};
 use kakemono_config::{
-    MigrationTarget, SourceType, load_with_home, migrate_config, migrate_document, migrate_file,
-    migrate_legacy_file, parse_str, valid_id,
+    SourceType, load_with_home, migrate_config, migrate_document, migrate_file, parse_str, valid_id,
 };
 use toml_edit::DocumentMut;
 
@@ -119,13 +118,7 @@ fn migrate_file_keeps_a_byte_identical_bak_and_rewrites_the_config() {
         .unwrap()
         .expect("legacy file migrates");
     let bak = tmp.path().join("config.toml.bak");
-    assert_eq!(
-        done.target,
-        MigrationTarget::InPlace {
-            path: config.clone(),
-            backup: bak.clone(),
-        }
-    );
+    assert_eq!((&done.path, &done.backup), (&config, &bak));
     assert_eq!(
         std::fs::read(&bak).unwrap(),
         original,
@@ -159,9 +152,7 @@ fn migrate_file_uses_a_timestamped_bak_when_a_different_bak_exists() {
     std::fs::write(&bak, b"someone else's backup").unwrap();
 
     let done = migrate_file(&config, tmp.path()).unwrap().unwrap();
-    let MigrationTarget::InPlace { backup, .. } = &done.target else {
-        panic!("{:?}", done.target);
-    };
+    let backup = &done.backup;
     let name = backup.file_name().unwrap().to_string_lossy().into_owned();
     let ts = name.strip_prefix("config.toml.bak.").expect(&name);
     assert!(
@@ -183,13 +174,7 @@ fn migrate_file_treats_an_identical_bak_as_done() {
     std::fs::write(&bak, &original).unwrap();
 
     let done = migrate_file(&config, tmp.path()).unwrap().unwrap();
-    assert_eq!(
-        done.target,
-        MigrationTarget::InPlace {
-            path: config.clone(),
-            backup: bak.clone(),
-        }
-    );
+    assert_eq!((&done.path, &done.backup), (&config, &bak));
     assert_eq!(backups(&config), vec![bak]);
     assert!(
         std::fs::read_to_string(&config)
@@ -296,150 +281,33 @@ fn concurrent_migrate_file_calls_write_one_bak() {
     }
 }
 
-// ── Legacy (wallpaperd) → Primary ───────────────────────────────────────────
+// ── migrate_config ──────────────────────────────────────────────────────────
 
 #[test]
-fn a_legacy_config_is_written_to_the_primary_path_and_left_as_is() {
+fn migrate_config_rewrites_the_primary_file_in_place() {
     let tmp = tempfile::tempdir().unwrap();
     let paths = paths_in(tmp.path());
-    let original = legacy_text().into_bytes();
-    std::fs::create_dir_all(paths.legacy_config_file.parent().unwrap()).unwrap();
-    std::fs::write(&paths.legacy_config_file, &original).unwrap();
-    let legacy_mtime = age(&paths.legacy_config_file);
+    std::fs::create_dir_all(&paths.config_dir).unwrap();
+    std::fs::write(&paths.config_file, legacy_text()).unwrap();
 
     let source = paths.locate_config(None);
-    assert!(source.is_legacy(), "{source:?}");
+    assert_eq!(source, ConfigSource::Primary(paths.config_file.clone()));
     let done = migrate_config(&paths, &source)
         .unwrap()
         .expect("legacy file migrates");
-    assert_eq!(
-        done.target,
-        MigrationTarget::Legacy {
-            from: paths.legacy_config_file.clone(),
-            to: paths.config_file.clone(),
-        }
-    );
-    assert_eq!(
-        done.messages()[0],
-        format!(
-            "migrated {} to {}; the old file is left as is",
-            paths.legacy_config_file.display(),
-            paths.config_file.display()
-        )
-    );
-
-    // The wallpaperd file is untouched and gets no .bak.
-    assert_eq!(std::fs::read(&paths.legacy_config_file).unwrap(), original);
-    assert_eq!(mtime(&paths.legacy_config_file), legacy_mtime);
-    assert!(backups(&paths.legacy_config_file).is_empty());
-    assert!(backups(&paths.config_file).is_empty());
-
-    // The kakemono file holds the migrated document.
-    let text = std::fs::read_to_string(&paths.config_file).unwrap();
-    assert!(text.contains("[[sources]]"), "{text}");
-    assert!(!doc(&text).contains_key("light"), "{text}");
-    let cfg = load_with_home(&paths.config_file, &paths.home).unwrap();
-    assert_eq!(cfg.sources.len(), done.report.rows.len());
-
-    // Loads (and so the UI's save target) now resolve to the kakemono file; --config still wins.
-    assert_eq!(
-        paths.locate_config(None),
-        ConfigSource::Primary(paths.config_file.clone())
-    );
-    let explicit = tmp.path().join("explicit.toml");
-    assert_eq!(
-        paths.locate_config(Some(&explicit)),
-        ConfigSource::Explicit(explicit)
-    );
+    assert_eq!(done.path, paths.config_file);
+    assert_eq!(backups(&paths.config_file), vec![done.backup.clone()]);
 
     // Nothing left to do on the next start.
-    let source = paths.locate_config(None);
     assert!(migrate_config(&paths, &source).unwrap().is_none());
 }
 
 #[test]
-fn legacy_migration_drops_the_wallpaperd_socket_path() {
+fn migrate_config_does_nothing_without_a_file() {
     let tmp = tempfile::tempdir().unwrap();
     let paths = paths_in(tmp.path());
-    std::fs::create_dir_all(paths.legacy_config_file.parent().unwrap()).unwrap();
-    std::fs::write(&paths.legacy_config_file, legacy_text()).unwrap();
-
     let source = paths.locate_config(None);
-    let done = migrate_config(&paths, &source).unwrap().unwrap();
-    assert!(
-        done.report.notes.iter().any(|n| n.contains("socket_path")),
-        "{:?}",
-        done.report.notes
-    );
-    let text = std::fs::read_to_string(&paths.config_file).unwrap();
-    assert!(!text.contains("socket_path"), "{text}");
-    let source = paths.locate_config(None);
-    let cfg = load_with_home(source.path(), &paths.home).unwrap();
-    assert_eq!(
-        cfg.effective_socket_path(&source, &paths.home),
-        SocketPath::Default
-    );
-}
-
-#[test]
-fn legacy_migration_never_overwrites_an_existing_primary() {
-    let tmp = tempfile::tempdir().unwrap();
-    let legacy = tmp.path().join("wallpaperd/config.toml");
-    let primary = tmp.path().join("kakemono/config.toml");
-    std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
-    std::fs::create_dir_all(primary.parent().unwrap()).unwrap();
-    std::fs::write(&legacy, legacy_text()).unwrap();
-    std::fs::write(&primary, "# mine\n").unwrap();
-
-    assert!(
-        migrate_legacy_file(&legacy, &primary, tmp.path())
-            .unwrap()
-            .is_none()
-    );
-    assert_eq!(std::fs::read_to_string(&primary).unwrap(), "# mine\n");
-}
-
-#[test]
-fn concurrent_legacy_migrations_write_the_primary_once() {
-    for _ in 0..20 {
-        let tmp = tempfile::tempdir().unwrap();
-        let legacy = tmp.path().join("wallpaperd/config.toml");
-        let primary = tmp.path().join("kakemono/config.toml");
-        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
-        let original = legacy_text().into_bytes();
-        std::fs::write(&legacy, &original).unwrap();
-
-        let barrier = Arc::new(Barrier::new(2));
-        let handles: Vec<_> = (0..2)
-            .map(|_| {
-                let (barrier, legacy, primary, home) = (
-                    barrier.clone(),
-                    legacy.clone(),
-                    primary.clone(),
-                    tmp.path().to_owned(),
-                );
-                std::thread::spawn(move || {
-                    barrier.wait();
-                    migrate_legacy_file(&legacy, &primary, &home)
-                })
-            })
-            .collect();
-        let results: Vec<_> = handles
-            .into_iter()
-            .map(|h| h.join().unwrap().unwrap())
-            .collect();
-
-        assert_eq!(results.iter().filter(|r| r.is_some()).count(), 1);
-        assert_eq!(std::fs::read(&legacy).unwrap(), original);
-        assert!(
-            std::fs::read_to_string(&primary)
-                .unwrap()
-                .contains("[[sources]]")
-        );
-        let names: Vec<_> = std::fs::read_dir(primary.parent().unwrap())
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-            .collect();
-        assert_eq!(names, vec!["config.toml".to_owned()], "no temp files left");
-    }
+    assert_eq!(source, ConfigSource::Missing(paths.config_file.clone()));
+    assert!(migrate_config(&paths, &source).unwrap().is_none());
+    assert!(!paths.config_file.exists());
 }

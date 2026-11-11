@@ -51,7 +51,7 @@ URLs are the production ones. No request leaves the machine.
   with `http://wallhaven.cc` before comparing.
 - `user_agent` is `Go-http-client/1.1` for bing, because the bing provider
   sets no UA and Go's default applies. That is not a contract, so do not
-  assert it. The other providers send `wallpaperd/1.0` explicitly; assert
+  assert it. The other providers send `kakemono/0.1.0` explicitly; assert
   that.
 - Error strings are Go `error.Error()` text. Status-based errors
   (`bing: unexpected status 500`, `reddit: unexpected status 403`, the

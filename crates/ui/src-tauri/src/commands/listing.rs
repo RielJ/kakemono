@@ -48,16 +48,11 @@ pub async fn current_thumbnail(thumbs: State<'_, Arc<Thumbs>>) -> CmdResult<Opti
     .await
 }
 
-/// The config, and the daemon's state file (the legacy one when the new one is missing).
+/// The config, and the daemon's state file.
 fn load_listing_inputs() -> CmdResult<(Config, StateView)> {
     let (paths, source) = locate_config()?;
     let cfg = kakemono_config::load_or_default(source.path())?;
-    let state_file = if paths.state_file.exists() {
-        &paths.state_file
-    } else {
-        &paths.legacy_state_file
-    };
-    Ok((cfg, read_state(state_file)))
+    Ok((cfg, read_state(&paths.state_file)))
 }
 
 /// The parts of the daemon's `state.json` the picker reads. The daemon owns the file; a

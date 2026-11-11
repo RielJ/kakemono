@@ -11,8 +11,7 @@
 //! - `backend = "native"` (on Linux that means "detect every start");
 //! - nothing usable was found (`backend` stays as it is, the setter reports the hint);
 //! - a preset was detected but `set_command` is set: saving the preset would make that command
-//!   override it, and dropping it would lose the user's command;
-//! - the config is the legacy `wallpaperd` file (the Go app still owns it).
+//!   override it, and dropping it would lose the user's command.
 //!
 //! [`plan`] is the pure decision, so it runs on every OS with a captured [`Env`].
 
@@ -35,8 +34,6 @@ pub enum Keep {
     Unusable(String),
     /// A preset was detected, but `set_command` would override it once saved.
     SetCommandConflict(BackendKind),
-    /// The config is the legacy `wallpaperd` file.
-    Legacy,
 }
 
 impl std::fmt::Display for Keep {
@@ -53,7 +50,6 @@ impl std::fmt::Display for Keep {
                 "detected {kind}, but [desktop] set_command would override it; run `kakemono \
                  detect --write` to switch to {kind} (drops set_command)"
             ),
-            Self::Legacy => f.write_str("the config is the legacy wallpaperd file"),
         }
     }
 }
@@ -129,7 +125,6 @@ pub fn plan(env: &Env, cfg: &DesktopConfig, now: DateTime<Utc>) -> Result<Deskto
 pub fn ensure_desktop_with(
     env: &Env,
     config_path: &Path,
-    legacy: bool,
     cfg: &mut Config,
     now: DateTime<Utc>,
 ) -> Result<Outcome, ConfigError> {
@@ -137,9 +132,6 @@ pub fn ensure_desktop_with(
         Ok(desktop) => desktop,
         Err(keep) => return Ok(Outcome::Kept(keep)),
     };
-    if legacy {
-        return Ok(Outcome::Kept(Keep::Legacy));
-    }
     write_desktop(config_path, &desktop)?;
     let outcome = Outcome::Wrote {
         backend: BackendKind::from_config(desktop.backend).unwrap_or(BackendKind::Unconfigured),
@@ -159,11 +151,11 @@ pub fn write_desktop(path: &Path, desktop: &DesktopConfig) -> Result<(), ConfigE
 
 /// Called by the daemon at start, before the platform is built. Linux only; elsewhere the
 /// native backend needs nothing. Failures are logged; the daemon starts either way.
-pub fn ensure_desktop(config_path: &Path, legacy: bool, cfg: &mut Config) {
+pub fn ensure_desktop(config_path: &Path, cfg: &mut Config) {
     #[cfg(target_os = "linux")]
     {
         let env = capture_env();
-        match ensure_desktop_with(&env, config_path, legacy, cfg, Utc::now()) {
+        match ensure_desktop_with(&env, config_path, cfg, Utc::now()) {
             Ok(Outcome::Wrote { backend, session }) => tracing::info!(
                 path = %config_path.display(),
                 "detected the {backend} backend for {session}; saved it to [desktop]"
@@ -175,7 +167,7 @@ pub fn ensure_desktop(config_path: &Path, legacy: bool, cfg: &mut Config) {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (config_path, legacy, cfg);
+        let _ = (config_path, cfg);
     }
 }
 
@@ -295,7 +287,7 @@ mod tests {
         )
         .unwrap();
         let mut cfg = kakemono_config::load_or_default(&path).unwrap();
-        let outcome = ensure_desktop_with(&hyprland(), &path, false, &mut cfg, now()).unwrap();
+        let outcome = ensure_desktop_with(&hyprland(), &path, &mut cfg, now()).unwrap();
         assert_eq!(
             outcome,
             Outcome::Wrote {
@@ -317,19 +309,8 @@ mod tests {
 
         // Second start in the same session: nothing to do, file untouched.
         let before = std::fs::read(&path).unwrap();
-        let again = ensure_desktop_with(&hyprland(), &path, false, &mut cfg, now()).unwrap();
+        let again = ensure_desktop_with(&hyprland(), &path, &mut cfg, now()).unwrap();
         assert_eq!(again, Outcome::Kept(Keep::UpToDate));
         assert_eq!(std::fs::read(&path).unwrap(), before);
-    }
-
-    #[test]
-    fn legacy_and_failed_plans_leave_the_config_untouched() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("config.toml");
-        let mut cfg = Config::default();
-        let outcome = ensure_desktop_with(&hyprland(), &path, true, &mut cfg, now()).unwrap();
-        assert_eq!(outcome, Outcome::Kept(Keep::Legacy));
-        assert!(!path.exists());
-        assert_eq!(cfg.desktop, DesktopConfig::default());
     }
 }

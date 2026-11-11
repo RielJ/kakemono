@@ -80,8 +80,8 @@ serialize_as_wire_error!(CommandError);
 
 pub(crate) type CmdResult<T> = Result<T, CommandError>;
 
-/// Where the config lives right now: `$KAKEMONO_CONFIG`, the kakemono file, the Go
-/// `wallpaperd` file, or (missing) the kakemono path. Edits target the same file.
+/// Where the config lives right now: `$KAKEMONO_CONFIG`, the kakemono file, or (missing) the
+/// kakemono path. Edits target the same file.
 pub(crate) fn locate_config() -> CmdResult<(Paths, ConfigSource)> {
     let paths = Paths::detect()?;
     let source = paths.locate_config(None);

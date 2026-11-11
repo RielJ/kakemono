@@ -71,11 +71,10 @@ impl DaemonLink {
         }
     }
 
-    /// Resolves the endpoint as the daemon and the CLI do: the config's `socket_path` through
-    /// [`kakemono_config::Config::effective_socket_path`], then `$KAKEMONO_SOCKET`, then the
-    /// platform default. A legacy `wallpaperd` config's Go default socket is ignored, so the UI
-    /// never talks to a still-running Go daemon. A config that fails to load only loses its
-    /// `socket_path`; the error is logged.
+    /// Resolves the endpoint as the daemon and the CLI do: the config's `socket_path`
+    /// ([`kakemono_config::Config::socket_override`]), then `$KAKEMONO_SOCKET`, then the
+    /// platform default. A config that fails to load only loses its `socket_path`; the error is
+    /// logged.
     pub fn from_environment() -> Result<Self, EndpointError> {
         let paths = kakemono_config::paths::Paths::detect();
         let socket_path = match &paths {
@@ -182,18 +181,12 @@ fn is_stale_connection(err: &ClientError) -> bool {
     )
 }
 
-/// The endpoint override from the config the daemon would read: `Some` only for a
-/// [`SocketPath::Configured`](kakemono_config::paths::SocketPath::Configured) path. Logs the
-/// legacy notice once (this runs once per process).
+/// The endpoint override from the config the daemon would read: its non-empty `socket_path`.
 fn socket_override(paths: &kakemono_config::paths::Paths) -> Option<std::path::PathBuf> {
     match paths.load_config(None) {
         Ok((config, source)) => {
             tracing::debug!(config = %source.path().display(), "loaded config");
-            let socket = config.effective_socket_path(&source, &paths.home);
-            if let Some(line) = socket.notice() {
-                tracing::info!("{line}");
-            }
-            socket.override_path().map(ToOwned::to_owned)
+            config.socket_override().map(ToOwned::to_owned)
         }
         Err(err) => {
             tracing::warn!(error = %err, "cannot load config; using the default socket");
@@ -372,7 +365,7 @@ mod tests {
 mod socket_tests {
     use std::path::{Path, PathBuf};
 
-    use kakemono_config::paths::{BaseDirs, Os, Paths, legacy_default_socket};
+    use kakemono_config::paths::{BaseDirs, Os, Paths};
 
     use super::socket_override;
 
@@ -396,37 +389,13 @@ mod socket_tests {
     }
 
     #[test]
-    fn legacy_config_with_the_go_socket_uses_the_kakemono_default() {
-        let home = tempfile::tempdir().expect("tempdir");
-        let paths = paths_in(home.path());
-        write_config(
-            &paths.legacy_config_file,
-            &legacy_default_socket(home.path()),
-        );
-
-        assert_eq!(socket_override(&paths), None);
-    }
-
-    #[test]
-    fn legacy_config_with_another_socket_keeps_it() {
+    fn kakemono_config_socket_is_honoured() {
         let home = tempfile::tempdir().expect("tempdir");
         let paths = paths_in(home.path());
         let custom = home.path().join("run/custom.sock");
-        write_config(&paths.legacy_config_file, &custom);
+        write_config(&paths.config_file, &custom);
 
         assert_eq!(socket_override(&paths), Some(custom));
-    }
-
-    #[test]
-    fn kakemono_config_socket_is_honoured_even_at_the_go_path() {
-        let home = tempfile::tempdir().expect("tempdir");
-        let paths = paths_in(home.path());
-        let go = legacy_default_socket(home.path());
-        write_config(&paths.config_file, &go);
-        // The kakemono file wins over the legacy one.
-        write_config(&paths.legacy_config_file, Path::new("/ignored.sock"));
-
-        assert_eq!(socket_override(&paths), Some(go));
     }
 
     #[test]

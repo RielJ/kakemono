@@ -122,7 +122,7 @@ pub const NOTHING_TO_APPLY: &str = "no current wallpaper to re-set; run `kakemon
 #[derive(Debug, thiserror::Error)]
 pub enum BindError {
     /// Something answers on the endpoint although this process holds the lock: a daemon using a
-    /// different runtime dir, or the Go `wallpaperd` daemon on a shared `socket_path`.
+    /// different runtime dir, or another program on a shared `socket_path`.
     #[error(
         "another process is already listening on {0}; stop it, or choose another socket with `socket_path` or KAKEMONO_SOCKET"
     )]

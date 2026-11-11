@@ -203,7 +203,6 @@ export default function AdvancedSettings({
             hint={
               <span className="font-mono text-[11px] break-all selectable">
                 {appInfo.config_path}
-                {appInfo.legacy_config && ' (shared with the old wallpaperd app)'}
               </span>
             }
           >

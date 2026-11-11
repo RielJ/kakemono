@@ -25,7 +25,7 @@ vi.mock('../../shared/api', async (importOriginal) => {
   }
 })
 
-const appInfo = (os: string): AppInfo => ({ os, config_path: '/home/u/.config/kakemono/config.toml', legacy_config: false, version: '1' })
+const appInfo = (os: string): AppInfo => ({ os, config_path: '/home/u/.config/kakemono/config.toml', version: '1' })
 
 /** The tab with App's state. `latest()` is the edited config, diffed against the saved one by `patch()`. */
 function setup({ saved = testConfig(), os = 'macos' }: { saved?: Config; os?: string } = {}) {

@@ -3,10 +3,9 @@
 //! [`run`] does, in order (contract `.pi/contracts/daemon.md`):
 //! 1. Take the single-instance lock, so a refused second daemon writes nothing. Then load the
 //!    config (`--config`, else `Paths::locate_config`). A missing file is created from
-//!    the commented template first, as Go did. A legacy config is migrated to `[[sources]]` on
-//!    disk first ([`kakemono_config::migrate_config`]); the wallpaperd file is migrated into the
-//!    kakemono path and left as is. Load warnings (replaced source ids, skipped `[[sources]]`
-//!    rows) are logged.
+//!    the commented template first, as Go did. A config in the older format is migrated to
+//!    `[[sources]]` on disk first ([`kakemono_config::migrate_config`]). Load warnings (replaced
+//!    source ids, skipped `[[sources]]` rows) are logged.
 //! 2. Resolve the endpoint: `--socket`, else the config's `socket_path`, else `$KAKEMONO_SOCKET`,
 //!    else the platform default.
 //! 3. Write `<runtime_dir>/daemon.pid` (removed on exit).
@@ -76,14 +75,6 @@ pub fn resolve(paths: &Paths, options: &Options) -> anyhow::Result<Resolved> {
     let source = paths.locate_config(options.config.as_deref());
     create_missing_config(&source);
     migrate_config_file(paths, &source);
-    // A migrated wallpaperd config now lives in the kakemono file; read that one.
-    let source = paths.locate_config(options.config.as_deref());
-    if let ConfigSource::Legacy(path) = &source {
-        tracing::info!(
-            path = %path.display(),
-            "using the wallpaperd config; `kakemono config init` creates a kakemono one"
-        );
-    }
     let config_path = source.path().to_owned();
     let config = load_config(&config_path)
         .with_context(|| format!("loading config {}", config_path.display()))?;
@@ -94,13 +85,7 @@ pub fn resolve(paths: &Paths, options: &Options) -> anyhow::Result<Resolved> {
         .filter(|s| !s.as_os_str().is_empty())
     {
         Some(socket) => endpoint::default_endpoint(Some(socket), None)?,
-        None => {
-            let socket = config.effective_socket_path(&source, &paths.home);
-            if let Some(notice) = socket.notice() {
-                tracing::info!("{notice}");
-            }
-            endpoint::default_endpoint(socket.override_path(), Some(&paths.runtime_dir))?
-        }
+        None => endpoint::default_endpoint(config.socket_override(), Some(&paths.runtime_dir))?,
     };
     Ok(Resolved {
         config_path,
@@ -139,9 +124,8 @@ fn create_missing_config(source: &ConfigSource) {
     }
 }
 
-/// Rewrites a legacy config to `[[sources]]` on disk (the wallpaperd file goes to the kakemono
-/// path, a kakemono file is rewritten in place with a `.bak`) and logs what happened, once per
-/// start. A failure is only a warning: loading migrates in memory either way.
+/// Rewrites a config in the older format to `[[sources]]` in place (keeping a `.bak`) and logs
+/// what happened, once per start. A failure is only a warning: loading migrates in memory either way.
 fn migrate_config_file(paths: &Paths, source: &ConfigSource) {
     match kakemono_config::migrate_config(paths, source) {
         Ok(Some(done)) => {
@@ -172,16 +156,13 @@ pub fn run(paths: &Paths, options: &Options) -> anyhow::Result<()> {
     // First-run detection (Task 37): under the lock, so a refused second daemon writes nothing;
     // before `host`, so the platform resolves from the saved `[desktop]`.
     if !fake_platform_requested() {
-        let legacy = paths.locate_config(options.config.as_deref()).is_legacy();
-        crate::firstrun::ensure_desktop(&config_path, legacy, &mut config);
+        crate::firstrun::ensure_desktop(&config_path, &mut config);
     }
     let _pid_file = PidFile::write(paths.runtime_dir.join(PID_FILE_NAME));
 
     let state_file = paths.state_file.clone();
     let cache_dir = paths.cache_dir.clone();
-    let state = State::load_from_paths(paths)
-        .context("loading state")?
-        .state;
+    let state = State::load_from_paths(paths).context("loading state")?;
     let desktop = config.desktop.clone();
     let daemon = Daemon {
         config,
@@ -453,42 +434,8 @@ mod tests {
         assert_eq!(resolved.endpoint.path(), socket);
     }
 
-    const LEGACY: &str = "[daemon]\ninterval = \"7m\"\nsocket_path = \"~/.config/wallpaperd/daemon.sock\"\n\n[light]\nsources = [\"bing\"]\n\n[dark]\nsources = [\"bing\"]\n";
-
-    #[test]
-    fn resolve_migrates_the_wallpaperd_config_into_the_kakemono_file() {
-        let tmp = tempfile::tempdir().unwrap();
-        let paths = paths(tmp.path());
-        std::fs::create_dir_all(paths.legacy_config_file.parent().unwrap()).unwrap();
-        std::fs::write(&paths.legacy_config_file, LEGACY).unwrap();
-        let socket = kakemono_protocol::endpoint::test_socket_path(tmp.path(), "flag.sock");
-
-        let resolved = resolve(
-            &paths,
-            &Options {
-                config: None,
-                socket: Some(socket),
-            },
-        )
-        .unwrap();
-
-        // The daemon now reads (and first-run writes `[desktop]` to) the kakemono file.
-        assert_eq!(resolved.config_path, paths.config_file);
-        assert_eq!(
-            paths.locate_config(None),
-            ConfigSource::Primary(paths.config_file.clone())
-        );
-        assert_eq!(
-            std::fs::read_to_string(&paths.legacy_config_file).unwrap(),
-            LEGACY
-        );
-        let text = std::fs::read_to_string(&paths.config_file).unwrap();
-        assert!(text.contains("[[sources]]"), "{text}");
-        assert_eq!(resolved.config.daemon.interval, "7m");
-        assert_eq!(resolved.config.sources.len(), 1);
-        // The wallpaperd socket is gone from the migrated file.
-        assert_eq!(resolved.config.daemon.socket_path, None);
-    }
+    /// A config in the pre-`[[sources]]` format.
+    const LEGACY: &str = "[daemon]\ninterval = \"7m\"\n\n[light]\nsources = [\"bing\"]\n\n[dark]\nsources = [\"bing\"]\n";
 
     #[test]
     fn resolve_migrates_a_legacy_kakemono_config_in_place() {

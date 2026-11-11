@@ -39,17 +39,17 @@
     {
       "method": "GET",
       "url": "http://wallhaven.cc/w/abc123",
-      "user_agent": "wallpaperd/1.0"
+      "user_agent": "kakemono/0.1.0"
     },
     {
       "method": "GET",
       "url": "http://wallhaven.cc/w/def456",
-      "user_agent": "wallpaperd/1.0"
+      "user_agent": "kakemono/0.1.0"
     },
     {
       "method": "GET",
       "url": "https://wallhaven.cc/search?categories=111\u0026purity=100\u0026q=nature\u0026sorting=random",
-      "user_agent": "wallpaperd/1.0"
+      "user_agent": "kakemono/0.1.0"
     }
   ],
   "sort_results": true,

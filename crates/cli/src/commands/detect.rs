@@ -124,12 +124,6 @@ fn save(
     force: bool,
 ) -> anyhow::Result<()> {
     let path = source.path();
-    if source.is_legacy() {
-        bail!(
-            "{} is the legacy wallpaperd config; run `kakemono config init` first, then detect --write",
-            path.display()
-        );
-    }
     let Some(desktop) = firstrun::persisted_desktop(res, cfg, Utc::now()) else {
         bail!(
             "nothing to save: {}",

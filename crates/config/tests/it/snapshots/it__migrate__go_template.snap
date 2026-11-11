@@ -2,8 +2,8 @@
 source: crates/config/tests/it/migrate.rs
 expression: text
 ---
-# wallpaperd configuration file
-# Location: ~/.config/wallpaperd/config.toml
+# kakemono configuration file
+# Location: ~/.config/kakemono/config.toml
 
 [daemon]
 # Enable or disable automatic wallpaper rotation
@@ -15,7 +15,7 @@ download_dir = "~/Pictures/Wallpapers/cache"
 # Directory where trashed wallpapers are moved
 trash_dir = "~/Pictures/Wallpapers/trash"
 # Unix socket path used for IPC between the daemon and CLI commands
-socket_path = "~/.config/wallpaperd/daemon.sock"
+socket_path = "~/.config/kakemono/daemon.sock"
 
 # --- Providers ---
 

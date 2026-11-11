@@ -11,8 +11,4 @@ os: string,
 /**
  * The config file being read and edited.
  */
-config_path: string, 
-/**
- * True when that file is the Go `wallpaperd` config.
- */
-legacy_config: boolean, version: string, };
+config_path: string, version: string, };

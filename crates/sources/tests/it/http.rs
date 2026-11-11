@@ -586,7 +586,7 @@ fn echo_case(dir: &std::path::Path, status: u16, expected: &str) -> Case {
           ],
           "requests": [
             {{"method": "GET", "url": "https://echo.example/api/v1/search?n=1&q=nature",
-              "user_agent": "wallpaperd/1.0"}}
+              "user_agent": "kakemono/0.1.0"}}
           ],
           "expected": {expected}
         }}"#

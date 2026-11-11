@@ -14,8 +14,8 @@ use ts_rs::TS;
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
-/// `get_config` → the effective config (defaults filled in, `~` expanded, a legacy config
-/// migrated to `sources`). The first call also migrates a legacy config file on disk.
+/// `get_config` → the effective config (defaults filled in, `~` expanded, a config in the older
+/// format migrated to `sources`). The first call also migrates that file on disk.
 #[tauri::command]
 pub async fn get_config() -> CmdResult<Config> {
     blocking(|| {
@@ -37,10 +37,9 @@ fn migrate_config_once() {
     });
 }
 
-/// Rewrites a legacy config to `[[sources]]` on disk and logs each line at info level. The
-/// wallpaperd file is migrated into the kakemono path (later saves go there, since
-/// [`locate_config`] then finds it); a kakemono file is rewritten in place with a `.bak`.
-/// Errors are logged, not returned: loading migrates in memory either way.
+/// Rewrites a config in the older format to `[[sources]]` in place (keeping a `.bak`) and logs
+/// each line at info level. Errors are logged, not returned: loading migrates in memory either
+/// way.
 fn migrate_config_file(
     paths: &Paths,
     source: &ConfigSource,
@@ -224,27 +223,23 @@ enabled = true
     }
 
     #[test]
-    fn migrating_the_wallpaperd_config_moves_saves_to_the_kakemono_file() {
+    fn migrating_the_config_rewrites_it_in_place_once() {
         let dir = tempfile::tempdir().unwrap();
         let paths = temp_paths(dir.path());
-        let legacy = "[light]\nsources = [\"bing\"]\n[dark]\nsources = [\"bing\"]\n";
-        std::fs::create_dir_all(paths.legacy_config_file.parent().unwrap()).unwrap();
-        std::fs::write(&paths.legacy_config_file, legacy).unwrap();
+        let old = "[light]\nsources = [\"bing\"]\n[dark]\nsources = [\"bing\"]\n";
+        std::fs::create_dir_all(&paths.config_dir).unwrap();
+        std::fs::write(&paths.config_file, old).unwrap();
         let source = paths.locate_config(None);
-        assert!(source.is_legacy());
+        assert_eq!(source, ConfigSource::Primary(paths.config_file.clone()));
 
-        assert!(migrate_config_file(&paths, &source).is_some());
-        // Only once: the next call finds the kakemono file and does nothing.
-        assert!(migrate_config_file(&paths, &paths.locate_config(None)).is_none());
-
-        // `save_config` and `app_info` locate the config again on each call: the kakemono file.
-        assert_eq!(
-            paths.locate_config(None),
-            ConfigSource::Primary(paths.config_file.clone())
-        );
-        assert_eq!(
-            std::fs::read_to_string(&paths.legacy_config_file).unwrap(),
-            legacy
+        let done = migrate_config_file(&paths, &source).expect("migrated");
+        assert_eq!(std::fs::read_to_string(&done.backup).unwrap(), old);
+        // Only once: the next call finds `[[sources]]` and does nothing.
+        assert!(migrate_config_file(&paths, &source).is_none());
+        assert!(
+            std::fs::read_to_string(&paths.config_file)
+                .unwrap()
+                .contains("[[sources]]")
         );
     }
 

@@ -44,7 +44,7 @@ const status = (title: string, paused = false): StatusData => ({
 
 beforeEach(() => {
   vi.mocked(api.getConfig).mockResolvedValue(testConfig())
-  vi.mocked(api.getAppInfo).mockResolvedValue({ os: 'macos', config_path: '', legacy_config: false, version: '0' })
+  vi.mocked(api.getAppInfo).mockResolvedValue({ os: 'macos', config_path: '', version: '0' })
   vi.mocked(api.getStatus).mockResolvedValue(status('Alps'))
 })
 afterEach(() => {

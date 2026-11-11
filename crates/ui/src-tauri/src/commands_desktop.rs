@@ -93,7 +93,7 @@ pub async fn test_desktop(link: State<'_, Arc<DaemonLink>>) -> CmdResult<DoctorR
 }
 
 /// `kakemono detect` (`write`: `detect --write`). Returns the CLI's report text. A non-zero exit
-/// (for example `--write` on a pinned or legacy config) fails with its stderr.
+/// (for example `--write` on a pinned config) fails with its stderr.
 pub async fn detect(
     runner: &impl CliRunner,
     cli: Option<&Path>,

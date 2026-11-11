@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, FixedOffset, TimeZone, Timelike, Utc};
 use kakemono_config::paths::{BaseDirs, Os, Paths};
-use kakemono_engine::state::{MAX_HISTORY, State, StateError, StateOrigin, format_go_time};
+use kakemono_engine::state::{MAX_HISTORY, State, StateError, format_go_time};
 use kakemono_protocol::types::WallpaperInfo;
 
 fn fixture(name: &str) -> PathBuf {
@@ -400,129 +400,40 @@ fn state_saved_file_mode_is_0644() {
     assert_eq!(mode & !0o644, 0, "mode {mode:o}");
 }
 
-// --- Migration from the Go app ----------------------------------------------------------------
+// --- Loading through `Paths` ------------------------------------------------------------------
 
-struct Layout {
-    _dir: tempfile::TempDir,
-    new: PathBuf,
-    legacy: PathBuf,
-}
-
-fn layout() -> Layout {
-    let dir = tempfile::tempdir().unwrap();
-    let new = dir.path().join(".config/kakemono/state.json");
-    let legacy = dir.path().join(".config/wallpaperd/state.json");
-    Layout {
-        _dir: dir,
-        new,
-        legacy,
-    }
-}
-
-fn write(path: &Path, bytes: &[u8]) {
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, bytes).unwrap();
-}
-
-#[test]
-fn state_migrates_legacy_file_once_without_touching_it() {
-    let l = layout();
-    let go = read_fixture("state_populated.json");
-    write(&l.legacy, &go);
-    let legacy_mtime = std::fs::metadata(&l.legacy).unwrap().modified().unwrap();
-
-    let loaded = State::load_or_migrate(&l.new, &l.legacy).unwrap();
-    assert_eq!(loaded.origin, StateOrigin::Migrated);
-    assert_eq!(loaded.state.history().len(), 3);
-    assert_eq!(
-        std::fs::read(&l.new).unwrap(),
-        go,
-        "new file is the Go bytes"
-    );
-    assert_eq!(std::fs::read(&l.legacy).unwrap(), go, "legacy unchanged");
-    assert_eq!(
-        std::fs::metadata(&l.legacy).unwrap().modified().unwrap(),
-        legacy_mtime
-    );
-    assert_eq!(dir_entries(l.legacy.parent().unwrap()), ["state.json"]);
-
-    // Changes go to the new file only; the next load reads the new file.
-    let mut s = loaded.state;
-    s.set_paused(false);
-    s.save(&l.new).unwrap();
-    let again = State::load_or_migrate(&l.new, &l.legacy).unwrap();
-    assert_eq!(again.origin, StateOrigin::Existing);
-    assert!(!again.state.paused());
-    assert_eq!(std::fs::read(&l.legacy).unwrap(), go);
-}
-
-#[test]
-fn state_existing_file_wins_over_legacy() {
-    let l = layout();
-    write(&l.legacy, &read_fixture("state_populated.json"));
-    write(&l.new, &read_fixture("state_empty.json"));
-
-    let loaded = State::load_or_migrate(&l.new, &l.legacy).unwrap();
-    assert_eq!(loaded.origin, StateOrigin::Existing);
-    assert_eq!(loaded.state, State::new());
-}
-
-#[test]
-fn state_fresh_when_neither_exists_and_nothing_is_written() {
-    let l = layout();
-    let loaded = State::load_or_migrate(&l.new, &l.legacy).unwrap();
-    assert_eq!(loaded.origin, StateOrigin::Fresh);
-    assert_eq!(loaded.state, State::new());
-    assert!(!l.new.exists());
-    assert!(!l.legacy.exists());
-}
-
-#[test]
-fn state_corrupt_legacy_is_ignored_and_left_alone() {
-    let l = layout();
-    write(&l.legacy, b"{ broken");
-    let loaded = State::load_or_migrate(&l.new, &l.legacy).unwrap();
-    assert_eq!(loaded.origin, StateOrigin::Fresh);
-    assert!(!l.new.exists());
-    assert_eq!(std::fs::read(&l.legacy).unwrap(), b"{ broken");
-}
-
-#[test]
-fn state_corrupt_new_file_is_an_error() {
-    let l = layout();
-    write(&l.new, b"{ broken");
-    write(&l.legacy, &read_fixture("state_populated.json"));
-    let err = State::load_or_migrate(&l.new, &l.legacy).unwrap_err();
-    assert!(matches!(err, StateError::Parse { .. }), "{err:?}");
-}
-
-#[test]
-fn state_same_path_for_new_and_legacy_just_loads() {
-    let l = layout();
-    write(&l.legacy, &read_fixture("state_populated.json"));
-    let loaded = State::load_or_migrate(&l.legacy, &l.legacy).unwrap();
-    assert_eq!(loaded.origin, StateOrigin::Existing);
-    assert_eq!(loaded.state.history().len(), 3);
-}
-
-#[test]
-fn state_load_from_paths_uses_config_paths() {
-    let dir = tempfile::tempdir().unwrap();
-    let home = dir.path().to_path_buf();
+fn paths_in(home: &Path) -> Paths {
     let base = BaseDirs {
-        home: home.clone(),
+        home: home.to_owned(),
         config_home: home.join(".config"),
         cache_home: home.join(".cache"),
         state_home: Some(home.join(".local/state")),
         runtime_home: None,
         config_override: None,
     };
-    let paths = Paths::from_base(&base, Os::MacOs);
-    let go = read_fixture("wire/state_after_replay.json");
-    write(&paths.legacy_state_file, &go);
+    Paths::from_base(&base, Os::MacOs)
+}
 
-    let loaded = State::load_from_paths(&paths).unwrap();
-    assert_eq!(loaded.origin, StateOrigin::Migrated);
-    assert_eq!(paths.state_file, home.join(".config/kakemono/state.json"));
-    assert_eq!(std::fs::read(&paths.state_file).unwrap(), go);
+#[test]
+fn state_load_from_paths_reads_the_state_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = paths_in(dir.path());
+    assert_eq!(
+        paths.state_file,
+        dir.path().join(".config/kakemono/state.json")
+    );
+    std::fs::create_dir_all(paths.state_file.parent().unwrap()).unwrap();
+    std::fs::write(&paths.state_file, read_fixture("state_populated.json")).unwrap();
+
+    let state = State::load_from_paths(&paths).unwrap();
+    assert_eq!(state.history().len(), 3);
+}
+
+#[test]
+fn state_load_from_paths_is_fresh_and_writes_nothing_without_a_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = paths_in(dir.path());
+    let state = State::load_from_paths(&paths).unwrap();
+    assert_eq!(state, State::new());
+    assert!(!paths.state_file.exists());
 }

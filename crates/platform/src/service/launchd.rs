@@ -3,9 +3,8 @@
 //!
 //! The label is `dev.rielj.kakemono.daemon`, not the app identifier `dev.rielj.kakemono` and not
 //! the UI's `kakemono` LaunchAgent (tauri-plugin-autostart), so the two never replace each other.
-//! Go's README plist (`com.rielj.wallpaperd`) had `RunAtLoad`, `KeepAlive = true` and logs in
-//! `/tmp`; here `KeepAlive` restarts only after a failed exit (like systemd's `on-failure`) and
-//! stdout/stderr go to `<log_dir>/launchd.log`. `PATH` is set to [`DAEMON_PATH`] so hooks find
+//! The plist sets `RunAtLoad`; `KeepAlive` restarts only after a failed exit (like systemd's
+//! `on-failure`) and stdout/stderr go to `<log_dir>/launchd.log`. `PATH` is set to [`DAEMON_PATH`] so hooks find
 //! Homebrew tools.
 
 use std::path::{Path, PathBuf};

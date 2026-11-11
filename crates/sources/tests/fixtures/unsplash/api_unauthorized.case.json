@@ -20,7 +20,7 @@
     {
       "method": "GET",
       "url": "https://api.unsplash.com/photos/random?client_id=test-access-key\u0026count=10\u0026orientation=landscape",
-      "user_agent": "wallpaperd/1.0"
+      "user_agent": "kakemono/0.1.0"
     }
   ],
   "expected": {

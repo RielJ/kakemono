@@ -61,7 +61,7 @@ function mockConfig(position: string, orientation?: string) {
 
 function mockApi(position = 'bottom', orientation?: string) {
   mockConfig(position, orientation)
-  vi.mocked(api.getAppInfo).mockResolvedValue({ os: 'macos', config_path: '', legacy_config: false, version: '0' })
+  vi.mocked(api.getAppInfo).mockResolvedValue({ os: 'macos', config_path: '', version: '0' })
   vi.mocked(api.listTab).mockImplementation(async () => page(THUMBS))
   vi.mocked(api.browsePage).mockResolvedValue({
     session: 's1',

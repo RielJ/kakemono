@@ -11,7 +11,7 @@ use crate::defaults::{defaults_for_home, home_dir};
 use crate::edit::write_atomic;
 use crate::error::ConfigError;
 use crate::migrate::{MigrationReport, migrate_document};
-use crate::paths::{ConfigSource, Paths, legacy_default_socket};
+use crate::paths::{ConfigSource, Paths};
 use crate::schema::Config;
 use crate::sources::normalize_sources;
 
@@ -147,40 +147,24 @@ fn migrated_text(text: &str, home: &Path) -> Option<String> {
 
 // ── Migrating the file on disk ──────────────────────────────────────────────
 
-/// Where [`migrate_file`], [`migrate_legacy_file`] or [`migrate_config`] wrote the result and
-/// where the original bytes are.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum MigrationTarget {
-    /// `path` was rewritten; `backup` (`config.toml.bak` or `config.toml.bak.<unix-ts>`) holds
-    /// the original bytes.
-    InPlace { path: PathBuf, backup: PathBuf },
-    /// The Go `wallpaperd` file `from` was migrated into the kakemono file `to`; `from` is left
-    /// as is and serves as the backup.
-    Legacy { from: PathBuf, to: PathBuf },
-}
-
-/// A migration that was written to disk.
+/// A migration that [`migrate_file`] or [`migrate_config`] wrote to disk.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileMigration {
     pub report: MigrationReport,
-    pub target: MigrationTarget,
+    /// The rewritten file.
+    pub path: PathBuf,
+    /// `config.toml.bak` (or `config.toml.bak.<unix-ts>`), holding the original bytes.
+    pub backup: PathBuf,
 }
 
 impl FileMigration {
     /// The lines to log at info level, once: what was written where, then the report's notes.
     pub fn messages(&self) -> Vec<String> {
-        let head = match &self.target {
-            MigrationTarget::InPlace { path, backup } => format!(
-                "migrated {} to [[sources]]; the old file is kept as {}",
-                path.display(),
-                backup.display()
-            ),
-            MigrationTarget::Legacy { from, to } => format!(
-                "migrated {} to {}; the old file is left as is",
-                from.display(),
-                to.display()
-            ),
-        };
+        let head = format!(
+            "migrated {} to [[sources]]; the old file is kept as {}",
+            self.path.display(),
+            self.backup.display()
+        );
         std::iter::once(head)
             .chain(self.report.notes.iter().cloned())
             .collect()
@@ -246,87 +230,21 @@ pub fn migrate_file(path: &Path, home: &Path) -> Result<Option<FileMigration>, C
     write_atomic(path, doc.to_string().as_bytes())?;
     Ok(Some(FileMigration {
         report,
-        target: MigrationTarget::InPlace {
-            path: path.to_owned(),
-            backup,
-        },
+        path: path.to_owned(),
+        backup,
     }))
 }
 
-/// Migrates the Go `wallpaperd` file `legacy` into the kakemono file `primary`, leaving `legacy`
-/// byte-for-byte as is (it is the backup). `primary` is created atomically and never overwritten:
-/// if it exists, or appears meanwhile, this returns `Ok(None)`. A `daemon.socket_path` equal to
-/// the Go default socket is dropped, so the kakemono default socket keeps applying.
-pub fn migrate_legacy_file(
-    legacy: &Path,
-    primary: &Path,
-    home: &Path,
-) -> Result<Option<FileMigration>, ConfigError> {
-    let _lock = migrate_lock(primary)?;
-    if primary.exists() {
-        return Ok(None);
-    }
-    let Some((_, mut doc, mut report)) = read_and_migrate(legacy, home)? else {
-        return Ok(None);
-    };
-    if let Some(note) = drop_legacy_socket(&mut doc, home) {
-        report.notes.push(note);
-    }
-    let dir = primary
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    std::fs::create_dir_all(dir).map_err(|cause| ConfigError::CreateDir {
-        path: dir.to_owned(),
-        cause,
-    })?;
-    let created =
-        kakemono_fs::create_new(primary, doc.to_string().as_bytes()).map_err(|cause| {
-            ConfigError::Write {
-                path: primary.to_owned(),
-                cause,
-            }
-        })?;
-    if !created {
-        return Ok(None);
-    }
-    Ok(Some(FileMigration {
-        report,
-        target: MigrationTarget::Legacy {
-            from: legacy.to_owned(),
-            to: primary.to_owned(),
-        },
-    }))
-}
-
-/// Migrates the config `source` resolved to: [`ConfigSource::Explicit`] and
-/// [`ConfigSource::Primary`] in place ([`migrate_file`]), [`ConfigSource::Legacy`] into
-/// `paths.config_file` ([`migrate_legacy_file`]). [`ConfigSource::Missing`] is a no-op. Locate the
-/// config again afterwards: a migrated legacy config now resolves to `Primary`.
+/// Migrates the config `source` resolved to in place ([`migrate_file`]).
+/// [`ConfigSource::Missing`] is a no-op.
 pub fn migrate_config(
     paths: &Paths,
     source: &ConfigSource,
 ) -> Result<Option<FileMigration>, ConfigError> {
     match source {
         ConfigSource::Explicit(p) | ConfigSource::Primary(p) => migrate_file(p, &paths.home),
-        ConfigSource::Legacy(p) => migrate_legacy_file(p, &paths.config_file, &paths.home),
         ConfigSource::Missing(_) => Ok(None),
     }
-}
-
-/// Removes `daemon.socket_path` when it is the Go daemon's socket (`~/.config/wallpaperd/…`), and
-/// returns a note saying so.
-fn drop_legacy_socket(doc: &mut DocumentMut, home: &Path) -> Option<String> {
-    let daemon = doc.get_mut("daemon")?.as_table_like_mut()?;
-    let socket = daemon.get("socket_path")?.as_str()?.to_owned();
-    let expanded = expand_tilde(Path::new(&socket), home).unwrap_or_else(|| socket.clone().into());
-    if expanded != legacy_default_socket(home) {
-        return None;
-    }
-    daemon.remove("socket_path");
-    Some(format!(
-        "dropped daemon.socket_path {socket:?} (the wallpaperd socket); kakemono uses its own"
-    ))
 }
 
 /// Keeps `original` next to `path` as `<name>.bak`, else `<name>.bak.<unix-ts>`, else

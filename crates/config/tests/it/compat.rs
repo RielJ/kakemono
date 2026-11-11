@@ -30,7 +30,7 @@ fn defaults_match_go_defaults() {
     assert_eq!(ours.daemon.socket_path, None);
     assert_eq!(
         go.daemon.socket_path.as_deref(),
-        Some(Path::new("/home/golden/.config/wallpaperd/daemon.sock"))
+        Some(Path::new("/home/golden/.config/kakemono/daemon.sock"))
     );
     ours.daemon.socket_path.clone_from(&go.daemon.socket_path);
     // Go's defaults are a legacy config: loading migrates them to one enabled Bing row.
@@ -88,8 +88,7 @@ fn go_template_loads_like_go() {
     // `reddit.subreddits` and the `enabled` flags (so those fall back to defaults) and leaving one
     // Bing row, the only enabled provider.
     let mut expected = defaults_for_home(home());
-    expected.daemon.socket_path =
-        Some(PathBuf::from("/home/golden/.config/wallpaperd/daemon.sock"));
+    expected.daemon.socket_path = Some(PathBuf::from("/home/golden/.config/kakemono/daemon.sock"));
     assert_eq!(ours.sources.len(), 1);
     assert_eq!(ours.sources[0].kind, kakemono_config::SourceType::Bing);
     expected.sources.clone_from(&ours.sources);

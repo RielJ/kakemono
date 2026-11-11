@@ -23,7 +23,7 @@
     {
       "method": "GET",
       "url": "https://wallhaven.cc/api/v1/search?apikey=testkey\u0026categories=111\u0026purity=100\u0026sorting=random",
-      "user_agent": "wallpaperd/1.0"
+      "user_agent": "kakemono/0.1.0"
     }
   ],
   "expected": {

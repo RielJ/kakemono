@@ -100,8 +100,6 @@ pub struct AppInfo {
     pub os: &'static str,
     /// The config file being read and edited.
     pub config_path: String,
-    /// True when that file is the Go `wallpaperd` config.
-    pub legacy_config: bool,
     pub version: &'static str,
 }
 
@@ -111,7 +109,6 @@ pub async fn app_info() -> CmdResult<AppInfo> {
     Ok(AppInfo {
         os: std::env::consts::OS,
         config_path: source.path().display().to_string(),
-        legacy_config: source.is_legacy(),
         version: env!("CARGO_PKG_VERSION"),
     })
 }

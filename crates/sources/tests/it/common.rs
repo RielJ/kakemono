@@ -31,7 +31,7 @@
 //!   Use plain `#[tokio::test]` (current-thread), NOT `start_paused = true` (pausing twice
 //!   panics). The replay client has no timeout, because a pending timeout timer would fire as
 //!   soon as the paused runtime waits on the socket.
-//! - User-Agent: the Go fixtures record `wallpaperd/1.0` or `Go-http-client/1.1`. Those are not
+//! - User-Agent: the Go fixtures record `kakemono/0.1.0` or `Go-http-client/1.1`. Those are not
 //!   checked. Instead every received request must carry `http::USER_AGENT` (`kakemono/<ver>`),
 //!   which catches providers that override the shared client's UA.
 

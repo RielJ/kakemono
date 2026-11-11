@@ -271,13 +271,13 @@ async fn set_file_missing_has_go_stat_message() {
     let f = fixture(SourceSet::default());
     let err = f
         .engine
-        .set_file(Path::new("/nonexistent/wallpaperd-golden.png"))
+        .set_file(Path::new("/nonexistent/kakemono-golden.png"))
         .await
         .unwrap_err();
     // Same text as the Go wire fixture 13_set_nonexistent.
     assert_eq!(
         err.to_string(),
-        "manager: file not found: stat /nonexistent/wallpaperd-golden.png: no such file or directory"
+        "manager: file not found: stat /nonexistent/kakemono-golden.png: no such file or directory"
     );
     assert_eq!(f.setter.attempts(), 0);
 }

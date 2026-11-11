@@ -40,8 +40,7 @@ pub struct Cli {
 /// Flags every subcommand accepts.
 #[derive(Clone, Debug, Default, clap::Args)]
 pub struct GlobalArgs {
-    /// Config file path (default: $KAKEMONO_CONFIG, ~/.config/kakemono/config.toml, then the
-    /// legacy ~/.config/wallpaperd/config.toml)
+    /// Config file path (default: $KAKEMONO_CONFIG, then ~/.config/kakemono/config.toml)
     #[arg(long, global = true, value_name = "PATH")]
     pub config: Option<PathBuf>,
     /// Daemon socket path (default: config `socket_path`, $KAKEMONO_SOCKET, then the platform
@@ -194,17 +193,16 @@ impl Context {
         Self { global }
     }
 
-    /// The config file in use (`--config`, `$KAKEMONO_CONFIG`, kakemono, legacy, or missing).
+    /// The config file in use (`--config`, `$KAKEMONO_CONFIG`, kakemono, or missing).
     pub fn config_source(&self) -> anyhow::Result<(Paths, ConfigSource)> {
         let paths = Paths::detect()?;
         let source = paths.locate_config(self.global.config.as_deref());
         Ok((paths, source))
     }
 
-    /// The daemon endpoint: `--socket`, else the config's `socket_path` (through
-    /// `Config::effective_socket_path`, so the legacy Go socket is ignored), else
-    /// `$KAKEMONO_SOCKET`, else the platform default in `Paths::runtime_dir` (next to the daemon
-    /// lock). Same choice as the daemon. A config that
+    /// The daemon endpoint: `--socket`, else the config's `socket_path`
+    /// (`Config::socket_override`), else `$KAKEMONO_SOCKET`, else the platform default in
+    /// `Paths::runtime_dir` (next to the daemon lock). Same choice as the daemon. A config that
     /// fails to load is reported on stderr and skipped.
     pub fn endpoint(&self) -> anyhow::Result<Endpoint> {
         if let Some(socket) = self
@@ -216,16 +214,10 @@ impl Context {
             return Ok(endpoint::default_endpoint(Some(socket), None)?);
         }
         let (configured, runtime_dir) = match self.load_config() {
-            Ok((paths, cfg, source)) => {
-                let socket = cfg.effective_socket_path(&source, &paths.home);
-                if let Some(notice) = socket.notice() {
-                    tracing::info!("{notice}");
-                }
-                (
-                    socket.override_path().map(Path::to_path_buf),
-                    Some(paths.runtime_dir),
-                )
-            }
+            Ok((paths, cfg)) => (
+                cfg.socket_override().map(Path::to_path_buf),
+                Some(paths.runtime_dir),
+            ),
             Err(e) => {
                 eprintln!("warning: {e:#}; using the default socket");
                 (None, Paths::detect().ok().map(|p| p.runtime_dir))
@@ -237,10 +229,10 @@ impl Context {
         )?)
     }
 
-    fn load_config(&self) -> anyhow::Result<(Paths, kakemono_config::Config, ConfigSource)> {
+    fn load_config(&self) -> anyhow::Result<(Paths, kakemono_config::Config)> {
         let paths = Paths::detect()?;
-        let (cfg, source) = paths.load_config(self.global.config.as_deref())?;
-        Ok((paths, cfg, source))
+        let (cfg, _) = paths.load_config(self.global.config.as_deref())?;
+        Ok((paths, cfg))
     }
 
     /// Connects to the daemon. Not running → Go's "daemon is not running" hint.
@@ -285,7 +277,7 @@ where
 }
 
 /// Exit status when the reader of stdout goes away (`kakemono doctor | head`): 128 + SIGPIPE (13),
-/// the status a shell reports for `cat`, `ls` or Go's wallpaperd killed by SIGPIPE.
+/// the status a shell reports for a program such as `cat` or `ls` killed by SIGPIPE.
 pub const STDOUT_CLOSED_EXIT: u8 = 128 + 13;
 
 /// Runs a parsed command line. Prints the error (message only, as Go) and returns exit code 1 on
@@ -411,20 +403,10 @@ fn config_command(ctx: &Context, out: &mut dyn Write, action: ConfigAction) -> a
     match action {
         ConfigAction::Path => {
             writeln!(out, "{}", source.path().display())?;
-            if source.is_legacy() {
-                eprintln!(
-                    "note: this is the legacy wallpaperd config; kakemono reads it until {} exists",
-                    paths::config_file()?.display()
-                );
-            }
         }
         ConfigAction::Init => {
-            // A legacy config is in use but kakemono's own file is what `init` creates.
-            let target = match &source {
-                ConfigSource::Legacy(_) => paths::config_file()?,
-                other => other.path().to_owned(),
-            };
-            paths::init(&target)?;
+            let target = source.path();
+            paths::init(target)?;
             writeln!(out, "Wrote {}", target.display())?;
         }
         ConfigAction::Edit => {

@@ -148,9 +148,7 @@ fn write_config(
     loaded: &Result<(Loaded, kakemono_config::paths::ConfigSource), ConfigError>,
 ) -> anyhow::Result<Config> {
     let source = paths.locate_config(ctx.global.config.as_deref());
-    let note = if source.is_legacy() {
-        " (legacy wallpaperd config)"
-    } else if !source.path().exists() {
+    let note = if !source.path().exists() {
         " (not created yet; defaults apply)"
     } else {
         ""

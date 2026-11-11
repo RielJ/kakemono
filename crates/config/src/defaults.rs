@@ -21,8 +21,8 @@ pub fn defaults() -> Config {
 
 /// Defaults with paths rooted at `home`. Pure; tests use it with a fixed home.
 ///
-/// Deviation from Go: `daemon.socket_path` is `None` (the platform default) instead of
-/// `~/.config/wallpaperd/daemon.sock`. On macOS the platform default is that same path.
+/// `daemon.socket_path` is `None`: the endpoint falls back to `$KAKEMONO_SOCKET`, then the
+/// platform default.
 pub fn defaults_for_home(home: &Path) -> Config {
     let wallpapers = home.join("Pictures").join("Wallpapers");
     Config {

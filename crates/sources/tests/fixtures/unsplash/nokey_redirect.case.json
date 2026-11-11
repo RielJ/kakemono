@@ -21,7 +21,7 @@
     {
       "method": "HEAD",
       "url": "https://source.unsplash.com/random/3840x2160/ocean+waves",
-      "user_agent": "wallpaperd/1.0"
+      "user_agent": "kakemono/0.1.0"
     }
   ],
   "expected": {
