@@ -58,7 +58,13 @@ fn default_values_spelled_out() {
     );
     assert!(d.daemon.rotate_on_theme_change);
     assert!(!d.daemon.reapply_on_space_change);
-    // A fresh install shows Wallhaven's hot and top lists, plus the favorites folder.
+    // A fresh install shows Wallhaven's hot and top lists, plus the favorites folder. The
+    // location is a string, so build it with the same joins as the defaults: on Windows each
+    // segment after the home folder gets a `\`.
+    let favorites = Path::new("/home/golden")
+        .join("Pictures")
+        .join("Wallpapers")
+        .join("favorites");
     let rows: Vec<_> = d
         .sources
         .iter()
@@ -93,7 +99,7 @@ fn default_values_spelled_out() {
                 "favorites",
                 "",
                 SourceType::Folder,
-                "/home/golden/Pictures/Wallpapers/favorites",
+                &*favorites.to_string_lossy(),
                 true
             ),
         ]
