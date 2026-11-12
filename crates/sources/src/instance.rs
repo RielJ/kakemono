@@ -717,7 +717,8 @@ mod tests {
         );
     }
 
-    /// The example in the README's "Use a website's search as a source" section.
+    /// The example in the docs' "Use a website's search as a source" section
+    /// (kakemono.rielj.xyz/guides/sources/).
     #[test]
     fn wallhaven_readme_example_drops_only_the_page() {
         let got = wallhaven_location(

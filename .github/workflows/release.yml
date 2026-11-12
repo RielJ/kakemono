@@ -5,7 +5,7 @@ name: Release
 # workflow artifacts; a `v*` tag also creates a draft GitHub release with
 # every artifact and a SHA256SUMS file.
 #
-# Asset names carry the OS and arch but no version, so the README can link to
+# Asset names carry the OS and arch but no version, so the docs site can link to
 # releases/latest/download/<name>:
 #   app:  kakemono-<os>-<arch>.dmg | .deb | .rpm | .AppImage | .msi | -setup.exe
 #   CLI:  kakemono-cli-<os>-<arch>.tar.gz (.zip on Windows)
@@ -102,6 +102,8 @@ jobs:
           name="kakemono-cli-${{ matrix.asset }}"
           mkdir -p "dist/$name"
           cp README.md "dist/$name/"
+          # The linter sees the expression text, not the target.
+          # shellcheck disable=SC2193
           if [[ "${{ matrix.target }}" == *windows* ]]; then
             cp "target/${{ matrix.target }}/release/kakemono.exe" "dist/$name/"
             (cd dist && 7z a -tzip "$name.zip" "$name" >/dev/null)
@@ -201,11 +203,12 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: >-
             ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        # TAURI_EXTRA_CONFIG is unquoted on purpose: empty, or two words.
-        run: >-
-          npm run tauri -- build --ci --target "${{ matrix.target }}"
-          --config ../src-tauri/tauri.bundle.conf.json
-          --config ../src-tauri/tauri.updater.conf.json $TAURI_EXTRA_CONFIG
+        run: |
+          # TAURI_EXTRA_CONFIG is unquoted on purpose: empty, or two words.
+          # shellcheck disable=SC2086
+          npm run tauri -- build --ci --target "${{ matrix.target }}" \
+            --config ../src-tauri/tauri.bundle.conf.json \
+            --config ../src-tauri/tauri.updater.conf.json $TAURI_EXTRA_CONFIG
 
       - name: Check the sidecar sits beside kakemono-ui
         run: |
@@ -252,6 +255,7 @@ jobs:
           for pair in 'dmg/*.dmg:.dmg' 'deb/*.deb:.deb' 'rpm/*.rpm:.rpm' \
             'appimage/*.AppImage:.AppImage' 'msi/*.msi:.msi' \
             'nsis/*.exe:-setup.exe' 'macos/*.app.tar.gz:.app.tar.gz'; do
+            # shellcheck disable=SC2206 # the pattern must glob, so no quotes.
             files=("$bundle"/${pair%%:*})
             (( ${#files[@]} == 0 )) && continue
             if (( ${#files[@]} > 1 )); then
@@ -362,8 +366,9 @@ jobs:
               "· $(link kakemono-windows-x64-portable.zip 'portable .zip')" \
               "| $(link kakemono-cli-windows-x64.zip .zip) |"
             echo
+            # shellcheck disable=SC2016 # literal backticks: Markdown code.
             echo "The builds are not signed. The" \
-              "[README](https://github.com/$GITHUB_REPOSITORY#install)" \
+              "[install guide](https://kakemono.rielj.xyz/install/)" \
               'explains the first-run warning on each system.' \
               '`SHA256SUMS` lists a checksum for every file.'
           } > "$RUNNER_TEMP/notes.md"
