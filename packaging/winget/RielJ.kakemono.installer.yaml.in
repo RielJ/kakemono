@@ -4,8 +4,6 @@ PackageVersion: @VERSION@
 InstallerType: nullsoft
 Scope: user
 UpgradeBehavior: install
-Commands:
-  - kakemono
 Installers:
   - Architecture: x64
     InstallerUrl: https://github.com/RielJ/kakemono/releases/download/v@VERSION@/kakemono-windows-x64-setup.exe
