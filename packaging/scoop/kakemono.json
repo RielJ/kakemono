@@ -1,0 +1,34 @@
+{
+    "version": "@VERSION@",
+    "description": "A wallpaper manager: new wallpapers from Bing, Wallhaven, Unsplash, Reddit, NASA APOD, or your own folders, on a timer.",
+    "homepage": "https://github.com/RielJ/kakemono",
+    "license": "MIT",
+    "notes": "Updates come through Scoop: scoop update kakemono",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/RielJ/kakemono/releases/download/v@VERSION@/kakemono-windows-x64-portable.zip",
+            "hash": "@SHA:kakemono-windows-x64-portable.zip@"
+        }
+    },
+    "bin": "kakemono.exe",
+    "shortcuts": [
+        [
+            "kakemono-ui.exe",
+            "kakemono"
+        ]
+    ],
+    "post_install": "Set-Content -Path \"$dir\\update-command\" -Value 'scoop update kakemono'",
+    "checkver": {
+        "github": "https://github.com/RielJ/kakemono"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/RielJ/kakemono/releases/download/v$version/kakemono-windows-x64-portable.zip"
+            }
+        },
+        "hash": {
+            "url": "$baseurl/SHA256SUMS"
+        }
+    }
+}

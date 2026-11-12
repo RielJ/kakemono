@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
+PackageIdentifier: RielJ.kakemono
+PackageVersion: @VERSION@
+InstallerType: nullsoft
+Scope: user
+UpgradeBehavior: install
+Commands:
+  - kakemono
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/RielJ/kakemono/releases/download/v@VERSION@/kakemono-windows-x64-setup.exe
+    InstallerSha256: @SHA:kakemono-windows-x64-setup.exe@
+ManifestType: installer
+ManifestVersion: 1.10.0

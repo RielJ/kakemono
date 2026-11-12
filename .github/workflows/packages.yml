@@ -1,0 +1,228 @@
+# Publishes a release to the package managers once you publish its draft:
+# the Homebrew tap (RielJ/homebrew-tap), the Scoop bucket (RielJ/scoop-bucket),
+# the AUR (kakemono-bin) and winget (a pull request to microsoft/winget-pkgs).
+#
+# The manifests come from packaging/, filled in by scripts/package-manifests.sh
+# with the release's SHA256SUMS. Each channel needs one secret and skips itself,
+# with a notice, when the secret is missing:
+#
+#   PACKAGES_TOKEN  fine-grained PAT with Contents: read and write on
+#                   RielJ/homebrew-tap and RielJ/scoop-bucket
+#   AUR_SSH_KEY     private SSH key whose public half is on your AUR account
+#   WINGET_TOKEN    classic PAT with public_repo, for the fork of winget-pkgs
+#
+# Pre-releases are skipped. To publish a release again, run this workflow by
+# hand with its tag.
+
+name: packages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, e.g. v0.4.0
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: packages-${{ github.event.release.tag_name || inputs.tag }}
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+  BOT_NAME: github-actions[bot]
+  BOT_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+
+jobs:
+  render:
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.render.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+      - name: Render the manifests
+        id: render
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=${TAG#v}
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern SHA256SUMS --dir "$RUNNER_TEMP"
+          scripts/package-manifests.sh "$version" "$RUNNER_TEMP/SHA256SUMS" out
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: manifests
+          path: out/
+
+  homebrew:
+    needs: render
+    runs-on: ubuntu-latest
+    env:
+      TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+    steps:
+      - name: Check the secret
+        id: secret
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::notice::PACKAGES_TOKEN is not set; skipping Homebrew."
+          else
+            echo "ok=true" >>"$GITHUB_OUTPUT"
+          fi
+      - uses: actions/download-artifact@v4
+        if: steps.secret.outputs.ok
+        with:
+          name: manifests
+          path: out
+      - uses: actions/checkout@v4
+        if: steps.secret.outputs.ok
+        with:
+          repository: RielJ/homebrew-tap
+          token: ${{ secrets.PACKAGES_TOKEN }}
+          path: tap
+      - name: Push to the tap
+        if: steps.secret.outputs.ok
+        env:
+          VERSION: ${{ needs.render.outputs.version }}
+        run: |
+          mkdir -p tap/Casks tap/Formula
+          cp out/homebrew/Casks/kakemono.rb tap/Casks/
+          cp out/homebrew/Formula/kakemono-cli.rb tap/Formula/
+          cd tap
+          git config user.name "$BOT_NAME"
+          git config user.email "$BOT_EMAIL"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Tap already has $VERSION."
+            exit 0
+          fi
+          git commit -m "kakemono $VERSION"
+          git push
+
+  scoop:
+    needs: render
+    runs-on: ubuntu-latest
+    env:
+      TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+    steps:
+      - name: Check the secret
+        id: secret
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::notice::PACKAGES_TOKEN is not set; skipping Scoop."
+          else
+            echo "ok=true" >>"$GITHUB_OUTPUT"
+          fi
+      - uses: actions/download-artifact@v4
+        if: steps.secret.outputs.ok
+        with:
+          name: manifests
+          path: out
+      - uses: actions/checkout@v4
+        if: steps.secret.outputs.ok
+        with:
+          repository: RielJ/scoop-bucket
+          token: ${{ secrets.PACKAGES_TOKEN }}
+          path: bucket
+      - name: Push to the bucket
+        if: steps.secret.outputs.ok
+        env:
+          VERSION: ${{ needs.render.outputs.version }}
+        run: |
+          mkdir -p bucket/bucket
+          cp out/scoop/kakemono.json bucket/bucket/
+          cd bucket
+          git config user.name "$BOT_NAME"
+          git config user.email "$BOT_EMAIL"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Bucket already has $VERSION."
+            exit 0
+          fi
+          git commit -m "kakemono $VERSION"
+          git push
+
+  aur:
+    needs: render
+    runs-on: ubuntu-latest
+    # makepkg writes .SRCINFO, and it only runs on Arch.
+    container: archlinux:base-devel
+    env:
+      AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+    steps:
+      - name: Check the secret
+        id: secret
+        run: |
+          if [ -z "$AUR_SSH_KEY" ]; then
+            echo "::notice::AUR_SSH_KEY is not set; skipping the AUR."
+          else
+            echo "ok=true" >>"$GITHUB_OUTPUT"
+          fi
+      - uses: actions/download-artifact@v4
+        if: steps.secret.outputs.ok
+        with:
+          name: manifests
+          path: out
+      - name: Push to the AUR
+        if: steps.secret.outputs.ok
+        env:
+          VERSION: ${{ needs.render.outputs.version }}
+        run: |
+          pacman -Sy --noconfirm --needed git openssh >/dev/null
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$AUR_SSH_KEY" >~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan -t ed25519 aur.archlinux.org 2>/dev/null \
+            >>~/.ssh/known_hosts
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes"
+          git clone ssh://aur@aur.archlinux.org/kakemono-bin.git aur
+          cp out/aur/kakemono-bin/PKGBUILD aur/
+          # makepkg refuses to run as root.
+          useradd -m builder
+          chown -R builder aur
+          (cd aur && su builder -c 'makepkg --printsrcinfo >.SRCINFO')
+          cd aur
+          git config --global --add safe.directory "$PWD"
+          git config user.name "$BOT_NAME"
+          git config user.email "$BOT_EMAIL"
+          git add PKGBUILD .SRCINFO
+          if git diff --cached --quiet; then
+            echo "AUR already has $VERSION."
+            exit 0
+          fi
+          git commit -m "kakemono $VERSION"
+          git push origin HEAD:master
+
+  winget:
+    needs: render
+    # wingetcreate and winget-releaser both run on Windows only.
+    runs-on: windows-latest
+    env:
+      TOKEN: ${{ secrets.WINGET_TOKEN }}
+    steps:
+      - name: Check the secret
+        id: secret
+        shell: bash
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::notice::WINGET_TOKEN is not set; skipping winget."
+          else
+            echo "ok=true" >>"$GITHUB_OUTPUT"
+          fi
+      # Updates the last version in winget-pkgs, so the first version has to be
+      # submitted by hand (packaging/winget/).
+      - uses: vedantmgoyal9/winget-releaser@v2
+        if: steps.secret.outputs.ok
+        with:
+          identifier: RielJ.kakemono
+          version: ${{ needs.render.outputs.version }}
+          release-tag: ${{ env.TAG }}
+          installers-regex: '-setup\.exe$'
+          token: ${{ secrets.WINGET_TOKEN }}
