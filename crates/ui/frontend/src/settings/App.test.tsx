@@ -62,7 +62,7 @@ afterEach(() => {
 
 describe('settings shell', () => {
   it('shows a banner when a newer version is out', async () => {
-    vi.mocked(api.checkUpdate).mockResolvedValue({ version: '9.0.0', current: '0', install: 'in_app' })
+    vi.mocked(api.checkUpdate).mockResolvedValue({ version: '9.0.0', current: '0', install: 'in_app', command: null })
     render(<App />)
     const banner = await screen.findByRole('region', { name: 'App update' })
     expect(within(banner).getByText('kakemono 9.0.0 is available')).toBeTruthy()

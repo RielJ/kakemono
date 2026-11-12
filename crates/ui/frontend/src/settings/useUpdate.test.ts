@@ -10,7 +10,7 @@ vi.mock('../shared/api', async (importOriginal) => {
   return { ...real, checkUpdate: vi.fn(), installUpdate: vi.fn(), openUpdatePage: vi.fn() }
 })
 
-const update: UpdateInfo = { version: '0.3.0', current: '0.2.0', install: 'in_app' }
+const update: UpdateInfo = { version: '0.3.0', current: '0.2.0', install: 'in_app', command: null }
 
 function setVisibility(state: DocumentVisibilityState) {
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state })

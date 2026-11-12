@@ -12,4 +12,8 @@ version: string,
 /**
  * This app's version.
  */
-current: string, install: InstallMode, };
+current: string, install: InstallMode, 
+/**
+ * The package manager's update command when `install` is `managed`.
+ */
+command: string | null, };

@@ -69,7 +69,7 @@ afterEach(() => clearMocks())
 
 describe('shared/api', () => {
   it('checks for updates and opens the release page', async () => {
-    const info = { version: '0.3.0', current: '0.2.0', install: 'in_app' }
+    const info = { version: '0.3.0', current: '0.2.0', install: 'in_app', command: null }
     const calls = recordIPC((cmd) => (cmd === 'check_update' ? info : null))
     await expect(checkUpdate()).resolves.toEqual(info)
     await openUpdatePage()

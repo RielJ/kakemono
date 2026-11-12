@@ -3,4 +3,4 @@
 /**
  * How this copy of the app gets a new version.
  */
-export type InstallMode = "in_app" | "download";
+export type InstallMode = "in_app" | "download" | "managed";

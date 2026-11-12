@@ -16,12 +16,16 @@ function progressText(progress: UpdateProgress | null): string {
   return 'Downloading…'
 }
 
-/** A newer kakemono is out: install it here, or get it from the release page. */
+/**
+ * A newer kakemono is out: install it here, name the package manager's command for a copy one
+ * installed, or link to the release page.
+ */
 export default function UpdateBanner({ update }: { update: Update }) {
   const { state } = update
   if (state.kind === 'none') return null
   const { info } = state
   const inApp = info.install === 'in_app'
+  const managed = info.install === 'managed' && info.command !== null
 
   let detail: React.ReactNode
   let actions: React.ReactNode = null
@@ -49,6 +53,10 @@ export default function UpdateBanner({ update }: { update: Update }) {
     detail =
       state.kind === 'failed' ? (
         <span className="text-danger break-words">Update failed: {state.message}</span>
+      ) : managed ? (
+        <span>
+          You have {info.current}. Update with <code className="font-mono text-ink select-all">{info.command}</code>
+        </span>
       ) : (
         <span>
           You have {info.current}.{inApp ? '' : ' Download the new version to update.'}
@@ -57,7 +65,7 @@ export default function UpdateBanner({ update }: { update: Update }) {
     actions = (
       <div className="flex items-center gap-1 shrink-0">
         <button type="button" className="btn-plain h-6 px-1.5 text-[12px]" onClick={update.openPage}>
-          {inApp ? 'What’s new' : 'Download'}
+          {inApp || managed ? 'What’s new' : 'Download'}
         </button>
         <button type="button" className="btn-plain h-6 px-1.5 text-[12px]" onClick={update.dismiss}>
           Later

@@ -14,6 +14,10 @@
 //!   replace a running `.exe` at all), and a daemon left running would keep the old code.
 //! - `open_update_page` opens the release page, for the release notes and for the manual
 //!   download when this copy cannot update itself (a dev build or an unknown bundle).
+//!
+//! A package manager's copy (Scoop, the AUR) must not replace itself behind the package
+//! manager's back. Its package writes the command that updates it to an [`UPDATE_COMMAND_FILE`]
+//! (see [`package_update_command`]), and the banner shows that command instead of Update.
 
 use std::fs::{OpenOptions, TryLockError};
 use std::io;
@@ -53,12 +57,45 @@ pub enum InstallMode {
     InApp,
     /// The user downloads the new version from the release page.
     Download,
+    /// A package manager installed this copy; [`UpdateInfo::command`] updates it.
+    Managed,
 }
 
-/// [`InstallMode`] for the bundle this binary came in: every bundle the updater can replace,
-/// and the release page otherwise. `None` is a binary run outside a bundle (a dev build): the
-/// updater would unpack the bundle beside it.
-pub fn install_mode(bundle: Option<BundleType>) -> InstallMode {
+/// The file a package writes the command that updates it to, e.g. `scoop update kakemono`.
+pub const UPDATE_COMMAND_FILE: &str = "update-command";
+
+/// The command from the package's [`UPDATE_COMMAND_FILE`]: beside `exe` (Scoop keeps the whole
+/// app in one folder) or in `<exe dir>/../share/kakemono` (`/usr/share/kakemono` for a
+/// `/usr/bin` install). Its first line, trimmed; `None` when there is no such file or the line
+/// is empty.
+pub fn package_update_command(exe: &Path) -> Option<String> {
+    let dir = exe.parent()?;
+    let candidates = [
+        dir.join(UPDATE_COMMAND_FILE),
+        dir.join("../share/kakemono").join(UPDATE_COMMAND_FILE),
+    ];
+    candidates.iter().find_map(|path| {
+        let text = std::fs::read_to_string(path).ok()?;
+        let line = text.lines().next()?.trim();
+        (!line.is_empty()).then(|| line.to_owned())
+    })
+}
+
+/// This running copy's [`package_update_command`].
+fn this_package_update_command() -> Option<String> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| package_update_command(&exe))
+}
+
+/// [`InstallMode`] for the bundle this binary came in: a package manager's copy first
+/// (`managed`), then every bundle the updater can replace, and the release page otherwise.
+/// `None` is a binary run outside a bundle (a dev build): the updater would unpack the bundle
+/// beside it.
+pub fn install_mode(bundle: Option<BundleType>, managed: bool) -> InstallMode {
+    if managed {
+        return InstallMode::Managed;
+    }
     match bundle {
         Some(
             BundleType::App
@@ -81,6 +118,8 @@ pub struct UpdateInfo {
     /// This app's version.
     pub current: String,
     pub install: InstallMode,
+    /// The package manager's update command when `install` is `managed`.
+    pub command: Option<String>,
 }
 
 /// `install_update`'s progress, sent on its channel.
@@ -201,11 +240,13 @@ pub async fn check_update<R: Runtime>(
     let update = async { Ok::<_, UpdateError>(updater(&app)?.check().await?) }
         .await
         .inspect_err(|err| tracing::warn!(%err, "update check failed"))?;
-    let mode = install_mode(tauri::utils::platform::bundle_type());
+    let command = this_package_update_command();
+    let mode = install_mode(tauri::utils::platform::bundle_type(), command.is_some());
     let info = update.as_ref().map(|u| UpdateInfo {
         version: u.version.clone(),
         current: u.current_version.clone(),
         install: mode,
+        command,
     });
     *pending.0.lock().await = update;
     Ok(info)
@@ -221,7 +262,8 @@ pub async fn install_update<R: Runtime>(
     link: State<'_, Arc<DaemonLink>>,
     progress: Channel<UpdateProgress>,
 ) -> UpdateResult<()> {
-    if install_mode(tauri::utils::platform::bundle_type()) != InstallMode::InApp {
+    let managed = this_package_update_command().is_some();
+    if install_mode(tauri::utils::platform::bundle_type(), managed) != InstallMode::InApp {
         return Err(UpdateError::NotInApp);
     }
     let update = pending
@@ -354,12 +396,68 @@ mod tests {
             BundleType::Nsis,
         ] {
             assert_eq!(
-                install_mode(Some(bundle.clone())),
+                install_mode(Some(bundle.clone()), false),
                 InstallMode::InApp,
                 "{bundle:?}"
             );
         }
-        assert_eq!(install_mode(None), InstallMode::Download);
+        assert_eq!(install_mode(None, false), InstallMode::Download);
+    }
+
+    #[test]
+    fn a_package_manager_wins_over_the_bundle() {
+        assert_eq!(
+            install_mode(Some(BundleType::Deb), true),
+            InstallMode::Managed
+        );
+        assert_eq!(install_mode(None, true), InstallMode::Managed);
+    }
+
+    /// `<root>/bin/kakemono-ui`, as a package lays it out.
+    fn exe_in(root: &Path) -> std::path::PathBuf {
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        root.join("bin").join("kakemono-ui")
+    }
+
+    #[test]
+    fn reads_the_update_command_beside_the_binary() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = exe_in(dir.path());
+        assert_eq!(package_update_command(&exe), None);
+        std::fs::write(
+            dir.path().join("bin").join(UPDATE_COMMAND_FILE),
+            "scoop update kakemono\r\n",
+        )
+        .unwrap();
+        assert_eq!(
+            package_update_command(&exe).as_deref(),
+            Some("scoop update kakemono")
+        );
+    }
+
+    #[test]
+    fn reads_the_update_command_from_share() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = exe_in(dir.path());
+        let share = dir.path().join("share").join("kakemono");
+        std::fs::create_dir_all(&share).unwrap();
+        std::fs::write(
+            share.join(UPDATE_COMMAND_FILE),
+            "yay -Syu kakemono-bin\n# comment\n",
+        )
+        .unwrap();
+        assert_eq!(
+            package_update_command(&exe).as_deref(),
+            Some("yay -Syu kakemono-bin")
+        );
+    }
+
+    #[test]
+    fn ignores_an_empty_update_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = exe_in(dir.path());
+        std::fs::write(dir.path().join("bin").join(UPDATE_COMMAND_FILE), "  \n").unwrap();
+        assert_eq!(package_update_command(&exe), None);
     }
 
     #[test]

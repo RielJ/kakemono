@@ -6,7 +6,7 @@ import type { UpdateInfo } from '../../shared/api'
 import type { Update, UpdateState } from '../useUpdate'
 import UpdateBanner, { percent } from './UpdateBanner'
 
-const info: UpdateInfo = { version: '0.3.0', current: '0.2.0', install: 'in_app' }
+const info: UpdateInfo = { version: '0.3.0', current: '0.2.0', install: 'in_app', command: null }
 
 function banner(state: UpdateState) {
   const update: Update = { state, install: vi.fn(), dismiss: vi.fn(), openPage: vi.fn() }
@@ -40,6 +40,18 @@ describe('UpdateBanner', () => {
     expect(screen.queryByRole('button', { name: 'Update' })).toBeNull()
     expect(screen.getByText(/Download the new version to update/)).toBeTruthy()
     await userEvent.click(screen.getByRole('button', { name: 'Download' }))
+    expect(update.openPage).toHaveBeenCalledTimes(1)
+  })
+
+  it('gives the package manager’s command when one installed this copy', async () => {
+    const update = banner({
+      kind: 'available',
+      info: { ...info, install: 'managed', command: 'scoop update kakemono' },
+    })
+    expect(screen.queryByRole('button', { name: 'Update' })).toBeNull()
+    expect(screen.getByText('scoop update kakemono').tagName).toBe('CODE')
+    expect(screen.getByText(/Update with/)).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'What’s new' }))
     expect(update.openPage).toHaveBeenCalledTimes(1)
   })
 
