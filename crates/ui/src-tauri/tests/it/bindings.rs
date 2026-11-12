@@ -5,7 +5,7 @@
 //! and fails if the committed copy differs. To update after changing a type:
 //!
 //! ```sh
-//! KAKEMONO_UPDATE_BINDINGS=1 cargo test -p kakemono-ui --test bindings
+//! KAKEMONO_UPDATE_BINDINGS=1 cargo test -p kakemono-ui --test it bindings
 //! ```
 
 use std::collections::BTreeMap;
@@ -112,13 +112,13 @@ fn committed_bindings_match_the_rust_types() {
     assert_eq!(
         names(&committed),
         names(&fresh),
-        "binding files differ; run `{UPDATE_ENV}=1 cargo test -p kakemono-ui --test bindings`"
+        "binding files differ; run `{UPDATE_ENV}=1 cargo test -p kakemono-ui --test it bindings`"
     );
     for (name, text) in &fresh {
         assert_eq!(
             committed.get(name),
             Some(text),
-            "{name} is stale; run `{UPDATE_ENV}=1 cargo test -p kakemono-ui --test bindings`"
+            "{name} is stale; run `{UPDATE_ENV}=1 cargo test -p kakemono-ui --test it bindings`"
         );
     }
 }
