@@ -270,6 +270,23 @@ jobs:
           done
           ls -l dist
 
+      # Scoop installs the app as a folder, not through an installer: the
+      # two programs side by side, as the installers lay them out. The
+      # WebView2 runtime ships with Windows 10 and 11.
+      - name: Zip the portable app
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $release = "target/${{ matrix.target }}/release"
+          $dir = Join-Path $env:RUNNER_TEMP "portable"
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          foreach ($exe in "kakemono-ui.exe", "kakemono.exe") {
+            Copy-Item (Join-Path $release $exe) $dir
+          }
+          Compress-Archive -Path "$dir/*" `
+            -DestinationPath "dist/kakemono-${{ matrix.asset }}-portable.zip"
+          Get-Item "dist/kakemono-${{ matrix.asset }}-portable.zip"
+
       - uses: actions/upload-artifact@v4
         with:
           name: ui-${{ matrix.target }}
@@ -315,7 +332,7 @@ jobs:
           base="$base/$GITHUB_REF_NAME"
           for f in kakemono-{macos-arm64,macos-x64}.dmg \
             kakemono-linux-x64.{deb,rpm,AppImage} \
-            kakemono-windows-x64{-setup.exe,.msi} \
+            kakemono-windows-x64{-setup.exe,.msi,-portable.zip} \
             kakemono-cli-{macos-arm64,macos-x64,linux-x64,linux-arm64}.tar.gz \
             kakemono-cli-windows-x64.zip; do
             [[ -e "$f" ]] || { echo "missing asset $f"; exit 1; }
@@ -342,6 +359,7 @@ jobs:
             echo "| Windows, x64" \
               "| $(link kakemono-windows-x64-setup.exe -setup.exe)" \
               "· $(link kakemono-windows-x64.msi .msi)" \
+              "· $(link kakemono-windows-x64-portable.zip 'portable .zip')" \
               "| $(link kakemono-cli-windows-x64.zip .zip) |"
             echo
             echo "The builds are not signed. The" \
