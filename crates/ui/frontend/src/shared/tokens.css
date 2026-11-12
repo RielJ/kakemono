@@ -26,8 +26,8 @@
   --placeholder: #e4e4e7;
   --shadow-menu: 0 6px 24px rgba(0, 0, 0, 0.16), 0 0 0 1px rgba(0, 0, 0, 0.08);
 
-  /* One accent: the system accent where the webview knows it (WebKit), else a neutral blue. */
-  --accent: #0a64d6;
+  /* One accent: the violet of the app icon's K. Kept in step with settings/App.css. */
+  --accent: #7034d6;
   --accent-text: #ffffff;
 
   --radius-sm: 6px;
@@ -43,13 +43,6 @@
   --font-size-sm: 11px;
 }
 
-@supports (color: AccentColor) {
-  :root {
-    --accent: AccentColor;
-    --accent-text: AccentColorText;
-  }
-}
-
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: var(--bg-dark);
@@ -60,11 +53,7 @@
     --border: rgba(255, 255, 255, 0.12);
     --placeholder: #2f2f33;
     --shadow-menu: 0 6px 24px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1);
-  }
-  @supports not (color: AccentColor) {
-    :root {
-      --accent: #3b8eea;
-    }
+    --accent: #8457f0;
   }
 }
 

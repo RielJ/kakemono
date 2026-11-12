@@ -20,9 +20,10 @@
   --c-text: #1d1d1f;
   --c-muted: #5c5c61;
   --c-faint: #8a8a8f;
-  --c-accent: #0068d6;
+  /* The violet of the app icon's K: white text on it is 6.7:1. */
+  --c-accent: #7034d6;
   --c-accent-text: #ffffff;
-  --c-accent-soft: rgba(0, 104, 214, 0.1);
+  --c-accent-soft: rgba(112, 52, 214, 0.1);
   --c-warn: #9a5b00;
   --c-warn-soft: rgba(214, 140, 0, 0.12);
   --c-danger: #c4241a;
@@ -44,9 +45,10 @@
   --c-text: #f2f2f4;
   --c-muted: #a8a8ae;
   --c-faint: #7b7b82;
-  --c-accent: #3d95ff;
+  /* Lighter on dark: 3.7:1 against the window, white text on it 4.6:1. */
+  --c-accent: #8457f0;
   --c-accent-text: #ffffff;
-  --c-accent-soft: rgba(61, 149, 255, 0.16);
+  --c-accent-soft: rgba(132, 87, 240, 0.18);
   --c-warn: #f0b04a;
   --c-warn-soft: rgba(240, 176, 74, 0.12);
   --c-danger: #ff6b61;
