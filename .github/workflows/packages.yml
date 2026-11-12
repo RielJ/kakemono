@@ -175,7 +175,10 @@ jobs:
         env:
           VERSION: ${{ needs.render.outputs.version }}
         run: |
-          pacman -Sy --noconfirm --needed git openssh >/dev/null
+          # -Syu, not -Sy: a partial upgrade can pull a new openssl that
+          # breaks the image's older curl and pacman ("could not satisfy
+          # dependencies").
+          pacman -Syu --noconfirm --needed git openssh >/dev/null
           install -d -m 700 ~/.ssh
           printf '%s\n' "$AUR_SSH_KEY" >~/.ssh/aur
           chmod 600 ~/.ssh/aur
