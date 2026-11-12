@@ -12,7 +12,8 @@
 #   WINGET_TOKEN    classic PAT with public_repo, for the fork of winget-pkgs
 #
 # Pre-releases are skipped. To publish a release again, run this workflow by
-# hand with its tag.
+# hand with its tag, and pick one channel to leave the others alone: winget
+# opens a new pull request on every run.
 
 name: packages
 
@@ -24,6 +25,11 @@ on:
       tag:
         description: Release tag, e.g. v0.4.0
         required: true
+      channel:
+        description: Where to publish
+        type: choice
+        options: [all, homebrew, scoop, aur, winget]
+        default: all
 
 permissions:
   contents: read
@@ -64,6 +70,10 @@ jobs:
 
   homebrew:
     needs: render
+    # A release event has no inputs, so every channel runs.
+    if: >-
+      ${{ !inputs.channel || inputs.channel == 'all'
+      || inputs.channel == 'homebrew' }}
     runs-on: ubuntu-latest
     env:
       TOKEN: ${{ secrets.PACKAGES_TOKEN }}
@@ -108,6 +118,9 @@ jobs:
 
   scoop:
     needs: render
+    if: >-
+      ${{ !inputs.channel || inputs.channel == 'all'
+      || inputs.channel == 'scoop' }}
     runs-on: ubuntu-latest
     env:
       TOKEN: ${{ secrets.PACKAGES_TOKEN }}
@@ -151,6 +164,9 @@ jobs:
 
   aur:
     needs: render
+    if: >-
+      ${{ !inputs.channel || inputs.channel == 'all'
+      || inputs.channel == 'aur' }}
     runs-on: ubuntu-latest
     # makepkg writes .SRCINFO, and it only runs on Arch.
     container: archlinux:base-devel
@@ -205,6 +221,9 @@ jobs:
 
   winget:
     needs: render
+    if: >-
+      ${{ !inputs.channel || inputs.channel == 'all'
+      || inputs.channel == 'winget' }}
     # wingetcreate and winget-releaser both run on Windows only.
     runs-on: windows-latest
     env:
