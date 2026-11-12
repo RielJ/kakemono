@@ -5,7 +5,8 @@
  */
 export type DaemonConfig = { 
 /**
- * Whether automatic rotation is active.
+ * Whether automatic rotation is active. Default `false`: kakemono changes the wallpaper
+ * only when asked until rotation is turned on.
  */
 rotation_enabled: boolean, 
 /**
@@ -27,7 +28,7 @@ trash_dir: string,
  */
 socket_path: string | null, 
 /**
- * Rotate when the system theme flips light/dark. New; default `true`.
+ * Rotate when the system theme flips light/dark. New; default `false`.
  */
 rotate_on_theme_change: boolean, 
 /**
@@ -43,7 +44,8 @@ change_on_start: boolean,
  */
 internet: boolean, 
 /**
- * Whether the background downloader runs. Default `true`.
+ * Whether the background downloader runs. Default `false`: when off, Next downloads one
+ * image on demand.
  */
 download_enabled: boolean, 
 /**

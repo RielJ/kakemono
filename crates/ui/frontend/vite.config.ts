@@ -1,11 +1,12 @@
 import { fileURLToPath } from 'node:url'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
+import { searchForWorkspaceRoot } from 'vite'
 import { defineConfig } from 'vitest/config'
 
 const page = (name: string) => fileURLToPath(new URL(`./${name}.html`, import.meta.url))
 
-// Tauri loads `settings.html` and `picker.html` from `dist/` (release) or from the dev
+// Tauri loads `settings.html`, `picker.html` and `welcome.html` from `dist/` (release) or from the dev
 // server on a fixed port (`tauri.conf.json` `build.devUrl`).
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -14,6 +15,8 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     host: process.env.TAURI_DEV_HOST || false,
+    // The Welcome window shows the app icon from `src-tauri/icons`, outside this root.
+    fs: { allow: [searchForWorkspaceRoot(process.cwd()), '../src-tauri/icons'] },
   },
   envPrefix: ['VITE_', 'TAURI_ENV_'],
   build: {
@@ -25,6 +28,7 @@ export default defineConfig({
       input: {
         settings: page('settings'),
         picker: page('picker'),
+        welcome: page('welcome'),
       },
     },
   },

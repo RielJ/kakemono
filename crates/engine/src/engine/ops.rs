@@ -5,9 +5,10 @@ use std::sync::Arc;
 
 use kakemono_config::{Config, valid_id};
 use kakemono_protocol::types::WallpaperInfo;
-use kakemono_sources::SourceSet;
-use rand::SeedableRng;
+use kakemono_sources::{OnlineSource, SourceSet};
 use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
+use rand::{RngExt, SeedableRng};
 
 use super::{
     Engine, EngineError, SourceOpError, compile_filters, create_dirs, desktop_changed, disk_info,
@@ -34,16 +35,26 @@ pub struct Provenance {
 
 impl Engine {
     /// Next wallpaper. If the user went back with `prev`, steps forward through history
-    /// without fetching. Otherwise picks an image on disk ([`pool::pick`]) and makes no HTTP
-    /// request. Only when the pool is empty, `[daemon] internet` is on and an online source is
-    /// enabled, downloads one image on demand: sources in config order, falling back to the next
-    /// one when a download fails ([`EngineError::Fetch`] lists every failure). Otherwise
-    /// [`EngineError::NoImages`]. Then sets it and pushes it to history.
+    /// without fetching. Then sets the image and pushes it to history.
+    ///
+    /// With `[daemon] download_enabled` on, `internet` off or no online source enabled, picks an
+    /// image on disk ([`pool::pick`]) and makes no HTTP request. Only when the pool is empty,
+    /// `internet` is on and an online source is enabled, downloads one image on demand: sources
+    /// in config order, falling back to the next one when a download fails
+    /// ([`EngineError::Fetch`] lists every failure). Otherwise [`EngineError::NoImages`].
+    ///
+    /// With `download_enabled` off, `internet` on and an online source enabled, draws one
+    /// source at random, each online source and each local pool source alike. A local draw
+    /// picks from the local sources on disk. An online draw downloads one new image
+    /// ([`downloader::download_one`]: seen ledger, filters and the cache cap apply), trying the
+    /// online sources in random order. When every download fails, it picks from the whole pool
+    /// on disk; [`EngineError::Fetch`] only when that is empty too.
     ///
     /// # Errors
     ///
-    /// [`EngineError::NoImages`], [`EngineError::Fetch`] when every on-demand download failed,
-    /// or [`EngineError::Set`] when the setter failed (history is then unchanged).
+    /// [`EngineError::NoImages`], [`EngineError::Fetch`] when every on-demand download failed
+    /// and nothing is on disk, or [`EngineError::Set`] when the setter failed (history is then
+    /// unchanged).
     pub async fn next(&self) -> Result<WallpaperInfo, EngineError> {
         let _op = self.lock_op().await;
         self.next_locked().await
@@ -345,17 +356,13 @@ impl Engine {
         }
     }
 
-    /// Picks an image from the pool and sets it; with an empty pool, downloads one on demand
-    /// (see [`Engine::next`]).
+    /// Picks the next image and sets it (see [`Engine::next`]). With background downloads off,
+    /// Internet on and an online source enabled, [`Self::fresh_and_set`] decides. Otherwise it
+    /// picks from the pool, and downloads on demand only when the pool is empty.
     async fn pick_and_set(&self) -> Result<WallpaperInfo, EngineError> {
-        let (cfg, sources, filters, state) = {
+        let (cfg, sources) = {
             let snap = self.snap();
-            (
-                Arc::clone(&snap.cfg),
-                Arc::clone(&snap.sources),
-                Arc::clone(&snap.filters),
-                snap.state.clone(),
-            )
+            (Arc::clone(&snap.cfg), Arc::clone(&snap.sources))
         };
         let pool = {
             let cfg = Arc::clone(&cfg);
@@ -366,16 +373,67 @@ impl Engine {
                     Pool::default()
                 })
         };
-        let ctx = self.filter_ctx();
         let mut rng = StdRng::from_rng(&mut rand::rng());
-        let picked = pool::pick(&pool, &filters, &ctx, &self.inner.facts, &state, &mut rng).await;
+        if !cfg.daemon.download_enabled && cfg.daemon.internet && !sources.is_empty() {
+            return self.fresh_and_set(&sources, &pool, &mut rng).await;
+        }
+        match self.pick(&pool, &mut rng).await {
+            Some(picked) => self.set_picked(picked).await,
+            None if !cfg.daemon.internet || sources.is_empty() => Err(EngineError::NoImages),
+            None => {
+                let order: Vec<&OnlineSource> = sources.online.iter().collect();
+                self.download_and_set(&order).await
+            }
+        }
+    }
+
+    /// `next` while background downloads are off: every enabled online source and every local
+    /// pool source ([`Pool::local`]) has the same chance. A local draw picks from all the local
+    /// sources with [`pool::pick`], which itself starts from a random source, so each still has
+    /// the same chance and the filters can move on to another one. An online draw downloads one
+    /// new image, trying the online sources in random order. When every download failed, it
+    /// picks from the whole pool on disk, and returns [`EngineError::Fetch`] only when that is
+    /// empty too.
+    async fn fresh_and_set(
+        &self,
+        sources: &SourceSet,
+        pool: &Pool,
+        rng: &mut StdRng,
+    ) -> Result<WallpaperInfo, EngineError> {
+        let local = pool.local();
+        let online = sources.online.len();
+        if rng.random_range(0..online + local.sources.len()) >= online
+            && let Some(picked) = self.pick(&local, rng).await
+        {
+            return self.set_picked(picked).await;
+        }
+        let mut order: Vec<&OnlineSource> = sources.online.iter().collect();
+        order.shuffle(rng);
+        let failures = match self.download_and_set(&order).await {
+            Err(EngineError::Fetch(failures)) => failures,
+            result => return result,
+        };
+        match self.pick(pool, rng).await {
+            Some(picked) => {
+                tracing::info!("every download failed; picking from disk");
+                self.set_picked(picked).await
+            }
+            None => Err(EngineError::Fetch(failures)),
+        }
+    }
+
+    /// [`pool::pick`] over `pool` with the current filters and state.
+    async fn pick(&self, pool: &Pool, rng: &mut StdRng) -> Option<Picked> {
+        let (filters, state) = {
+            let snap = self.snap();
+            (Arc::clone(&snap.filters), snap.state.clone())
+        };
+        let ctx = self.filter_ctx();
+        let picked = pool::pick(pool, &filters, &ctx, &self.inner.facts, &state, rng).await;
         if !filters.is_empty() {
             self.inner.facts.schedule_save();
         }
-        match picked {
-            Some(picked) => self.set_picked(picked).await,
-            None => self.download_and_set(&cfg, &sources).await,
-        }
+        picked
     }
 
     /// Sets an image [`pool::pick`] chose, then records it (album cursor, history).
@@ -400,18 +458,16 @@ impl Engine {
         Ok(info)
     }
 
-    /// The empty-pool fallback: one on-demand download, online sources in config order (with
-    /// an empty pool every source folder is empty, so all tie on "fewest files").
+    /// One on-demand download, trying `sources` in order until one succeeds, then sets it.
+    /// [`EngineError::Fetch`] lists every failure. The empty-pool fallback passes them in
+    /// config order (with an empty pool every source folder is empty, so all tie on "fewest
+    /// files"); [`Self::fresh_and_set`] passes them shuffled.
     async fn download_and_set(
         &self,
-        cfg: &Config,
-        sources: &SourceSet,
+        sources: &[&OnlineSource],
     ) -> Result<WallpaperInfo, EngineError> {
-        if !cfg.daemon.internet || sources.is_empty() {
-            return Err(EngineError::NoImages);
-        }
         let mut failures = Vec::new();
-        for source in &sources.online {
+        for &source in sources {
             let path = match downloader::download_one(self, source).await {
                 Ok(path) => path,
                 Err(failure) => {
@@ -427,7 +483,7 @@ impl Engine {
             tracing::info!(
                 source_id = %source.id,
                 path = %path.display(),
-                "empty pool; downloaded on demand"
+                "downloaded on demand"
             );
             self.snap().state.push(info.clone(), now);
             self.persist().await;

@@ -16,6 +16,7 @@ mod migrate_file;
 mod paths;
 mod picker_blur;
 mod sources_schema;
+mod ui_welcome;
 
 use std::path::Path;
 

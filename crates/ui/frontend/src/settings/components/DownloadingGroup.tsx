@@ -7,8 +7,9 @@ import { CheckLine, IntervalField, LineText, NumberField, wholeAtLeast } from '.
 export const MIN_DOWNLOAD_LIMIT_MB = 10
 
 /**
- * General → Downloading: how often the background downloader fetches an image for the
- * enabled online sources, and how large its folder may grow.
+ * General → Downloading: whether and how often the background downloader fetches an image for
+ * the enabled online sources, and how large its folder may grow. With background downloads
+ * off, Next downloads one new image each time instead.
  */
 export default function DownloadingGroup({ config, onChange }: { config: Config; onChange: (config: Config) => void }) {
   const d = config.daemon
@@ -21,12 +22,13 @@ export default function DownloadingGroup({ config, onChange }: { config: Config;
         checked={d.download_enabled}
         onChange={(v) => setDaemon('download_enabled', v)}
         error={intervalError(d.download_interval)}
+        hint="When this is off, Next downloads a new wallpaper each time."
       >
-        <LineText>Download a wallpaper every</LineText>
+        <LineText>Download a wallpaper in the background every</LineText>
         <IntervalField
           value={d.download_interval}
           onChange={(v) => setDaemon('download_interval', v)}
-          label="Download a wallpaper every"
+          label="Download a wallpaper in the background every"
         />
       </CheckLine>
       <CheckLine

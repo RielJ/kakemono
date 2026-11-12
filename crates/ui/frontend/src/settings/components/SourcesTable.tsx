@@ -4,6 +4,7 @@ import type { Config } from '../../shared/api'
 import { deleteSourceFiles, errorMessage, openSourceFolder } from '../../shared/api'
 import type { SourceEntry } from '../../shared/bindings/SourceEntry'
 import type { SourceType } from '../../shared/bindings/SourceType'
+import { summarizeLocation } from '../locationSummary'
 import { MAX_NAME_LEN, SOURCE_TYPES, isOnline, newSourceId, takesInput } from '../sourceTypes'
 import { useSourceChecks, type SourceCheck } from '../useSourceChecks'
 import AddSourceMenu from './AddSourceMenu'
@@ -395,7 +396,7 @@ export default function SourcesTable({ config, onChange, onCommit }: Props) {
                   <td role="gridcell">
                     {location ? (
                       <span className="sources-location" title={location}>
-                        {location}
+                        {summarizeLocation(s.type, location)}
                       </span>
                     ) : (
                       <span className="text-faint" aria-label="none">

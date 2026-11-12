@@ -111,7 +111,8 @@ pub enum FetchFailure {
 
 impl Engine {
     /// Counts the images a `[[sources]]` row of type `kind` at `location` would give, without
-    /// saving anything. Online types: one provider query with the current provider settings
+    /// saving anything. Online types: one [`Provider::check`](kakemono_sources::Provider::check)
+    /// with the current provider settings
     /// (API keys, `[wallhaven]` options), at most [`CHECK_TIMEOUT`]; the count is the number of
     /// results. Local types: `folder` counts recursively, `album-name`/`album-date` count the
     /// folder's own images, `images` is 1 for an image file. A leading `~` is expanded.
@@ -167,8 +168,8 @@ impl Engine {
             .into_iter()
             .next()
             .ok_or(SourceOpError::CantBuild(kind))?;
-        let fetch = source.provider.fetch(&source.query);
-        match tokio::time::timeout(CHECK_TIMEOUT, fetch).await {
+        let check = source.provider.check(&source.query);
+        match tokio::time::timeout(CHECK_TIMEOUT, check).await {
             Err(_) => Err(SourceOpError::CheckTimeout),
             Ok(Err(e)) => Err(SourceOpError::Provider(e)),
             Ok(Ok(results)) => Ok(results.len()),

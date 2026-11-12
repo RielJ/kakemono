@@ -3,8 +3,9 @@
 # %APPDATA%\kakemono\config.toml on Windows). $KAKEMONO_CONFIG or --config overrides it.
 
 [daemon]
-# Enable or disable automatic wallpaper rotation
-rotation_enabled = true
+# Change the wallpaper automatically every interval. Off by default: the wallpaper changes
+# only when you ask (Settings, the menu, `kakemono next`)
+# rotation_enabled = false
 # How often to rotate the wallpaper (Go duration string: "30m", "1h", "2h30m")
 interval = "30m"
 # Directory where downloaded wallpapers are cached
@@ -17,15 +18,15 @@ trash_dir = "~/Pictures/Wallpapers/trash"
 # \\.\pipe\kakemono-<user> (this key is ignored there). $KAKEMONO_SOCKET overrides the default.
 # socket_path = "~/.config/kakemono/kakemono.sock"
 # Pick a new wallpaper when the system switches between light and dark mode
-# rotate_on_theme_change = true
+# rotate_on_theme_change = false
 # macOS: re-apply the current wallpaper when you switch Spaces
 # reapply_on_space_change = false
 # Change the wallpaper once when the daemon starts
 # change_on_start = false
 # Allow online sources (background downloads and on-demand fetches)
 # internet = true
-# Download new images from online sources in the background
-# download_enabled = true
+# Download new images in the background. When off, Next downloads one image on demand.
+# download_enabled = false
 # How often to download one new image (Go duration string)
 # download_interval = "10m"
 # Keep downloaded images under a size limit; the oldest downloads are deleted first
@@ -147,6 +148,10 @@ position = "bottom"
 # on_change = ["sketchybar", "--trigger", "wallpaper_changed"]
 
 # --- Settings window ---
-# [ui]
-# Colour scheme of the settings window: "light", "dark" or "system"
+# Keep [ui] last: keys added below it belong to [ui].
+
+[ui]
+# Colour scheme of the Settings and Welcome windows: "light", "dark" or "system"
 # appearance = "light"
+# Open the Welcome window on the next start; it sets this to false once it has shown
+show_welcome = true

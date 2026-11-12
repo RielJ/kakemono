@@ -21,6 +21,7 @@ vi.mock('../../shared/api', async (importOriginal) => {
     openFolder: vi.fn(),
     showPicker: vi.fn(),
     currentThumbnail: vi.fn(),
+    openWelcome: vi.fn(),
   }
 })
 
@@ -41,6 +42,7 @@ beforeEach(() => {
   })
   vi.mocked(api.currentThumbnail).mockResolvedValue(null)
   vi.mocked(api.showPicker).mockResolvedValue()
+  vi.mocked(api.openWelcome).mockResolvedValue()
 })
 afterEach(() => {
   cleanup()
@@ -96,7 +98,7 @@ describe('GeneralSettings', () => {
       screen.getByTestId('sources-table'),
       heading('When possible, use images that…'),
       heading('Downloading'),
-      box('Download a wallpaper every'),
+      box('Download a wallpaper in the background every'),
       box(/^Limit download folder to MB, deleting the oldest files when necessary$/),
       screen.getByRole('textbox', { name: 'Favorites folder' }),
       heading('Picker'),
@@ -135,7 +137,7 @@ describe('GeneralSettings', () => {
     expect(last().daemon.change_on_start).toBe(true)
     await user.click(box('Use Internet access'))
     expect(last().daemon.internet).toBe(false)
-    await user.click(box('Download a wallpaper every'))
+    await user.click(box('Download a wallpaper in the background every'))
     expect(last().daemon.download_enabled).toBe(false)
     await user.click(box(/^Limit download folder to/))
     expect(last().daemon.download_limit_mb_enabled).toBe(false)
@@ -145,14 +147,20 @@ describe('GeneralSettings', () => {
 
   it('writes the download interval as a Go duration', async () => {
     const { last, user } = await setup()
-    const count = screen.getByRole('spinbutton', { name: 'Download a wallpaper every' })
+    const count = screen.getByRole('spinbutton', { name: 'Download a wallpaper in the background every' })
     expect((count as HTMLInputElement).value).toBe('10')
     await user.clear(count)
     await user.type(count, '2{Enter}')
     expect(last().daemon.download_interval).toBe('2m')
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Download a wallpaper every, unit' }), 'hours')
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Download a wallpaper in the background every, unit' }),
+      'hours',
+    )
     expect(last().daemon.download_interval).toBe('2h')
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Download a wallpaper every, unit' }), 'days')
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Download a wallpaper in the background every, unit' }),
+      'days',
+    )
     expect(last().daemon.download_interval).toBe('48h')
   })
 
@@ -187,7 +195,7 @@ describe('GeneralSettings', () => {
 
   it('leaves the inline controls editable while the box is unticked', async () => {
     const { last, user } = await setup({ edit: (c) => void (c.daemon.download_enabled = false) })
-    const count = screen.getByRole('spinbutton', { name: 'Download a wallpaper every' })
+    const count = screen.getByRole('spinbutton', { name: 'Download a wallpaper in the background every' })
     expect(count).toHaveProperty('disabled', false)
     await user.clear(count)
     await user.type(count, '5{Enter}')
@@ -323,5 +331,22 @@ describe('interval units', () => {
     expect(splitInterval('90s')).toEqual({ count: 1.5, unit: 'minutes' })
     expect(splitInterval('nonsense')).toEqual({ count: null, unit: 'minutes' })
     expect(joinInterval(3, 'days')).toBe('72h')
+  })
+})
+
+describe('welcome tips', () => {
+  it('reopens the Welcome window from Show welcome tips, after Shortcuts, writing nothing', async () => {
+    const { changes, user } = await setup({ edit: (c) => (c.ui.show_welcome = true) })
+    const replay = screen.getByRole('button', { name: 'Show welcome tips' })
+    expect(precedes(heading('Shortcuts'), replay)).toBe(true)
+    await user.click(replay)
+    expect(api.openWelcome).toHaveBeenCalledTimes(1)
+    expect(changes).toHaveLength(0)
+  })
+
+  it('has no welcome panel, even when show_welcome is set', async () => {
+    const { changes } = await setup({ edit: (c) => (c.ui.show_welcome = true) })
+    expect(screen.queryByRole('region', { name: 'Welcome to kakemono' })).toBeNull()
+    expect(changes).toHaveLength(0)
   })
 })

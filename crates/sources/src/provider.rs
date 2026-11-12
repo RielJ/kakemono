@@ -49,6 +49,30 @@ pub trait Provider: Send + Sync {
         &[]
     }
 
+    /// Host suffixes this provider's image URLs may use right now. A provider whose hosts
+    /// come from config or from the pages it reads overrides this. Default:
+    /// [`Provider::media_hosts`].
+    fn allowed_hosts(&self) -> Vec<String> {
+        self.media_hosts().iter().map(|h| (*h).to_owned()).collect()
+    }
+
+    /// The client for downloading and previewing this provider's images, already guarded
+    /// for [`Provider::allowed_hosts`]. `None` (the default): the caller's client.
+    fn media_client(&self) -> Option<reqwest::Client> {
+        None
+    }
+
+    /// The Settings check: one fetch whose results are counted. Default:
+    /// [`Provider::fetch`]. A provider that caches its fetch overrides this to skip the
+    /// cache.
+    ///
+    /// # Errors
+    ///
+    /// As [`Provider::fetch`].
+    async fn check(&self, query: &str) -> Result<Vec<WallpaperResult>, ProviderError> {
+        self.fetch(query).await
+    }
+
     /// One batch of browsable images: the first when `cursor` is `None`, otherwise the batch
     /// that `cursor` (from an earlier [`BrowseBatch::next`]) points at. `query` may be empty.
     ///
@@ -97,6 +121,11 @@ pub enum ProviderError {
     /// The source refused because of a rate limit. The message is shown as is.
     #[error("{0}")]
     RateLimited(String),
+
+    /// The source answered but has nothing kakemono can use. The message names the cause and
+    /// is shown as is.
+    #[error("{0}")]
+    Unusable(String),
 
     /// Rate limited, with the server's `Retry-After` hint when it sent one. Used by browse
     /// paths ([`crate::http::send_fail_fast`]); the message is shown as is.
@@ -292,6 +321,12 @@ mod tests {
             ProviderError::NotConfigured("unsplash requires access_key".into()).to_string(),
             "unsplash requires access_key"
         );
+    }
+
+    #[test]
+    fn unusable_displays_message_only() {
+        let msg = "example.com: no images on the page";
+        assert_eq!(ProviderError::Unusable(msg.into()).to_string(), msg);
     }
 
     #[test]

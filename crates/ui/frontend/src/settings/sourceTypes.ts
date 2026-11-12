@@ -3,7 +3,7 @@ import type { SourceType } from '../shared/bindings/SourceType'
 /**
  * What a source's `location` holds, and how the UI asks for it.
  * - `none`: no input (Bing, APOD); `location` stays empty.
- * - `text`: keywords, a URL or a subreddit, typed into the source dialog.
+ * - `text`: keywords, a URL, a subreddit or a link, typed into the source dialog.
  * - `path`: a file or folder on disk, chosen with the system picker.
  */
 export type SourceInput =
@@ -103,6 +103,14 @@ export const SOURCE_TYPES: Record<SourceType, SourceTypeInfo> = {
     input: { kind: 'text', prompt: 'Enter keywords or paste URL here:', placeholder: 'nature' },
     prefix: 'wh',
   },
+  web: {
+    label: 'Web page',
+    menuLabel: 'Web page',
+    description: 'Full-size images from a link: an image, a gallery page or a feed.',
+    online: true,
+    input: { kind: 'text', prompt: 'Link:', placeholder: 'https://example.com/gallery' },
+    prefix: 'web',
+  },
   unsupported: {
     label: 'Unknown',
     menuLabel: 'Unknown',
@@ -125,6 +133,7 @@ export const ALL_SOURCE_TYPES = [
   'reddit',
   'unsplash',
   'wallhaven',
+  'web',
   'unsupported',
 ] as const satisfies readonly SourceType[]
 

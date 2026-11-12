@@ -80,8 +80,10 @@ pub(crate) struct IndexedItem {
     pub(crate) source_id: String,
     /// The row's type when the item was browsed.
     pub(crate) kind: SourceType,
-    /// The provider's media hosts, for the preview's guard check.
-    pub(crate) hosts: &'static [&'static str],
+    /// The provider's allowed hosts when the item was browsed, for the preview's guard check.
+    pub(crate) hosts: Arc<[String]>,
+    /// The provider's own media client, for the preview; `None` uses the shared one.
+    pub(crate) client: Option<reqwest::Client>,
     pub(crate) item: RemoteItem,
 }
 
@@ -369,10 +371,19 @@ impl Session {
         )
         .await;
 
+        // Asked once per page: a provider may compute its hosts.
+        let media: Vec<(Arc<[String]>, Option<reqwest::Client>)> = self
+            .sources
+            .iter()
+            .map(|s| {
+                let provider = &s.source.provider;
+                (provider.allowed_hosts().into(), provider.media_client())
+            })
+            .collect();
         let mut items = Vec::with_capacity(BROWSE_PAGE);
         'rounds: loop {
             let mut took = false;
-            for source in &mut self.sources {
+            for (source, (hosts, client)) in self.sources.iter_mut().zip(&media) {
                 if items.len() == BROWSE_PAGE {
                     break 'rounds;
                 }
@@ -381,7 +392,8 @@ impl Session {
                     items.push(Arc::new(IndexedItem {
                         source_id: source.source.id.clone(),
                         kind: source.source.kind,
-                        hosts: source.source.provider.media_hosts(),
+                        hosts: Arc::clone(hosts),
+                        client: client.clone(),
                         item,
                     }));
                 }
@@ -573,7 +585,8 @@ impl Ready {
         let job = PreviewJob {
             source_id: &indexed.source_id,
             item: &indexed.item,
-            hosts: indexed.hosts,
+            hosts: Arc::clone(&indexed.hosts),
+            client: indexed.client.clone(),
         };
         tokio::time::timeout_at(deadline, self.previews.fetch(job))
             .await
@@ -690,7 +703,8 @@ mod tests {
         Arc::new(IndexedItem {
             source_id: source_id.to_owned(),
             kind: SourceType::Bing,
-            hosts: &[],
+            hosts: Arc::from([]),
+            client: None,
             item: RemoteItem {
                 remote_id: remote_id.to_owned(),
                 preview_url: String::new(),

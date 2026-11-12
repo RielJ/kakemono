@@ -53,6 +53,8 @@ impl Fixture {
         cfg.daemon.download_dir = root.join("downloads");
         cfg.daemon.trash_dir = root.join("trash");
         cfg.favorites.dir = root.join("favorites");
+        // Rotation is off by default; these tests drive the timer.
+        cfg.daemon.rotation_enabled = true;
         cfg.daemon.interval = "30m".to_owned();
         cfg.daemon.internet = false;
         cfg.sources = vec![SourceEntry {
@@ -349,7 +351,8 @@ async fn rotation_disabled_never_ticks_but_shutdown_stops() {
 
 #[tokio::test(start_paused = true)]
 async fn theme_changed_to_dark_rotates() {
-    let f = Fixture::new(|_| {});
+    // Off by default; this is the behaviour when the user turns it on.
+    let f = Fixture::new(|c| c.daemon.rotate_on_theme_change = true);
     let mut rx = f.engine.subscribe();
     let run = f.run().await;
 

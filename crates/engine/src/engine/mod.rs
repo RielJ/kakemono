@@ -5,10 +5,17 @@
 //! # Changes pick from disk
 //!
 //! A change that isn't a step through history picks an image already on disk
-//! ([`crate::pool`]): the background downloader ([`crate::downloader`], spawned by
-//! [`Engine::run`]) keeps `<download_dir>/<id>/` filled for every online source. Only when the
-//! pool is empty does `next` download one image on demand, and only with `[daemon] internet` on
-//! and an online source enabled; otherwise it fails with [`EngineError::NoImages`].
+//! ([`crate::pool`]): with `[daemon] download_enabled` on, the background downloader
+//! ([`crate::downloader`], spawned by [`Engine::run`]) keeps `<download_dir>/<id>/` filled for
+//! every online source. Only when the pool is empty does `next` download one image on demand,
+//! and only with `[daemon] internet` on and an online source enabled; otherwise it fails with
+//! [`EngineError::NoImages`].
+//!
+//! With `download_enabled` off (the default), Internet on and an online source enabled, `next`
+//! downloads instead: it draws one source at random among the online sources and the local ones
+//! with images, and for an online draw downloads one new image. A failed download falls back to
+//! the other online sources, then to the disk (see [`Engine::next`]). Rotation calls `next`, so
+//! each tick then downloads too.
 //!
 //! `WallpaperInfo.source` is the row's type string (`"bing"`, `"wallhaven"`, `"folder"`,
 //! `"album-name"`, ...), `"manual"` for the manual folder and `"local"` for `set_file`. The row

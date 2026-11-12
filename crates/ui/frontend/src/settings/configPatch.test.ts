@@ -11,7 +11,7 @@ function config(): Config {
       download_dir: '/home/u/Pictures/Wallpapers/cache',
       trash_dir: '/home/u/Pictures/Wallpapers/trash',
       socket_path: null,
-      rotate_on_theme_change: true,
+      rotate_on_theme_change: false,
       reapply_on_space_change: false,
       change_on_start: false,
       internet: true,
@@ -63,7 +63,7 @@ function config(): Config {
       detected_at: null,
     },
     hooks: { on_change: null },
-    ui: { appearance: 'light' },
+    ui: { appearance: 'light', show_welcome: false },
   }
 }
 

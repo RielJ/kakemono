@@ -61,6 +61,7 @@ async fn next_with_images_on_disk_sets_one_without_any_http_request() {
     let fakes: Fakes = vec![("bing", bing.clone())];
     let f = fixture(fakes, |c, _| {
         c.daemon.internet = true;
+        c.daemon.download_enabled = true;
         c.sources = vec![row("bing", SourceType::Bing, "")];
     });
     let on_disk = write(&f.downloads().join("bing/a.jpg"), b"fake image data");
@@ -513,6 +514,8 @@ async fn change_on_start_rotates_exactly_once_when_run_starts() {
     let f = fixture(Vec::new(), |c, root| {
         with_pics(c, root);
         c.daemon.change_on_start = true;
+        // Rotation is off by default; the tick at 30m below needs it on.
+        c.daemon.rotation_enabled = true;
     });
     let mut rx = f.engine.subscribe();
     let running = run(&f.engine).await;
@@ -538,6 +541,8 @@ async fn change_on_start_off_or_paused_does_not_rotate_at_start() {
         let f = fixture(Vec::new(), |c, root| {
             with_pics(c, root);
             c.daemon.change_on_start = paused;
+            // Rotation on, so only the start change is under test.
+            c.daemon.rotation_enabled = true;
         });
         if paused {
             f.engine.pause();

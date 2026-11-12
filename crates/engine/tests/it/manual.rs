@@ -13,7 +13,8 @@ use kakemono_engine::manual::{CHECK_TIMEOUT, MAX_FETCH_BYTES};
 use kakemono_engine::{EngineError, EngineEvent};
 use kakemono_platform::api::Fit;
 use kakemono_sources::fake::StaticProvider;
-use kakemono_sources::{Provider, ProviderError, WallpaperResult};
+use kakemono_sources::guard::GuardConfig;
+use kakemono_sources::{Provider, ProviderError, SourceSet, WallpaperResult, WebPage};
 use wiremock::matchers::{any, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -77,9 +78,28 @@ async fn check_source_counts_provider_results_and_saves_nothing() {
         .map_err(|e| e.to_string());
 
     assert_eq!(count, Ok(3));
-    assert_eq!(wh.queries(), ["forest"]);
+    assert_eq!(wh.checks(), ["forest"]);
     assert_eq!(files_under(&f.downloads()), Vec::<PathBuf>::new());
     assert!(f.setter.calls().is_empty());
+}
+
+/// The Settings check goes through `Provider::check` (which a cached provider overrides to
+/// skip its cache), never `fetch`.
+#[tokio::test]
+async fn check_source_calls_check_not_fetch() {
+    let wh = Arc::new(StaticProvider::new("wallhaven", results("wallhaven", 2)));
+    let f = fixture(vec![("wh", wh.clone())], |_, _| {});
+
+    let count = f
+        .engine
+        .check_source(SourceType::Wallhaven, "forest")
+        .await
+        .map_err(|e| e.to_string());
+
+    assert_eq!(
+        (count, wh.checks(), wh.calls()),
+        (Ok(2), vec!["forest".to_owned()], 0)
+    );
 }
 
 #[tokio::test]
@@ -120,6 +140,72 @@ async fn check_source_reports_an_unparsable_location() {
         .unwrap_err();
     assert!(err.contains("unsplash"), "{err}");
     assert_eq!(un.calls(), 0);
+}
+
+#[tokio::test]
+async fn check_source_web_refuses_a_location_that_is_not_an_https_link() {
+    let f = fixture(vec![], |_, _| {});
+    let err = f
+        .engine
+        .check_source(SourceType::Web, "not a url")
+        .await
+        .map_err(|e| e.to_string());
+    assert_eq!(
+        err,
+        Err("web: enter a link that starts with https://".to_owned())
+    );
+}
+
+/// The full Settings check of a web row, through the real `WebPage` provider. The location
+/// passes the strict check in `build_online`; the factory then hands the engine a provider
+/// for a page on the (loopback) mock server, built with a permissive guard.
+#[tokio::test]
+async fn check_source_web_counts_the_full_size_images_on_the_page() {
+    let server = MockServer::builder().start().await;
+    let page = format!(
+        r#"<html><body><img src="{0}/big.png"><img src="{0}/small.png"></body></html>"#,
+        server.uri()
+    );
+    Mock::given(method("GET"))
+        .and(path("/engine-web-gallery"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(page, "text/html"))
+        .expect(1)
+        .mount(&server)
+        .await;
+    for (name, (w, h)) in [("/big.png", (1920, 1080)), ("/small.png", (800, 600))] {
+        Mock::given(method("GET"))
+            .and(path(name))
+            .respond_with(ResponseTemplate::new(206).set_body_raw(png_header(w, h), "image/png"))
+            .mount(&server)
+            .await;
+    }
+    let web = WebPage::with_guard(
+        &format!("{}/engine-web-gallery", server.uri()),
+        GuardConfig::permissive_loopback(),
+    )
+    .unwrap();
+    let f = Builder::new()
+        .internet(true)
+        .manual_dir()
+        .sources(SourceSet::fake(vec![("web", Arc::new(web), "")]))
+        .build(|_, _| {});
+
+    let count = f
+        .engine
+        .check_source(SourceType::Web, "https://example.com/gallery")
+        .await
+        .map_err(|e| e.to_string());
+
+    assert_eq!(count, Ok(1));
+}
+
+/// The first 24 bytes of a PNG of `w`×`h`: signature, IHDR length and type, width, height.
+fn png_header(w: u32, h: u32) -> Vec<u8> {
+    let mut out = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13];
+    out.extend_from_slice(b"IHDR");
+    out.extend_from_slice(&w.to_be_bytes());
+    out.extend_from_slice(&h.to_be_bytes());
+    out
 }
 
 #[tokio::test]

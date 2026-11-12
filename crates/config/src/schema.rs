@@ -53,7 +53,8 @@ impl Default for Config {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 pub struct DaemonConfig {
-    /// Whether automatic rotation is active.
+    /// Whether automatic rotation is active. Default `false`: kakemono changes the wallpaper
+    /// only when asked until rotation is turned on.
     pub rotation_enabled: bool,
     /// Go duration string, e.g. `"30m"`, `"1h30m"`, `"1.5h"`. Kept as text so the UI round-trips it;
     /// use [`DaemonConfig::interval_duration`] to parse.
@@ -68,7 +69,7 @@ pub struct DaemonConfig {
     /// `~` is expanded at load. Ignored on Windows (named pipe).
     #[ts(type = "string | null")]
     pub socket_path: Option<PathBuf>,
-    /// Rotate when the system theme flips light/dark. New; default `true`.
+    /// Rotate when the system theme flips light/dark. New; default `false`.
     pub rotate_on_theme_change: bool,
     /// Re-set the current image when the macOS Space changes. New; default `false`.
     pub reapply_on_space_change: bool,
@@ -76,7 +77,8 @@ pub struct DaemonConfig {
     pub change_on_start: bool,
     /// Whether online sources may be used at all (downloads and on-demand fetches). Default `true`.
     pub internet: bool,
-    /// Whether the background downloader runs. Default `true`.
+    /// Whether the background downloader runs. Default `false`: when off, Next downloads one
+    /// image on demand.
     pub download_enabled: bool,
     /// Go duration between background downloads, e.g. `"10m"`; use
     /// [`DaemonConfig::download_interval_duration`] to parse.
@@ -194,6 +196,8 @@ pub enum SourceType {
     #[default]
     Bing,
     Apod,
+    /// Full-size images from an `https://` link: an image, an HTML page or an RSS/Atom feed.
+    Web,
     /// A folder of images, picked at random, recursive.
     Folder,
     /// Individual image files.
@@ -208,12 +212,13 @@ pub enum SourceType {
 
 impl SourceType {
     /// Every variant, in declaration order.
-    pub const ALL: [SourceType; 10] = [
+    pub const ALL: [SourceType; 11] = [
         SourceType::Wallhaven,
         SourceType::Unsplash,
         SourceType::Reddit,
         SourceType::Bing,
         SourceType::Apod,
+        SourceType::Web,
         SourceType::Folder,
         SourceType::Images,
         SourceType::AlbumName,
@@ -229,6 +234,7 @@ impl SourceType {
             SourceType::Reddit => "reddit",
             SourceType::Bing => "bing",
             SourceType::Apod => "apod",
+            SourceType::Web => "web",
             SourceType::Folder => "folder",
             SourceType::Images => "images",
             SourceType::AlbumName => "album-name",
@@ -573,6 +579,10 @@ pub struct HooksConfig {
 pub struct UiConfig {
     /// Colour scheme of the settings window. New; default `light`.
     pub appearance: Appearance,
+    /// Open the Welcome window on the next start. Only the template sets it, so only a freshly
+    /// created config shows the window; the window writes `false` the first time it shows.
+    /// Default `false`: a config without the key belongs to an existing user.
+    pub show_welcome: bool,
 }
 
 /// `[ui] appearance`.

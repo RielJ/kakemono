@@ -26,7 +26,7 @@ use crate::commands::simple::{self, Simple};
     version,
     about = "A desktop wallpaper manager daemon",
     long_about = "kakemono is a desktop wallpaper manager that supports multiple download sources \
-                  (Wallhaven, Unsplash, Bing, Reddit, APOD, Local), auto-rotation with light/dark \
+                  (Wallhaven, Unsplash, Bing, Reddit, APOD, web pages, Local), auto-rotation with light/dark \
                   theme awareness, history/favorites/trash management, and a floating picker.",
     arg_required_else_help = true
 )]

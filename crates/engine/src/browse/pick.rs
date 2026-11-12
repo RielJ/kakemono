@@ -126,12 +126,19 @@ impl Engine {
             .await
             .map_err(BrowseError::Resolve)?;
         let parsed = Url::parse(&url).map_err(|_| BrowseError::BadUrl(provider.name()))?;
-        if let Err(err) = ready.deps.guard.check_url(&parsed, provider.media_hosts()) {
+        if let Err(err) = ready
+            .deps
+            .guard
+            .check_url(&parsed, &provider.allowed_hosts())
+        {
             tracing::warn!(source_id = %source.id, error = %err, "browse_use: image refused");
             return Err(err.into());
         }
+        let http = provider
+            .media_client()
+            .unwrap_or_else(|| ready.deps.http.clone());
         let dir = download_dir.join(&source.id);
-        let path = kakemono_sources::download(&ready.deps.http, &url, &dir)
+        let path = kakemono_sources::download(&http, &url, &dir)
             .await
             .map_err(|err| match GuardError::find_in(&err) {
                 Some(guard) => {

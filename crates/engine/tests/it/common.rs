@@ -54,7 +54,7 @@ impl Fixture {
 /// Builds the engine's online sources from the config (on start and every reload).
 type SourcesFactory = Box<dyn Fn(&Config, reqwest::Client) -> SourceSet + Send + Sync>;
 
-/// Builds a [`Fixture`]. Defaults: Internet off, no manual dir, `interval = "30m"`, light
+/// Builds a [`Fixture`]. Defaults: Internet off, background downloads on, no manual dir, `interval = "30m"`, light
 /// theme, a [`RecordingSetter`] as the setter, no online sources.
 pub struct Builder {
     internet: bool,
@@ -133,6 +133,9 @@ impl Builder {
         cfg.favorites.dir = root.join("favorites");
         cfg.daemon.interval = self.interval.to_owned();
         cfg.daemon.internet = self.internet;
+        // Set explicitly, not from the default: with it on, `next` picks from disk and only
+        // downloads for an empty pool. `download_on_next` turns it off.
+        cfg.daemon.download_enabled = true;
         cfg.daemon.download_limit_mb_enabled = false;
         cfg.desktop.fit = Fit::Center;
         cfg.sources = Vec::new();

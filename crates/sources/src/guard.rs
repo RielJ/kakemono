@@ -73,6 +73,24 @@ impl GuardConfig {
         url: &Url,
         allowed_hosts: &[S],
     ) -> Result<(), GuardError> {
+        let host = self.checked_host(url)?;
+        if allowed_hosts
+            .iter()
+            .any(|suffix| host_matches(&host, suffix.as_ref()))
+        {
+            Ok(())
+        } else {
+            Err(GuardError::UnlistedHost {
+                host,
+                url: display_url(url),
+            })
+        }
+    }
+
+    /// Every check of [`GuardConfig::check_url`] except the host allowlist: scheme,
+    /// credentials, port, IP literal and `localhost`. Returns the host as the allowlist
+    /// matches it.
+    fn checked_host(&self, url: &Url) -> Result<String, GuardError> {
         let shown = || display_url(url);
         match url.scheme() {
             "https" => {}
@@ -97,14 +115,7 @@ impl GuardConfig {
                 name.to_owned()
             }
         };
-        if allowed_hosts
-            .iter()
-            .any(|suffix| host_matches(&host, suffix.as_ref()))
-        {
-            Ok(())
-        } else {
-            Err(GuardError::UnlistedHost { host, url: shown() })
-        }
+        Ok(host)
     }
 
     /// The literal's text when it is a loopback address in permissive mode; an error
@@ -356,6 +367,14 @@ pub fn guarded_client<S: AsRef<str>>(
         .iter()
         .map(|h| h.as_ref().to_owned())
         .collect();
+    client_checking(config, move |url| config.check_url(url, &hosts))
+}
+
+/// The client of [`guarded_client`], whose redirect policy runs `check` on every hop.
+fn client_checking(
+    config: GuardConfig,
+    check: impl Fn(&Url) -> Result<(), GuardError> + Send + Sync + 'static,
+) -> Result<Client, reqwest::Error> {
     let policy = Policy::custom(move |attempt| {
         // `previous` holds the original URL plus every hop already followed, so its length is
         // the number of this hop.
@@ -364,7 +383,7 @@ pub fn guarded_client<S: AsRef<str>>(
             tracing::warn!(%url, "guard: too many redirects");
             return attempt.error(GuardError::TooManyRedirects { url });
         }
-        match config.check_url(attempt.url(), &hosts) {
+        match check(attempt.url()) {
             Ok(()) => attempt.follow(),
             Err(err) => {
                 tracing::warn!(error = %err, "guard: redirect refused");
@@ -382,6 +401,120 @@ pub fn guarded_client<S: AsRef<str>>(
         .redirect(policy)
         .dns_resolver(BlockPrivateResolver::new(config))
         .build()
+}
+
+/// The most hosts one [`GuardedHttp`] keeps; extra hosts are dropped.
+pub const MAX_ROW_HOSTS: usize = 64;
+
+/// A [`guarded_client`] plus the fixed host list it was built for: the first URL
+/// ([`GuardedHttp::check_url`]) and every redirect hop are checked against the same list.
+/// One per source whose hosts are not known at compile time, so two such sources never
+/// share an allowlist. Cheap to clone.
+///
+/// [`GuardedHttp::any_public_host`] is the one variant without a list, for a link the user
+/// typed.
+#[derive(Clone)]
+pub struct GuardedHttp {
+    config: GuardConfig,
+    hosts: Arc<[String]>,
+    /// No host allowlist: [`GuardedHttp::any_public_host`].
+    any_host: bool,
+    client: Client,
+}
+
+impl GuardedHttp {
+    /// Builds the client for `hosts`, deduped (case-insensitive, first spelling kept) and cut
+    /// to the first [`MAX_ROW_HOSTS`].
+    ///
+    /// # Errors
+    ///
+    /// When reqwest cannot set up its TLS backend.
+    pub fn new<S: AsRef<str>>(config: GuardConfig, hosts: &[S]) -> Result<Self, reqwest::Error> {
+        let mut kept: Vec<String> = Vec::new();
+        for host in hosts.iter().map(AsRef::as_ref) {
+            if kept.iter().any(|k| k.eq_ignore_ascii_case(host)) {
+                continue;
+            }
+            if kept.len() == MAX_ROW_HOSTS {
+                tracing::debug!(%host, "guard: host list full, host dropped");
+                continue;
+            }
+            kept.push(host.to_owned());
+        }
+        let client = guarded_client(config, &kept)?;
+        Ok(Self {
+            config,
+            hosts: kept.into(),
+            any_host: false,
+            client,
+        })
+    }
+
+    /// A client for a link the user typed, such as a web page row's location: every
+    /// [`GuardConfig::check_url`] check except the host allowlist (scheme, credentials, port,
+    /// IP literal, `localhost`), on the first URL and on every redirect hop, so the page may
+    /// redirect to another public host as in a browser. [`BlockPrivateResolver`],
+    /// [`MAX_REDIRECTS`], no proxy and the timeouts still apply.
+    ///
+    /// Only for links the user typed, never for URLs taken from a response: those go through
+    /// [`GuardedHttp::new`] with a fixed list. [`GuardedHttp::hosts`] is empty.
+    ///
+    /// # Errors
+    ///
+    /// When reqwest cannot set up its TLS backend.
+    pub fn any_public_host(config: GuardConfig) -> Result<Self, reqwest::Error> {
+        let client = client_checking(config, move |url| config.checked_host(url).map(drop))?;
+        Ok(Self {
+            config,
+            hosts: Arc::from([]),
+            any_host: true,
+            client,
+        })
+    }
+
+    /// [`GuardConfig::check_url`] against this list (without the list for
+    /// [`GuardedHttp::any_public_host`]). Call it before the first request of every URL; the
+    /// client checks only redirects.
+    ///
+    /// # Errors
+    ///
+    /// See [`GuardConfig::check_url`].
+    pub fn check_url(&self, url: &Url) -> Result<(), GuardError> {
+        if self.any_host {
+            self.config.checked_host(url).map(drop)
+        } else {
+            self.config.check_url(url, &self.hosts)
+        }
+    }
+
+    /// The guarded client. Its redirect policy uses [`GuardedHttp::hosts`].
+    #[must_use]
+    pub fn client(&self) -> &Client {
+        &self.client
+    }
+
+    /// The host suffixes this client allows, deduped and capped. Empty for
+    /// [`GuardedHttp::any_public_host`], which checks no list.
+    #[must_use]
+    pub fn hosts(&self) -> &[String] {
+        &self.hosts
+    }
+
+    /// The checks this client runs.
+    #[must_use]
+    pub fn config(&self) -> GuardConfig {
+        self.config
+    }
+}
+
+impl std::fmt::Debug for GuardedHttp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GuardedHttp")
+            .field("config", &self.config)
+            .field("hosts", &self.hosts)
+            .field("any_host", &self.any_host)
+            .finish_non_exhaustive()
+    }
 }
 
 #[cfg(test)]

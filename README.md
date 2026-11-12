@@ -10,7 +10,7 @@
 </p>
 <p align="center">
   <strong>A wallpaper manager for macOS, Linux, and Windows.</strong><br>
-  New wallpapers from Bing, Wallhaven, Unsplash, Reddit, NASA APOD, or your own folders, on a timer.
+  New wallpapers from Bing, Wallhaven, Unsplash, Reddit, NASA APOD, any web page, or your own folders, on a timer.
 </p>
 <p align="center">
   <a href="#install">Install</a> ·
@@ -24,16 +24,18 @@
 
 ---
 
-A small daemon downloads wallpapers and changes them on a timer. It keeps a history you can step back through, saves favorites, and can prefer dark images in dark mode and light images in light mode.
+A small daemon sets wallpapers from online sources and local folders, when you ask or on a timer. It keeps a history you can step back through, saves favorites, and can prefer dark images in dark mode and light images in light mode.
 
 | | |
 |---|---|
-| **Sources** | Bing, Wallhaven, Unsplash, Reddit, NASA APOD, local folders and albums, and lists of image files. Paste a Wallhaven or Reddit search URL and kakemono uses its filters. |
+| **Sources** | Bing, Wallhaven, Unsplash, Reddit, NASA APOD, web pages and feeds, local folders and albums, and lists of image files. Paste a Wallhaven or Reddit search URL and kakemono uses its filters. |
 | **Picker** | A thumbnail strip from the menu bar or a shortcut: browse any source and click a preview to set it. |
 | **History** | Step back and forward through past wallpapers, favorite the good ones, trash the bad ones. |
 | **Scriptable** | One binary is the daemon and the CLI. Hooks run on every change, and a local socket speaks JSON. |
 
 The `kakemono` binary is both the daemon and the command-line client. The kakemono app adds a menu-bar (tray) icon, the picker, and a settings window.
+
+The first time you start the kakemono app, a Welcome window opens: four short screens on where kakemono lives, a first setup, and tips. When you close it, Settings opens. It appears on that very first start only (a start at login never shows it); **Show welcome tips** at the bottom of Settings → General opens it again. A new install doesn't change the wallpaper on its own. To change it now, click **Change wallpaper now** in the Welcome window, **Next** in the tray menu, or run `kakemono next`. To change it on a timer, tick **Change wallpaper every** in Settings, or set `rotation_enabled = true` in `[daemon]`. Background downloads are off too: Next and the picker download an image when you ask for one. The windows use the light theme; change it in Settings → Advanced → Appearance, or with `appearance` in `[ui]`.
 
 ## Install
 
@@ -45,15 +47,16 @@ brew install --cask rielj/tap/kakemono
 # macOS or Linux: the command-line tool only
 brew install rielj/tap/kakemono-cli
 
-# Arch Linux, from the AUR
+# Arch Linux, from the AUR (not yet: the package isn't on the AUR)
 yay -S kakemono-bin
 ```
 
 ```powershell
-# Windows
+# Windows, with Scoop (not yet: the first Scoop release is 0.3.1)
 scoop bucket add rielj https://github.com/RielJ/scoop-bucket
 scoop install rielj/kakemono
 
+# Windows, with winget (not yet: the first submission to winget-pkgs is in review)
 winget install RielJ.kakemono
 ```
 
@@ -270,7 +273,7 @@ In the Sources tab, Set downloads the image to the source's download folder and 
 |---|---|
 | Wallhaven | The row's search, with its purity, categories, and sorting. Without an API key, each request reads one search page, about 24 images. |
 | Unsplash | The row's search. With no keywords, the editorial feed, up to 20 pages. Needs `access_key`. |
-| Reddit | The subreddit's hot listing, 25 posts a page. Posts marked NSFW (`over_18`) and posts with a score below 100 are left out. |
+| Reddit | The row's listing (hot unless its URL names another sort), 25 posts a page. Posts marked NSFW (`over_18`) and posts with a score below 100 are left out. |
 | Bing | The current daily images, up to 16. |
 | APOD | The archive, 14 days a page, newest first, back to 16 June 1995. Videos are skipped. |
 | Folder, album, images | Not in Sources. Their images are in the Local tab. |
@@ -299,12 +302,12 @@ kakemono ignores unknown keys. A section with some keys missing uses the default
 
 | Key | Default | Meaning |
 |---|---|---|
-| `rotation_enabled` | `true` | Change the wallpaper on a timer. |
+| `rotation_enabled` | `false` | Change the wallpaper on a timer. Off by default: the wallpaper changes only when you ask. |
 | `interval` | `"30m"` | Time between changes, as a Go duration: `"45s"`, `"30m"`, `"2h30m"`. An invalid or zero value falls back to 30 minutes. |
 | `download_dir` | `"~/Pictures/Wallpapers/cache"` | Where downloads go, one folder per source. |
 | `trash_dir` | `"~/Pictures/Wallpapers/trash"` | Where `trash` moves files. |
 | `socket_path` | unset | The daemon socket. Unset means the platform default (see [Files](#files)). Ignored on Windows. |
-| `rotate_on_theme_change` | `true` | Set a new wallpaper when the system switches between light and dark mode. |
+| `rotate_on_theme_change` | `false` | Set a new wallpaper when the system switches between light and dark mode. |
 | `reapply_on_space_change` | `false` | macOS: set the current wallpaper again when you switch Spaces. See [Spaces on macOS](#spaces-on-macos). |
 
 #### Spaces on macOS
@@ -317,12 +320,12 @@ macOS has no API that sets the wallpaper on every Space. kakemono sets it on the
 |---|---|---|
 | `change_on_start` | `false` | Change the wallpaper once when the daemon starts. |
 | `internet` | `true` | Allow online sources. With `false`, kakemono uses only the images already on disk. |
-| `download_enabled` | `true` | Download new images from the online sources in the background. |
+| `download_enabled` | `false` | Download new images from the online sources in the background. Off by default: Next and Browse download on demand. |
 | `download_interval` | `"10m"` | Time between background downloads, one image each time. |
 | `download_limit_mb_enabled`, `download_limit_mb` | `true`, `500` | Keep the download folder under this size. kakemono deletes the oldest downloads first, and never deletes favorites, the current wallpaper, or files in local sources. |
 | `manual_dir` | `<download_dir>/manual` | Where images go that you drop on Settings or fetch from a URL. |
 
-A wallpaper change picks an image that is already on disk, from the enabled sources. The background downloader keeps that pool fresh. If the pool is empty, the change downloads one image first.
+A wallpaper change picks an image that is already on disk, from the enabled sources. Background downloads are off by default, so Next downloads an image on demand, and Browse in the picker downloads only the image you use. With `download_enabled = true`, the background downloader keeps the pool fresh.
 
 ### Sources: `[[sources]]`
 
@@ -348,11 +351,12 @@ location = "~/Pictures/Wallpapers"
 | `reddit` | A subreddit, such as `EarthPorn`. |
 | `bing` | Empty. The images of the day. |
 | `apod` | Empty. NASA's Astronomy Picture of the Day. |
+| `web` | An `https://` link to an image, a web page, or an RSS or Atom feed. |
 | `folder` | A folder. kakemono picks its images at random, subfolders included. |
 | `album-name`, `album-date` | A folder, shown in file-name or file-date order. |
 | `images` | Image files. |
 
-With no `[[sources]]` rows, kakemono uses Wallhaven's hot list (`https://wallhaven.cc/hot`), its top list (`https://wallhaven.cc/toplist`), and the favorites folder. Settings has a sources table with **Add…**, which is the easiest way to edit them. Each row shows a status from a background check for images (OK, Failed, or Paused while Internet access is off); select a failed row to see why. Double-click a name to rename it in place.
+With no `[[sources]]` rows, kakemono uses Wallhaven's hot list (`https://wallhaven.cc/hot`), its top list (`https://wallhaven.cc/toplist`), and the favorites folder. Settings has a sources table with **Add…**, which is the easiest way to edit them. kakemono checks each enabled online source for images once, when you add or change it, and marks only the ones with a problem: **Invalid** (the source returned an error or no images) or **Unknown** (the background service didn't answer). Hover over the status, or select the row, to see why. Rows without a status are fine. Double-click a name to rename it in place.
 
 Settings shared by every row of a type go in a section named after the type:
 
@@ -364,6 +368,59 @@ Settings shared by every row of a type go in a section named after the type:
 | `[apod]` | `api_key = "DEMO_KEY"` |
 
 Wallhaven works without an API key. `purity` is three digits for SFW, sketchy, and NSFW. `categories` is three digits for general, anime, and people. `sorting` is one of `random`, `toplist`, `date_added`, `relevance`, `views`, `favorites`, and `hot`.
+
+#### Web page
+
+A `web` row takes an `https://` link to an image, to a page that has images in its HTML, or to an RSS or Atom feed. kakemono uses only the images that are at least 1080 px on the short side, in the order they appear on the page. It reads the page again at most every 6 hours. Settings checks the link again each time you add or edit the row.
+
+Pages that build their content with JavaScript, such as Google Images, Pinterest, and Instagram, show **Invalid**. For those sites, paste direct image links instead.
+
+#### Tip: use a website's search as a source
+
+Search on the website itself, set its filters, then copy the URL from the address bar and paste it as the source's location: in Settings, **Sources** > **Add…**, or as `location` in the config file. You can add one row per search.
+
+```toml
+[[sources]]
+id = "wh-top-6m"
+type = "wallhaven"
+location = "https://wallhaven.cc/search?categories=110&purity=100&topRange=6M&sorting=toplist&order=desc&page=2"
+
+[[sources]]
+id = "earth-month"
+type = "reddit"
+location = "https://www.reddit.com/r/EarthPorn/top/?t=month"
+
+[[sources]]
+id = "misty-forest"
+type = "unsplash"
+location = "https://unsplash.com/s/photos/misty-forest"
+
+[[sources]]
+id = "gallery"
+type = "web"
+location = "https://example.com/wallpapers/"
+```
+
+| Source | URLs you can paste | What kakemono uses |
+|---|---|---|
+| Wallhaven | A search: `wallhaven.cc/search?...` | `q`, `categories`, `purity`, `sorting`, `topRange`, `order`, `atleast`, `resolutions`, `ratios`, and `colors`. They replace the `[wallhaven]` values for this row only. `page` and `seed` are ignored. |
+| | A list: `wallhaven.cc/hot`, `/toplist`, `/latest`, or `/random` | The list's sort order, plus any of the parameters above, e.g. `wallhaven.cc/toplist?topRange=1y`. |
+| | A tag: `wallhaven.cc/tag/37` | The images with that tag (the search `id:37`). |
+| Reddit | A subreddit: `reddit.com/r/EarthPorn` | The subreddit's hot posts. |
+| | A sorted listing: `reddit.com/r/EarthPorn/top/?t=month` | The sort (`hot`, `new`, `rising`, `top`, or `controversial`) and, for `top` and `controversial`, the time range `t` (`hour`, `day`, `week`, `month`, `year`, or `all`). |
+| | Several subreddits: `reddit.com/r/EarthPorn+SkyPorn` | All of them together, as on Reddit. You can also type `EarthPorn+SkyPorn`. |
+| Unsplash | A search: `unsplash.com/s/photos/misty-forest` | The keywords `misty forest`. Other Unsplash URLs, such as collections and profiles, are not supported. |
+| Web page | Any `https://` page, image, or feed: `example.com/wallpapers/` | The images on the page that are at least 1080 px on the short side. See [Web page](#web-page). |
+| Bing, APOD | None | The location is not used. For Bing, `[bing] market` picks the country, e.g. `en-GB`. |
+
+Things to know:
+
+- **Pages:** downloads always start from the first page of results, so `page=2` in a Wallhaven URL changes nothing. To see more than the first page, browse the source in the picker. Without an API key, each Wallhaven download picks up to 3 images at random from the first page. For a source that keeps changing, use `sorting=random` or a shorter `topRange`.
+- **`topRange`** counts only with `sorting=toplist`, as on Wallhaven.
+- **Wallhaven keywords** don't need a URL: the location is sent as Wallhaven's search query, so its syntax works. For example, `+mountains -people` (must have mountains, no people), `@username` (one user's uploads), `type:png`, or `like:94x38z` (images with similar tags).
+- **NSFW on Wallhaven:** Wallhaven returns NSFW results only with an API key (`[wallhaven] api_key`). Without one, `purity=001` gives nothing.
+- **A URL that kakemono can't use:** the row shows **Invalid** in Settings. Hover over the status to see which URLs that source accepts.
+- **Local sources:** `folder`, `album-name`, `album-date`, and `images` take a path, not a URL. `~` means your home folder.
 
 Config files from older versions, with `[light]`, `[dark]`, and an `enabled` key per provider, are converted to `[[sources]]` rows on the first start. The original file is kept next to the new one as `config.toml.bak`.
 
@@ -406,7 +463,8 @@ Linux only. It selects the wallpaper backend: `backend`, `set_command`, `persist
 
 | Key | Default | Meaning |
 |---|---|---|
-| `appearance` | `"light"` | The colour scheme of the settings window: `light`, `dark`, or `system`. |
+| `appearance` | `"light"` | The colour scheme of the Settings and Welcome windows: `light`, `dark`, or `system`. |
+| `show_welcome` | `false` | Open the Welcome window on the next start. A new config sets `true`; the Welcome window sets it back to `false` the first time it shows. |
 
 ### `[hooks]`
 

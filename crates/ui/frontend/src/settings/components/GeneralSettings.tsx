@@ -1,4 +1,5 @@
 import type { Config, StatusData } from '../../shared/api'
+import { openWelcome } from '../../shared/api'
 import type { DaemonState } from '../sections'
 import type { ConfigErrors } from '../validate'
 import DownloadingGroup from './DownloadingGroup'
@@ -107,6 +108,17 @@ export default function GeneralSettings({
       <Group title="Shortcuts">
         <ShortcutHint os={os} />
       </Group>
+
+      <div className="mt-4 px-1">
+        <button
+          type="button"
+          className="btn-plain h-6 px-1.5 text-[12px]"
+          // A failed open has nowhere to show; the button can simply be clicked again.
+          onClick={() => void openWelcome().catch(() => {})}
+        >
+          Show welcome tips
+        </button>
+      </div>
     </>
   )
 }

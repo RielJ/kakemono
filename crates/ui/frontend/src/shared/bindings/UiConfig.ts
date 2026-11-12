@@ -8,4 +8,10 @@ export type UiConfig = {
 /**
  * Colour scheme of the settings window. New; default `light`.
  */
-appearance: Appearance, };
+appearance: Appearance, 
+/**
+ * Open the Welcome window on the next start. Only the template sets it, so only a freshly
+ * created config shows the window; the window writes `false` the first time it shows.
+ * Default `false`: a config without the key belongs to an existing user.
+ */
+show_welcome: boolean, };

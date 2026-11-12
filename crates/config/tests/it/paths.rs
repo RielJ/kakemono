@@ -174,6 +174,18 @@ fn template_loads_like_go_template() {
     assert_eq!(go_cfg.sources.len(), 1);
     assert_eq!(cfg.sources, defaults.sources);
     go_cfg.sources.clone_from(&cfg.sources);
+    // Rotation: the Go template turned it on outright; ours leaves it at the default, off.
+    assert!(!cfg.daemon.rotation_enabled);
+    assert!(go_cfg.daemon.rotation_enabled);
+    go_cfg.daemon.rotation_enabled = false;
+    // Appearance: both stay at the built-in light theme.
+    assert_eq!(cfg.ui.appearance, kakemono_config::Appearance::Light);
+    assert_eq!(go_cfg.ui.appearance, kakemono_config::Appearance::Light);
+    // And the one new-install value: ours shows the Welcome window, where the built-in
+    // defaults (and Go) do not.
+    assert!(cfg.ui.show_welcome);
+    assert!(!go_cfg.ui.show_welcome);
+    go_cfg.ui.show_welcome = true;
     assert_eq!(cfg, go_cfg);
     // The new sections are commented out, so they keep their defaults.
     assert_eq!(cfg.desktop, defaults.desktop);

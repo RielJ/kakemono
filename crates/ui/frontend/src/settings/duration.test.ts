@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 // Shared with `crates/config/tests/duration_cases.rs`; edit the JSON, not this test.
 import cases from '../../../../config/tests/fixtures/go_durations.json'
-import { intervalError, parseGoDuration } from './duration'
+import { formatInterval, intervalError, parseGoDuration } from './duration'
 
 describe('parseGoDuration (shared table with duration.rs)', () => {
   it('has cases', () => {
@@ -39,5 +39,24 @@ describe('intervalError', () => {
 
   it.each(['', '0', '0s', '-5m', '30', '1d', ' 30m', 'soon'])('%j is rejected', (value) => {
     expect(intervalError(value)).toEqual(expect.any(String))
+  })
+})
+
+describe('formatInterval', () => {
+  it.each([
+    ['30m', '30 minutes'],
+    ['1m', '1 minute'],
+    ['1h', '1 hour'],
+    ['2h', '2 hours'],
+    ['1h30m', '1 hour 30 minutes'],
+    ['90m', '1 hour 30 minutes'],
+    ['45s', '45 seconds'],
+    ['24h', '24 hours'],
+  ])('%s reads %j', (value, want) => {
+    expect(formatInterval(value)).toBe(want)
+  })
+
+  it.each(['soon', '', '0s', '1.5s', '-5m'])('%j stays as written', (value) => {
+    expect(formatInterval(value)).toBe(value)
   })
 })

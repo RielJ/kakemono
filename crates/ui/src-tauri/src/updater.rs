@@ -297,6 +297,7 @@ pub async fn install_update<R: Runtime>(
     match installed {
         Ok(()) => {
             tracing::info!("update installed; restarting");
+            crate::windows::mark_quitting(&app);
             app.restart()
         }
         Err(err) => {

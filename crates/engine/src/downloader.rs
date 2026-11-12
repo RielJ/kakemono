@@ -22,7 +22,11 @@
 //! 1. `fetch(query)`, then drops the results whose `image_url` is in the seen ledger
 //!    `<download_dir>/<id>/.kakemono-seen` (newline list, newest last, capped at [`SEEN_CAP`]).
 //! 2. Downloads a random remaining result with [`kakemono_sources::download`](mod@kakemono_sources::download) and records its URL
-//!    in the ledger, so it isn't downloaded again even if the filters reject it.
+//!    in the ledger, so it isn't downloaded again even if the filters reject it. A provider
+//!    with its own [`media_client`](kakemono_sources::Provider::media_client) downloads
+//!    through it, after the URL passes [`DownloadEnv::guard`] against its
+//!    [`allowed_hosts`](kakemono_sources::Provider::allowed_hosts); others use
+//!    [`DownloadEnv::http`].
 //! 3. Computes its facts (stored in the [`FactsCache`]). If the `[filters]` reject it, the file is
 //!    deleted with [`files::safe_delete`].
 //! 4. If `download_limit_mb_enabled`, trims the whole download folder with
@@ -51,11 +55,15 @@
 //! - [`DownloadEnv::protect`]: what deletes must spare (manual, favorites, trash, the current
 //!   wallpaper and history), built from the live state;
 //! - [`DownloadEnv::filter_ctx`]: the screen size and theme for the filters;
-//! - [`DownloadEnv::downloaded`]: an optional hook called after every attempt the loop makes.
+//! - [`DownloadEnv::downloaded`]: an optional hook called after every attempt the loop makes;
+//! - [`DownloadEnv::guard`]: the checks run on an image URL before a provider's own
+//!   [`media_client`](kakemono_sources::Provider::media_client) fetches it.
 //!
 //! `Engine::run` spawns `Downloader::new().run(&engine, shutdown, wake)`; `reload` calls
 //! `wake.notify_one()` (`notify_one` keeps a permit, so a reload during a download isn't lost).
-//! `Engine::download_one` and the empty-pool fallback of `next` call [`download_one`].
+//! `Engine::download_one`, the empty-pool fallback of `next` and `next` with `download_enabled`
+//! off call [`download_one`], so the seen ledger, the filters and the cache cap apply to them
+//! as they do to the loop.
 
 use std::collections::{HashMap, HashSet};
 use std::io;
@@ -66,7 +74,9 @@ use std::time::Duration;
 use kakemono_config::schema::Config;
 use kakemono_config::valid_id;
 use kakemono_sources::local::list_images;
-use kakemono_sources::{DownloadError, OnlineSource, ProviderError, SourceSet, WallpaperResult};
+use kakemono_sources::{
+    DownloadError, GuardConfig, GuardError, OnlineSource, ProviderError, SourceSet, WallpaperResult,
+};
 use rand::seq::IndexedRandom;
 use reqwest::Client;
 use tokio::sync::Notify;
@@ -111,6 +121,12 @@ pub trait DownloadEnv: Send + Sync {
     /// Called after every download attempt [`Downloader::run`] makes, with the source id and
     /// the result of [`download_one`]. Does nothing by default.
     fn downloaded(&self, _source_id: &str, _outcome: &Result<PathBuf, DownloadFailure>) {}
+    /// The checks run on an image URL before a provider's own
+    /// [`media_client`](kakemono_sources::Provider::media_client) fetches it.
+    /// [`GuardConfig::strict`] by default; only tests loosen it.
+    fn guard(&self) -> GuardConfig {
+        GuardConfig::strict()
+    }
 }
 
 /// One async lock per source id. [`download_one`] holds its source's lock from the fetch to the
@@ -157,6 +173,10 @@ pub enum DownloadFailure {
         #[source]
         error: DownloadError,
     },
+    /// The image URL failed the guard of a provider with its own media client; nothing was
+    /// sent. The text is `download image: blocked …`, the URL already redacted.
+    #[error("download image: {0}")]
+    Guard(#[source] GuardError),
     /// The image was downloaded, failed the filters and was deleted.
     #[error("downloaded {} failed the filters ({}); deleted", path.display(), failed.join(", "))]
     Filtered {
@@ -410,7 +430,8 @@ pub async fn download_one<E: DownloadEnv + ?Sized>(
     };
 
     let url = result.image_url.as_str();
-    let path = kakemono_sources::download(&env.http(), url, &dir)
+    let http = media_http(env, &*source.provider, url)?;
+    let path = kakemono_sources::download(&http, url, &dir)
         .await
         .map_err(|error| DownloadFailure::Download {
             url: url.to_owned(),
@@ -438,6 +459,26 @@ pub async fn download_one<E: DownloadEnv + ?Sized>(
         files::trim_to_mb(download_dir, limit, &env.protect().file(path.clone())).await;
     }
     Ok(path)
+}
+
+/// The client to download `url` with: the provider's own media client once `url` passes
+/// [`DownloadEnv::guard`] against its allowed hosts, else the shared [`DownloadEnv::http`].
+/// A URL that doesn't parse is left to [`kakemono_sources::download`], which reports it
+/// without a request.
+fn media_http<E: DownloadEnv + ?Sized>(
+    env: &E,
+    provider: &dyn kakemono_sources::Provider,
+    url: &str,
+) -> Result<Client, DownloadFailure> {
+    let Some(client) = provider.media_client() else {
+        return Ok(env.http());
+    };
+    if let Ok(parsed) = reqwest::Url::parse(url) {
+        env.guard()
+            .check_url(&parsed, &provider.allowed_hosts())
+            .map_err(DownloadFailure::Guard)?;
+    }
+    Ok(client)
 }
 
 /// How long source backoff lasts after `failure`, given `failures` failures in a row before it.
@@ -513,15 +554,19 @@ mod tests {
     use image::{ImageFormat, Rgb, RgbImage};
     use kakemono_config::schema::{BrightnessFilter, FiltersConfig};
     use kakemono_platform::api::Theme;
+    use kakemono_sources::GuardedHttp;
     use kakemono_sources::fake::StaticProvider;
     use kakemono_sources::local::list_images;
     use kakemono_sources::{Provider, WallpaperResult};
     use tempfile::TempDir;
     use tokio::sync::mpsc;
-    use wiremock::matchers::{method, path as url_path, path_regex};
+    use wiremock::matchers::{any, header_exists, method, path as url_path, path_regex};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     const INTERVAL: Duration = Duration::from_secs(10 * 60);
+
+    /// A header only the shared test client (`DownloadEnv::http`) sends.
+    const SHARED_HEADER: &str = "x-client";
 
     type Event = (String, Result<PathBuf, String>);
 
@@ -575,6 +620,9 @@ mod tests {
             let outcome = outcome.as_ref().cloned().map_err(ToString::to_string);
             let _ = self.events.send((source_id.to_owned(), outcome));
         }
+        fn guard(&self) -> GuardConfig {
+            GuardConfig::permissive_loopback()
+        }
     }
 
     /// A provider that is always rate limited.
@@ -612,8 +660,13 @@ mod tests {
             cfg.filters = FiltersConfig::default();
             // Under a paused clock, a pending timer would auto-advance the clock while a request
             // is in flight: no pooled connections (idle timer), no debounce delay.
+            // `x-client: shared` tells the shared client's requests apart from a provider's
+            // own media client (see `media_client_downloads_skip_the_shared_client`).
+            let mut headers = reqwest::header::HeaderMap::new();
+            headers.insert(SHARED_HEADER, "shared".parse().unwrap());
             let http = kakemono_sources::http::client_builder()
                 .pool_max_idle_per_host(0)
+                .default_headers(headers)
                 .build()
                 .unwrap();
             let facts = Arc::new(
@@ -952,6 +1005,106 @@ mod tests {
             nothing.to_string(),
             "provider bing has nothing new for query \"q\""
         );
+    }
+
+    #[test]
+    fn guard_failure_text_is_pinned() {
+        let guard = DownloadFailure::Guard(GuardError::Scheme {
+            url: "http://x/a.jpg?api_key=REDACTED".into(),
+        });
+        assert_eq!(
+            guard.to_string(),
+            "download image: blocked http://x/a.jpg?api_key=REDACTED: only https is allowed"
+        );
+    }
+
+    /// `provider(name, server, paths)` with its own guarded media client for `hosts`.
+    fn media_provider(
+        name: &'static str,
+        server: &MockServer,
+        paths: &[&str],
+        hosts: &[&str],
+    ) -> Arc<StaticProvider> {
+        let media = GuardedHttp::new(GuardConfig::permissive_loopback(), hosts).unwrap();
+        let results = paths
+            .iter()
+            .map(|p| StaticProvider::result(name, &format!("{}{p}", server.uri())))
+            .collect();
+        Arc::new(
+            StaticProvider::new(name, results)
+                .with_media(media.client().clone(), media.hosts().to_vec()),
+        )
+    }
+
+    /// Mounts a mock that fails the test if the shared client sends anything to `server`.
+    async fn refuse_shared_client(server: &MockServer) {
+        Mock::given(header_exists(SHARED_HEADER))
+            .respond_with(ResponseTemplate::new(500))
+            .with_priority(1)
+            .expect(0)
+            .mount(server)
+            .await;
+    }
+
+    fn fixture_with(name: &str, provider: &Arc<StaticProvider>) -> Fixture {
+        Fixture::new(SourceSet::fake(vec![(
+            name,
+            Arc::clone(provider) as Arc<dyn Provider>,
+            "",
+        )]))
+    }
+
+    #[tokio::test]
+    async fn provider_without_media_client_downloads_through_the_shared_client() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(url_path("/a/one.png"))
+            .and(header_exists(SHARED_HEADER))
+            .respond_with(png_response(1, false))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let fx = fixture_with("a", &provider("bing", &server, &["/a/one.png"]));
+        let source = fx.env.sources.get("a").unwrap().clone();
+
+        assert!(download_one(&*fx.env, &source).await.is_ok());
+        server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn media_client_downloads_skip_the_shared_client() {
+        let server = MockServer::start().await;
+        refuse_shared_client(&server).await;
+        serve(&server, "/a/one.png", false, 1).await;
+        let a = media_provider("bing", &server, &["/a/one.png"], &["127.0.0.1"]);
+        let fx = fixture_with("a", &a);
+        let source = fx.env.sources.get("a").unwrap().clone();
+
+        let path = download_one(&*fx.env, &source).await.unwrap();
+
+        assert_eq!(fx.images("a"), vec![path]);
+        server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn media_client_url_outside_allowed_hosts_is_refused_without_a_request() {
+        let server = MockServer::start().await;
+        Mock::given(any())
+            .respond_with(png_response(1, false))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let a = media_provider("bing", &server, &["/a/one.png"], &["cdn.test"]);
+        let fx = fixture_with("a", &a);
+        let source = fx.env.sources.get("a").unwrap().clone();
+
+        let err = download_one(&*fx.env, &source).await.unwrap_err();
+
+        assert!(
+            matches!(err, DownloadFailure::Guard(GuardError::UnlistedHost { .. })),
+            "{err:?}"
+        );
+        server.verify().await;
     }
 
     #[test]

@@ -34,6 +34,7 @@
     "allow-set-start-at-login",
     "allow-reveal",
     "allow-show-picker",
+    "allow-open-welcome",
     "allow-reset-picker-position",
     "allow-check-update",
     "allow-install-update",

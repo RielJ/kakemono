@@ -30,11 +30,17 @@ impl SourceSet {
 }
 
 /// A [`Provider`] that returns fixed results (or a fixed error) and records every query.
+///
+/// `fetch` and `check` give the same outcome but are recorded apart ([`StaticProvider::queries`],
+/// [`StaticProvider::checks`]). [`StaticProvider::with_media`] makes it supply its own media
+/// client and host list.
 #[derive(Debug)]
 pub struct StaticProvider {
     name: &'static str,
     outcome: Outcome,
     queries: Mutex<Vec<String>>,
+    checks: Mutex<Vec<String>>,
+    media: Option<(reqwest::Client, Vec<String>)>,
 }
 
 #[derive(Debug)]
@@ -50,6 +56,8 @@ impl StaticProvider {
             name,
             outcome: Outcome::Results(results),
             queries: Mutex::new(Vec::new()),
+            checks: Mutex::new(Vec::new()),
+            media: None,
         }
     }
 
@@ -59,6 +67,18 @@ impl StaticProvider {
             name,
             outcome: Outcome::Error(message.into()),
             queries: Mutex::new(Vec::new()),
+            checks: Mutex::new(Vec::new()),
+            media: None,
+        }
+    }
+
+    /// This provider, answering [`Provider::media_client`] with `client` and
+    /// [`Provider::allowed_hosts`] with `hosts`.
+    #[must_use]
+    pub fn with_media(self, client: reqwest::Client, hosts: Vec<String>) -> Self {
+        Self {
+            media: Some((client, hosts)),
+            ..self
         }
     }
 
@@ -88,6 +108,21 @@ impl StaticProvider {
             .unwrap_or_else(PoisonError::into_inner)
             .len()
     }
+
+    /// Every query passed to `check`, in call order.
+    pub fn checks(&self) -> Vec<String> {
+        self.checks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn answer(&self) -> Result<Vec<WallpaperResult>, ProviderError> {
+        match &self.outcome {
+            Outcome::Results(r) => Ok(r.clone()),
+            Outcome::Error(m) => Err(ProviderError::Other(m.clone())),
+        }
+    }
 }
 
 #[async_trait]
@@ -101,10 +136,26 @@ impl Provider for StaticProvider {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(query.to_owned());
-        match &self.outcome {
-            Outcome::Results(r) => Ok(r.clone()),
-            Outcome::Error(m) => Err(ProviderError::Other(m.clone())),
+        self.answer()
+    }
+
+    async fn check(&self, query: &str) -> Result<Vec<WallpaperResult>, ProviderError> {
+        self.checks
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(query.to_owned());
+        self.answer()
+    }
+
+    fn allowed_hosts(&self) -> Vec<String> {
+        match &self.media {
+            Some((_, hosts)) => hosts.clone(),
+            None => self.media_hosts().iter().map(|h| (*h).to_owned()).collect(),
         }
+    }
+
+    fn media_client(&self) -> Option<reqwest::Client> {
+        self.media.as_ref().map(|(client, _)| client.clone())
     }
 }
 
@@ -124,6 +175,32 @@ mod tests {
         let bad = StaticProvider::failing("apod", "apod: boom");
         assert_eq!(bad.fetch("").await.unwrap_err().to_string(), "apod: boom");
         assert_eq!(bad.calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn static_provider_records_check_apart_from_fetch() {
+        let p = StaticProvider::new("bing", vec![StaticProvider::result("bing", "https://i/1")]);
+        let n = p.check("q").await.unwrap().len();
+        assert_eq!((n, p.checks(), p.calls()), (1, vec!["q".to_owned()], 0));
+    }
+
+    #[test]
+    fn static_provider_with_media_supplies_client_and_hosts() {
+        let p = StaticProvider::new("bing", vec![])
+            .with_media(reqwest::Client::new(), vec!["cdn.test".into()]);
+        assert_eq!(
+            (p.media_client().is_some(), p.allowed_hosts()),
+            (true, vec!["cdn.test".to_owned()])
+        );
+    }
+
+    #[test]
+    fn static_provider_without_media_has_the_defaults() {
+        let p = StaticProvider::new("bing", vec![]);
+        assert_eq!(
+            (p.media_client().is_none(), p.allowed_hosts()),
+            (true, Vec::<String>::new())
+        );
     }
 
     #[tokio::test]

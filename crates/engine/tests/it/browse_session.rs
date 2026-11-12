@@ -40,6 +40,7 @@ pub struct Scripted {
     mode: Mode,
     base: String,
     hosts: &'static [&'static str],
+    media: Option<(reqwest::Client, Vec<String>)>,
     page_image: bool,
     calls: AtomicUsize,
     resolves: AtomicUsize,
@@ -53,6 +54,7 @@ impl Scripted {
             mode,
             base: "https://example.invalid".to_owned(),
             hosts: &[],
+            media: None,
             page_image: false,
             calls: AtomicUsize::new(0),
             resolves: AtomicUsize::new(0),
@@ -69,6 +71,13 @@ impl Scripted {
     pub fn serving(mut self, base: &str, hosts: &'static [&'static str]) -> Self {
         self.base = base.to_owned();
         self.hosts = hosts;
+        self
+    }
+
+    /// Its own media client and allowed hosts (instead of the shared client and
+    /// `media_hosts`).
+    pub fn with_media(mut self, client: reqwest::Client, hosts: &[&str]) -> Self {
+        self.media = Some((client, hosts.iter().map(|h| (*h).to_owned()).collect()));
         self
     }
 
@@ -126,6 +135,17 @@ impl Provider for Scripted {
 
     fn media_hosts(&self) -> &'static [&'static str] {
         self.hosts
+    }
+
+    fn allowed_hosts(&self) -> Vec<String> {
+        match &self.media {
+            Some((_, hosts)) => hosts.clone(),
+            None => self.hosts.iter().map(|h| (*h).to_owned()).collect(),
+        }
+    }
+
+    fn media_client(&self) -> Option<reqwest::Client> {
+        self.media.as_ref().map(|(client, _)| client.clone())
     }
 
     async fn browse(

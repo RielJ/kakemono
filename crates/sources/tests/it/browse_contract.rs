@@ -81,3 +81,60 @@ async fn browse_contract_works_through_dyn_provider() {
     let provider: std::sync::Arc<dyn Provider> = std::sync::Arc::new(Dummy);
     assert!(provider.browse("", None).await.is_err());
 }
+
+#[test]
+fn browse_contract_default_allowed_hosts_are_the_media_hosts() {
+    let bing = kakemono_sources::bing::Bing::new(
+        kakemono_config::schema::BingConfig::default(),
+        reqwest::Client::new(),
+    );
+    let media: Vec<String> = bing.media_hosts().iter().map(|h| (*h).to_owned()).collect();
+    assert!(!media.is_empty());
+    assert_eq!(bing.allowed_hosts(), media);
+}
+
+#[test]
+fn browse_contract_default_allowed_hosts_is_empty_without_media_hosts() {
+    assert!(Dummy.allowed_hosts().is_empty());
+}
+
+#[test]
+fn browse_contract_default_media_client_is_none() {
+    let bing = kakemono_sources::bing::Bing::new(
+        kakemono_config::schema::BingConfig::default(),
+        reqwest::Client::new(),
+    );
+    assert!(bing.media_client().is_none());
+}
+
+/// Answers `fetch` with one result whose title is the query.
+struct Echo;
+
+#[async_trait]
+impl Provider for Echo {
+    fn name(&self) -> &'static str {
+        "echo"
+    }
+
+    async fn fetch(&self, query: &str) -> Result<Vec<WallpaperResult>, ProviderError> {
+        Ok(vec![WallpaperResult {
+            source_url: String::new(),
+            image_url: String::new(),
+            title: query.to_owned(),
+            author: String::new(),
+            source: "echo".into(),
+        }])
+    }
+}
+
+#[tokio::test]
+async fn browse_contract_default_check_is_fetch() {
+    let titles: Vec<String> = Echo
+        .check("forest")
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.title)
+        .collect();
+    assert_eq!(titles, ["forest"]);
+}

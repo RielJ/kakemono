@@ -175,7 +175,8 @@ pub fn open_target(entry: &SourceEntry, cfg: &Config) -> Result<PathBuf, String>
         | SourceType::Unsplash
         | SourceType::Reddit
         | SourceType::Bing
-        | SourceType::Apod => {
+        | SourceType::Apod
+        | SourceType::Web => {
             if kakemono_config::valid_id(&entry.id) {
                 Ok(cfg.daemon.download_dir.join(&entry.id))
             } else {

@@ -17,6 +17,7 @@ vi.mock('../shared/api', async (importOriginal) => {
     getStatus: vi.fn(),
     fetchDroppedUrl: vi.fn(),
     checkUpdate: vi.fn(),
+    saveConfig: vi.fn(),
   }
 })
 
@@ -54,6 +55,7 @@ beforeEach(() => {
   vi.mocked(api.getAppInfo).mockResolvedValue({ os: 'macos', config_path: '', version: '0' })
   vi.mocked(api.getStatus).mockResolvedValue(status('Alps'))
   vi.mocked(api.checkUpdate).mockResolvedValue(null)
+  vi.mocked(api.saveConfig).mockResolvedValue({ reloaded: false, reload_error: null })
 })
 afterEach(() => {
   cleanup()
@@ -211,5 +213,17 @@ describe('settings image drop', () => {
     await screen.findByText('Alps')
     dragUrl('drop', 'https://x.example/page')
     expect(await within(screen.getByRole('contentinfo')).findByText('not an image')).toBeTruthy()
+  })
+})
+
+describe('settings and the welcome window', () => {
+  it('shows no welcome panel and writes nothing when show_welcome is still set', async () => {
+    const c = testConfig()
+    c.ui.show_welcome = true
+    vi.mocked(api.getConfig).mockResolvedValue(c)
+    render(<App />)
+    await screen.findByText('Alps')
+    expect(screen.queryByRole('region', { name: 'Welcome to kakemono' })).toBeNull()
+    expect(api.saveConfig).not.toHaveBeenCalled()
   })
 })

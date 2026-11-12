@@ -16,7 +16,7 @@ use kakemono_sources::{GuardConfig, GuardError, guarded_client};
 use tempfile::TempDir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{any, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// The host list every test job carries: the loopback literal wiremock listens on.
@@ -66,8 +66,13 @@ fn job<'a>(item: &'a RemoteItem) -> PreviewJob<'a> {
     PreviewJob {
         source_id: "wh-1",
         item,
-        hosts: HOSTS,
+        hosts: hosts(HOSTS),
+        client: None,
     }
+}
+
+fn hosts(list: &[&str]) -> Arc<[String]> {
+    list.iter().map(|h| (*h).to_owned()).collect()
 }
 
 fn encoded(width: u32, height: u32, format: ImageFormat) -> Vec<u8> {
@@ -281,7 +286,7 @@ async fn url_outside_the_host_list_is_refused_without_a_request() {
     let c = cache();
     let it = item("abc", format!("{}/p", server.uri()));
     let elsewhere = PreviewJob {
-        hosts: &["wallhaven.cc"],
+        hosts: hosts(&["wallhaven.cc"]),
         ..job(&it)
     };
 
@@ -294,6 +299,42 @@ async fn url_outside_the_host_list_is_refused_without_a_request() {
         ),
         "{got:?}"
     );
+}
+
+/// A source with its own media client: the preview goes through it, never the cache's client.
+#[tokio::test]
+async fn job_with_its_own_client_downloads_through_it() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/p"))
+        .and(header("x-client", "row"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(png()))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(10)
+        .expect(0)
+        .mount(&server)
+        .await;
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert("x-client", "row".parse().unwrap());
+    let own = reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .unwrap();
+    let c = cache();
+    let it = item("abc", format!("{}/p", server.uri()));
+    let with_client = PreviewJob {
+        client: Some(own),
+        ..job(&it)
+    };
+
+    let got = bounded(c.cache.try_fetch(with_client)).await;
+
+    assert!(got.is_ok_and(|p| p.is_file()));
+    server.verify().await;
 }
 
 #[tokio::test]

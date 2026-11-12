@@ -16,3 +16,4 @@ mod unsplash;
 mod wallhaven_api;
 mod wallhaven_scrape;
 mod wallhaven_url_params;
+mod web;

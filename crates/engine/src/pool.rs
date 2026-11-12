@@ -186,6 +186,19 @@ impl Pool {
     pub fn get(&self, id: &str) -> Option<&PoolSource> {
         self.sources.iter().find(|s| s.id == id)
     }
+
+    /// The pool without the download folders of online rows: local rows (folders, albums,
+    /// image lists) and the manual folder.
+    #[must_use]
+    pub fn local(&self) -> Pool {
+        let sources = self
+            .sources
+            .iter()
+            .filter(|s| !matches!(s.kind, PoolKind::Source(kind) if kind.is_online()))
+            .cloned()
+            .collect();
+        Pool { sources }
+    }
 }
 
 /// Chooses an image from `pool` (see the module docs). `facts` supplies the image facts for the
@@ -547,6 +560,21 @@ mod tests {
             files_source(MANUAL_ID, PoolKind::Manual, vec![manual]),
         ];
         assert_eq!(pool.sources, expected);
+    }
+
+    #[test]
+    fn pool_local_leaves_out_online_rows_only() {
+        let pool = Pool {
+            sources: vec![
+                files_source("wh-1", PoolKind::Source(SourceType::Wallhaven), vec![]),
+                files_source("fld-1", PoolKind::Source(SourceType::Folder), vec![]),
+                files_source("bing", PoolKind::Source(SourceType::Bing), vec![]),
+                files_source(MANUAL_ID, PoolKind::Manual, vec![]),
+            ],
+        };
+        let local = pool.local();
+        let ids: Vec<&str> = local.sources.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, ["fld-1", MANUAL_ID]);
     }
 
     #[test]

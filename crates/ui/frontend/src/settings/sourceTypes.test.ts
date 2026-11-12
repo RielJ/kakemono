@@ -86,7 +86,7 @@ function rustTable(): Map<string, RustRow> {
 describe('sourceTypes', () => {
   it('has an entry for each SourceType', () => {
     const rust = rustTable()
-    expect(rust.size).toBe(10)
+    expect(rust.size).toBe(11)
     expect([...ALL_SOURCE_TYPES].sort()).toEqual([...rust.keys()].sort())
     expect(Object.keys(SOURCE_TYPES).sort()).toEqual([...rust.keys()].sort())
   })
@@ -107,14 +107,15 @@ describe('sourceTypes', () => {
     }
   })
 
-  it('lists online types A–Z: APOD, Bing, Reddit, Unsplash, Wallhaven', () => {
-    expect(ONLINE_TYPES).toEqual(['apod', 'bing', 'reddit', 'unsplash', 'wallhaven'])
+  it('lists online types A–Z: APOD, Bing, Reddit, Unsplash, Wallhaven, Web page', () => {
+    expect(ONLINE_TYPES).toEqual(['apod', 'bing', 'reddit', 'unsplash', 'wallhaven', 'web'])
     expect(ONLINE_TYPES.map((t) => SOURCE_TYPES[t].menuLabel)).toEqual([
       'APOD',
       'Bing',
       'Reddit',
       'Unsplash',
       'Wallhaven',
+      'Web page',
     ])
   })
 
@@ -135,6 +136,7 @@ describe('sourceTypes', () => {
     expect(prompt('reddit')).toBe('URL or name of a subreddit:')
     expect(prompt('unsplash')).toBe('Search keyword or URL:')
     expect(prompt('wallhaven')).toBe('Enter keywords or paste URL here:')
+    expect(prompt('web')).toBe('Link:')
     expect(prompt('bing')).toBeNull()
     expect(prompt('apod')).toBeNull()
   })

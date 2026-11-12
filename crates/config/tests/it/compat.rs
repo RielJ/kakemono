@@ -33,6 +33,11 @@ fn defaults_match_go_defaults() {
         Some(Path::new("/home/golden/.config/kakemono/daemon.sock"))
     );
     ours.daemon.socket_path.clone_from(&go.daemon.socket_path);
+    // Deviation: Go rotated by default; we leave rotation off until the user turns it on. Go
+    // wrote the key out, so a config Go saved keeps rotating.
+    assert!(!ours.daemon.rotation_enabled);
+    assert!(go.daemon.rotation_enabled);
+    ours.daemon.rotation_enabled = true;
     // Go's defaults are a legacy config: loading migrates them to one enabled Bing row.
     assert_eq!(go.sources.len(), 1);
     assert_eq!(go.sources[0].kind, kakemono_config::SourceType::Bing);
@@ -44,7 +49,7 @@ fn defaults_match_go_defaults() {
 #[test]
 fn default_values_spelled_out() {
     let d = defaults_for_home(home());
-    assert!(d.daemon.rotation_enabled);
+    assert!(!d.daemon.rotation_enabled);
     assert_eq!(d.daemon.interval, "30m");
     assert_eq!(
         d.daemon.interval_duration(),
@@ -56,7 +61,7 @@ fn default_values_spelled_out() {
         d.daemon.download_dir,
         Path::new("/home/golden/Pictures/Wallpapers/cache")
     );
-    assert!(d.daemon.rotate_on_theme_change);
+    assert!(!d.daemon.rotate_on_theme_change);
     assert!(!d.daemon.reapply_on_space_change);
     // A fresh install shows Wallhaven's hot and top lists, plus the favorites folder. The
     // location is a string, so build it with the same joins as the defaults: on Windows each
@@ -130,6 +135,9 @@ fn go_template_loads_like_go() {
     // Bing row, the only enabled provider.
     let mut expected = defaults_for_home(home());
     expected.daemon.socket_path = Some(PathBuf::from("/home/golden/.config/kakemono/daemon.sock"));
+    // The Go template sets `rotation_enabled = true` outright, so it keeps rotating.
+    assert!(ours.daemon.rotation_enabled);
+    expected.daemon.rotation_enabled = true;
     assert_eq!(ours.sources.len(), 1);
     assert_eq!(ours.sources[0].kind, kakemono_config::SourceType::Bing);
     expected.sources.clone_from(&ours.sources);

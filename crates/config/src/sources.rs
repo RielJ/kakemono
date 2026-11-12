@@ -24,10 +24,11 @@ impl SourceType {
                 | SourceType::Reddit
                 | SourceType::Bing
                 | SourceType::Apod
+                | SourceType::Web
         )
     }
 
-    /// Whether the source needs a `location` (keywords, URL, subreddit or path). Bing and APOD
+    /// Whether the source needs a `location` (keywords, URL, subreddit, link or path). Bing and APOD
     /// don't; an unsupported row keeps whatever it had.
     pub fn takes_input(self) -> bool {
         !matches!(self, SourceType::Bing | SourceType::Apod)
@@ -41,6 +42,7 @@ impl SourceType {
             SourceType::Reddit => "rd",
             SourceType::Bing => "bing",
             SourceType::Apod => "apod",
+            SourceType::Web => "web",
             SourceType::Folder => "dir",
             SourceType::Images => "img",
             SourceType::AlbumName => "aln",
@@ -57,6 +59,7 @@ impl SourceType {
             SourceType::Reddit => "Reddit",
             SourceType::Bing => "Bing",
             SourceType::Apod => "APOD",
+            SourceType::Web => "Web page",
             SourceType::Folder => "Folder",
             SourceType::Images => "Images",
             SourceType::AlbumName => "Sequential album by file name",
@@ -232,6 +235,28 @@ mod tests {
     }
 
     #[test]
+    fn web_type_has_its_config_string_label_and_prefix() {
+        assert_eq!(SourceType::from_config_str("web"), SourceType::Web);
+        assert_eq!(SourceType::Web.as_str(), "web");
+        assert_eq!(SourceType::Web.label(), "Web page");
+        assert_eq!(SourceType::Web.prefix(), "web");
+    }
+
+    #[test]
+    fn from_config_str_round_trips_every_known_type_and_maps_unknown_to_unsupported() {
+        for kind in SourceType::ALL {
+            assert_eq!(SourceType::from_config_str(kind.as_str()), kind, "{kind}");
+        }
+        for unknown in ["flickr", "Web", "web-page", ""] {
+            assert_eq!(
+                SourceType::from_config_str(unknown),
+                SourceType::Unsupported,
+                "{unknown:?}"
+            );
+        }
+    }
+
+    #[test]
     fn is_online_and_takes_input_for_every_type() {
         use SourceType::*;
         for (kind, online, input) in [
@@ -240,6 +265,7 @@ mod tests {
             (Reddit, true, true),
             (Bing, true, false),
             (Apod, true, false),
+            (Web, true, true),
             (Folder, false, true),
             (Images, false, true),
             (AlbumName, false, true),

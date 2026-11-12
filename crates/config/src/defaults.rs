@@ -27,16 +27,16 @@ pub fn defaults_for_home(home: &Path) -> Config {
     let wallpapers = home.join("Pictures").join("Wallpapers");
     Config {
         daemon: DaemonConfig {
-            rotation_enabled: true,
+            rotation_enabled: false,
             interval: "30m".to_owned(),
             download_dir: wallpapers.join("cache"),
             trash_dir: wallpapers.join("trash"),
             socket_path: None,
-            rotate_on_theme_change: true,
+            rotate_on_theme_change: false,
             reapply_on_space_change: false,
             change_on_start: false,
             internet: true,
-            download_enabled: true,
+            download_enabled: false,
             download_interval: "10m".to_owned(),
             download_limit_mb_enabled: true,
             download_limit_mb: 500,

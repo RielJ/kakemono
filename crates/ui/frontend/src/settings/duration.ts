@@ -148,3 +148,24 @@ export function intervalError(value: string): string | null {
   if (parsed.nanos === 0n) return 'The interval must be longer than zero.'
   return null
 }
+
+const SECOND = 1_000_000_000n
+
+/**
+ * `[daemon] interval` in words for prose, e.g. `90m` → "1 hour 30 minutes". Values that are not
+ * a positive whole number of seconds stay as written, so the sentence never hides a typo.
+ */
+export function formatInterval(value: string): string {
+  const parsed = parseGoDuration(value)
+  if (!parsed.ok || parsed.nanos <= 0n || parsed.nanos % SECOND !== 0n) return value
+  const total = parsed.nanos / SECOND
+  const parts: [bigint, string][] = [
+    [total / 3600n, 'hour'],
+    [(total % 3600n) / 60n, 'minute'],
+    [total % 60n, 'second'],
+  ]
+  return parts
+    .filter(([n]) => n > 0n)
+    .map(([n, unit]) => `${n} ${unit}${n === 1n ? '' : 's'}`)
+    .join(' ')
+}

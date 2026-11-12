@@ -88,8 +88,20 @@ pub async fn save_config(link: State<'_, Arc<DaemonLink>>, patch: Json) -> CmdRe
 }
 
 /// Validates `patch` and applies it to `path`. Split out for tests.
+///
+/// A missing file is first created from the template, as the daemon would create it. Without
+/// that, a save that runs before the daemon's first start (the welcome page writes
+/// `[ui] show_welcome = false` on its first render) would leave a file holding only the patch,
+/// and the daemon, which never overwrites a config, would skip the template. If the daemon wins
+/// that race, `init` refuses to overwrite and the patch lands on the daemon's copy.
 pub fn write_patch(path: &Path, patch: &Json) -> CmdResult<()> {
     validate_patch(patch)?;
+    if !path.exists() {
+        match kakemono_config::paths::init(path) {
+            Ok(()) | Err(kakemono_config::ConfigError::AlreadyExists { .. }) => {}
+            Err(err) => return Err(err.into()),
+        }
+    }
     kakemono_config::edit::apply_patch(path, patch)?;
     tracing::info!(config = %path.display(), "config saved");
     Ok(())
@@ -185,6 +197,36 @@ enabled = true
         let cfg = kakemono_config::load(&path).unwrap();
         assert_eq!(cfg.daemon.socket_path, None);
         assert_eq!(cfg.picker.position, kakemono_config::PickerPosition::Top);
+    }
+
+    #[test]
+    fn a_patch_to_a_missing_config_lands_on_the_template() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("kakemono").join("config.toml");
+
+        write_patch(&path, &json!({ "ui": { "show_welcome": false } })).unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        let template = kakemono_config::paths::TEMPLATE;
+        assert_eq!(
+            text,
+            template.replace("show_welcome = true", "show_welcome = false")
+        );
+        let cfg = kakemono_config::load(&path).unwrap();
+        assert!(!cfg.ui.show_welcome);
+        assert_eq!(cfg.ui.appearance, kakemono_config::Appearance::Light);
+    }
+
+    #[test]
+    fn the_daemon_creating_the_config_later_keeps_the_patch() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        write_patch(&path, &json!({ "ui": { "show_welcome": false } })).unwrap();
+        // What the daemon's `create_missing_config` does once it starts: refuses to overwrite.
+        assert!(kakemono_config::paths::init(&path).is_err());
+
+        assert!(!kakemono_config::load(&path).unwrap().ui.show_welcome);
     }
 
     #[test]

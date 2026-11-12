@@ -15,6 +15,8 @@
 //!   `wallhaven.cc/tag/<n>` (or `/tag/<n>`) becomes the query `id:<n>`.
 //! - **Unsplash:** keywords pass through; `unsplash.com/s/photos/<kw>` gives `<kw>` with `-` read
 //!   as a space. Any other URL is an error.
+//! - **Web page:** an `https://` link to an image, a static page or an RSS/Atom feed; anything
+//!   else is an error. The query is empty.
 //! - **Bing, APOD:** the location is ignored.
 
 use std::sync::Arc;
@@ -24,11 +26,13 @@ use reqwest::Client;
 
 use crate::apod::Apod;
 use crate::bing::Bing;
+use crate::guard::GuardConfig;
 use crate::http::default_base_url;
 use crate::provider::{Provider, ProviderError};
 use crate::reddit::{Reddit, Sort, Subreddit};
 use crate::unsplash::Unsplash;
 use crate::wallhaven::{Wallhaven, WallhavenOverrides};
+use crate::web::WebPage;
 
 /// One enabled online `[[sources]]` row, ready to fetch.
 #[derive(Clone)]
@@ -127,6 +131,8 @@ struct Origins {
     reddit: url::Url,
     bing: url::Url,
     apod: url::Url,
+    /// The checks a web row's links pass; [`GuardConfig::strict`] outside tests.
+    guard: GuardConfig,
 }
 
 impl Default for Origins {
@@ -137,6 +143,7 @@ impl Default for Origins {
             reddit: default_base_url(crate::reddit::BASE_URL),
             bing: default_base_url(crate::bing::BASE_URL),
             apod: default_base_url(crate::apod::BASE_URL),
+            guard: GuardConfig::strict(),
         }
     }
 }
@@ -191,6 +198,11 @@ fn build_online_at(
                 http,
                 origins.apod.clone(),
             )),
+            String::new(),
+        ),
+        // The page is read with the provider's own guarded client, not `http`.
+        SourceType::Web => (
+            Arc::new(WebPage::with_guard(location, origins.guard)?),
             String::new(),
         ),
         SourceType::Folder
@@ -462,6 +474,77 @@ mod tests {
         }
     }
 
+    // ---- the shared location table ----
+
+    /// `tests/locations.json` is the table the Settings summary
+    /// (`crates/ui/frontend/src/settings/locationSummary.test.ts`) is checked against too, so a
+    /// parser change that the UI doesn't follow fails one of the two suites.
+    #[test]
+    fn locations_fixture_matches_the_parsers() {
+        let text = include_str!("../tests/locations.json");
+        let table: serde_json::Value = serde_json::from_str(text).unwrap();
+        let str_or_none = |v: &serde_json::Value| v.as_str().map(str::to_owned);
+
+        for case in table["wallhaven"].as_array().unwrap() {
+            let loc = case["location"].as_str().unwrap();
+            let got = wallhaven_location(loc).ok();
+            let want = &case["expect"];
+            if want.is_null() {
+                assert!(got.is_none(), "{loc:?} should be rejected, got {got:?}");
+                continue;
+            }
+            let got = got.unwrap_or_else(|| panic!("{loc:?} was rejected"));
+            let o = &got.overrides;
+            assert_eq!(got.query, want["query"].as_str().unwrap(), "{loc:?} query");
+            let fields = [
+                ("categories", &o.categories),
+                ("purity", &o.purity),
+                ("sorting", &o.sorting),
+                ("topRange", &o.top_range),
+                ("order", &o.order),
+                ("atleast", &o.atleast),
+                ("resolutions", &o.resolutions),
+                ("ratios", &o.ratios),
+                ("colors", &o.colors),
+            ];
+            for (key, value) in fields {
+                assert_eq!(value, &str_or_none(&want[key]), "{loc:?} {key}");
+            }
+        }
+
+        for case in table["reddit"].as_array().unwrap() {
+            let loc = case["location"].as_str().unwrap();
+            let got = reddit_location(loc).ok();
+            let want = &case["expect"];
+            if want.is_null() {
+                assert!(got.is_none(), "{loc:?} should be rejected");
+                continue;
+            }
+            let sub = got.unwrap_or_else(|| panic!("{loc:?} was rejected"));
+            let sort = reddit_sort(loc);
+            assert_eq!(sub.as_str(), want["subreddit"].as_str().unwrap(), "{loc:?}");
+            assert_eq!(
+                sort.path_segment(),
+                want["sort"].as_str().unwrap(),
+                "{loc:?}"
+            );
+            assert_eq!(
+                sort.time_range().map(|t| t.as_str().to_owned()),
+                str_or_none(&want["t"]),
+                "{loc:?} t"
+            );
+        }
+
+        for case in table["unsplash"].as_array().unwrap() {
+            let loc = case["location"].as_str().unwrap();
+            assert_eq!(
+                unsplash_location(loc).ok(),
+                str_or_none(&case["expect"]),
+                "{loc:?}"
+            );
+        }
+    }
+
     // ---- reddit_location ----
 
     #[test]
@@ -634,6 +717,30 @@ mod tests {
         );
     }
 
+    /// The example in the README's "Use a website's search as a source" section.
+    #[test]
+    fn wallhaven_readme_example_drops_only_the_page() {
+        let got = wallhaven_location(
+            "https://wallhaven.cc/search?categories=110&purity=100&topRange=6M&sorting=toplist\
+             &order=desc&page=2",
+        )
+        .unwrap();
+        assert_eq!(
+            got,
+            WallhavenSearch {
+                query: String::new(),
+                overrides: WallhavenOverrides {
+                    categories: Some("110".into()),
+                    purity: Some("100".into()),
+                    sorting: Some("toplist".into()),
+                    top_range: Some("6M".into()),
+                    order: Some("desc".into()),
+                    ..WallhavenOverrides::default()
+                },
+            }
+        );
+    }
+
     #[test]
     fn wallhaven_toplist_listing_keeps_top_range() {
         let got = wallhaven_location("https://wallhaven.cc/toplist?topRange=1y&page=2").unwrap();
@@ -785,6 +892,61 @@ mod tests {
                 .unwrap_err();
             assert_eq!(not_configured(err), format!("{kind}: not an online source"));
         }
+    }
+
+    #[test]
+    fn build_online_web_takes_the_link_as_is_with_no_query() {
+        let row = entry("web-1", SourceType::Web, " https://example.com/gallery ");
+        let src = build_online(&row, &Config::default(), Client::new()).unwrap();
+        assert_eq!((src.provider.name(), src.query.as_str()), ("web", ""));
+    }
+
+    #[test]
+    fn build_online_web_refuses_http() {
+        let row = entry("web-1", SourceType::Web, "http://example.com/gallery");
+        let err = build_online(&row, &Config::default(), Client::new()).unwrap_err();
+        assert_eq!(
+            not_configured(err),
+            "web: enter a link that starts with https://"
+        );
+    }
+
+    #[test]
+    fn build_online_web_refuses_a_loopback_address() {
+        let row = entry("web-1", SourceType::Web, "https://127.0.0.1/gallery");
+        let err = build_online(&row, &Config::default(), Client::new()).unwrap_err();
+        assert!(not_configured(err).contains("IP address"));
+    }
+
+    /// A web row reads its page through the guard in `Origins`; permissive here, so it can
+    /// reach the mock server.
+    #[tokio::test]
+    async fn web_instance_reads_its_page() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::builder().start().await;
+        Mock::given(method("GET"))
+            .and(path("/instance-gallery"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"<!doctype html><html><body><p>no images</p></body></html>"#,
+                "text/html",
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let origins = Origins {
+            guard: GuardConfig::permissive_loopback(),
+            ..Origins::default()
+        };
+        let row = entry(
+            "web-1",
+            SourceType::Web,
+            &format!("{}/instance-gallery", server.uri()),
+        );
+        let src = build_online_at(&row, &Config::default(), Client::new(), &origins).unwrap();
+        let err = src.provider.fetch(&src.query).await.unwrap_err();
+        assert!(matches!(err, ProviderError::Unusable(_)), "{err:?}");
     }
 
     #[test]

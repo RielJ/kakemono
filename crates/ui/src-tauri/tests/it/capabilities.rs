@@ -84,9 +84,10 @@ fn set(items: &[&str]) -> BTreeSet<String> {
 fn capabilities_one_per_window() {
     let caps = capabilities();
     let labels: Vec<Vec<&str>> = caps.iter().map(windows).collect();
-    assert_eq!(caps.len(), 2, "one capability per window");
+    assert_eq!(caps.len(), 3, "one capability per window");
     assert!(labels.contains(&vec![kakemono_ui::windows::SETTINGS_LABEL]));
     assert!(labels.contains(&vec![kakemono_ui::windows::PICKER_LABEL]));
+    assert!(labels.contains(&vec![kakemono_ui::windows::WELCOME_LABEL]));
 }
 
 #[test]
@@ -180,6 +181,7 @@ fn capabilities_settings_gets_only_what_settings_calls() {
             "next",
             "open_folder",
             "open_source_folder",
+            "open_welcome",
             "open_update_page",
             "pause",
             "prev",
@@ -195,6 +197,38 @@ fn capabilities_settings_gets_only_what_settings_calls() {
             "trash",
         ])
     );
+}
+
+#[test]
+fn capabilities_welcome_gets_only_what_the_welcome_page_calls() {
+    let welcome = capability("welcome");
+    assert_eq!(
+        allowed_commands(&welcome),
+        set(&[
+            "app_info",
+            "daemon_connection",
+            "get_config",
+            "next",
+            "save_config",
+            "set_start_at_login",
+            "start_at_login",
+            "tray_available",
+        ])
+    );
+    assert_eq!(
+        permissions(&welcome)
+            .into_iter()
+            .filter(|p| p.contains(':'))
+            .collect::<BTreeSet<_>>(),
+        set(&["core:default", "core:window:allow-close"])
+    );
+}
+
+#[test]
+fn capabilities_open_welcome_is_settings_only() {
+    assert!(allowed_commands(&capability("settings")).contains("open_welcome"));
+    assert!(!allowed_commands(&capability("welcome")).contains("open_welcome"));
+    assert!(!allowed_commands(&capability("picker")).contains("open_welcome"));
 }
 
 #[test]

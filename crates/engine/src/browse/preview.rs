@@ -14,6 +14,7 @@ use std::cmp::Reverse;
 use std::fs;
 use std::io::{self, Cursor};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
@@ -54,16 +55,19 @@ impl Default for PreviewLimits {
     }
 }
 
-/// One preview to fetch: the item, the source it came from, and that source's
-/// [`kakemono_sources::Provider::media_hosts`], which the preview URL must match.
-#[derive(Debug, Clone, Copy)]
+/// One preview to fetch: the item, the source it came from, that source's
+/// [`kakemono_sources::Provider::allowed_hosts`], which the preview URL must match, and its
+/// [`kakemono_sources::Provider::media_client`] when it has one.
+#[derive(Debug, Clone)]
 pub struct PreviewJob<'a> {
     /// The config id of the item's source; the cache's subfolder.
     pub source_id: &'a str,
     /// The item whose `preview_url` is fetched and whose `remote_id` names the file.
     pub item: &'a RemoteItem,
     /// Host suffixes the preview URL must match (see [`GuardConfig::check_url`]).
-    pub hosts: &'a [&'a str],
+    pub hosts: Arc<[String]>,
+    /// The source's own guarded client; `None` downloads with the cache's client.
+    pub client: Option<Client>,
 }
 
 /// Why a preview was not stored.
@@ -158,8 +162,9 @@ impl PreviewCache {
             return Ok(cached);
         }
         let url = Url::parse(&job.item.preview_url).map_err(|_| PreviewError::BadUrl)?;
-        self.guard.check_url(&url, job.hosts)?;
-        let bytes = tokio::time::timeout(self.limits.timeout, self.download(url))
+        self.guard.check_url(&url, &job.hosts)?;
+        let client = job.client.as_ref().unwrap_or(&self.client);
+        let bytes = tokio::time::timeout(self.limits.timeout, self.download(client, url))
             .await
             .map_err(|_| PreviewError::Timeout)??;
         let format = sniff(&bytes).ok_or(PreviewError::NotAnImage)?;
@@ -177,14 +182,15 @@ impl PreviewCache {
     /// [`PreviewCache::try_fetch`], with a failure logged and given as `None` (the card shows
     /// a placeholder).
     pub async fn fetch(&self, job: PreviewJob<'_>) -> Option<PathBuf> {
+        let (source_id, item) = (job.source_id, job.item);
         match self.try_fetch(job).await {
             Ok(path) => Some(path),
             Err(err @ PreviewError::Guard(_)) => {
-                tracing::warn!(source_id = job.source_id, remote_id = %job.item.remote_id, error = %err, "preview refused");
+                tracing::warn!(source_id, remote_id = %item.remote_id, error = %err, "preview refused");
                 None
             }
             Err(err) => {
-                tracing::debug!(source_id = job.source_id, remote_id = %job.item.remote_id, error = %err, "preview skipped");
+                tracing::debug!(source_id, remote_id = %item.remote_id, error = %err, "preview skipped");
                 None
             }
         }
@@ -221,8 +227,8 @@ impl PreviewCache {
     }
 
     /// The body of `url`, at most [`PreviewLimits::max_bytes`].
-    async fn download(&self, url: Url) -> Result<Vec<u8>, PreviewError> {
-        let mut response = self.client.get(url).send().await.map_err(request_error)?;
+    async fn download(&self, client: &Client, url: Url) -> Result<Vec<u8>, PreviewError> {
+        let mut response = client.get(url).send().await.map_err(request_error)?;
         let status = response.status();
         if !status.is_success() {
             return Err(PreviewError::Status(status.as_u16()));

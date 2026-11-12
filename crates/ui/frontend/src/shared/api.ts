@@ -404,6 +404,24 @@ export function closeWindow(): Promise<void> {
   return getCurrentWindow().hide()
 }
 
+/**
+ * Closes (destroys) the calling window. Used by the Welcome window: the backend opens Settings
+ * when it closes, however it closed.
+ */
+export function destroyWindow(): Promise<void> {
+  return getCurrentWindow().close()
+}
+
+/** Opens or focuses the Welcome window (`open_welcome`). Writes nothing. */
+export function openWelcome(): Promise<void> {
+  return invoke<void>('open_welcome')
+}
+
+/** Whether this session shows the tray icon (`tray_available`); false on a Linux desktop without one. */
+export function trayAvailable(): Promise<boolean> {
+  return invoke<boolean>('tray_available')
+}
+
 /** Shows the picker at its saved or edge position. */
 export function showPicker(): Promise<void> {
   return invoke<void>('show_picker')

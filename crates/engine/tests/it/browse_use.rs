@@ -12,8 +12,8 @@ use kakemono_engine::browse::{BrowseError, BrowseLimits};
 use kakemono_engine::files::SEEN_LEDGER;
 use kakemono_protocol::types::{BrowseAction, BrowseUseData};
 use kakemono_sources::Provider;
-use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::matchers::{header, method, path};
+use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 use crate::browse_session::{BrowseBuilder, Browsing, Scripted, strings};
 use crate::common::row;
@@ -368,6 +368,112 @@ async fn the_download_limit_spares_the_new_file() {
         ),
         (true, false)
     );
+}
+
+// ─── a source with its own media client ──────────────────────────────────────────────────
+
+/// The header only the source's own media client sends.
+const ROW_HEADER: &str = "x-client";
+
+/// A client like a web source's own: it sends `x-client: row`.
+fn row_client() -> reqwest::Client {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(ROW_HEADER, "row".parse().unwrap());
+    reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .unwrap()
+}
+
+/// Serves `route` as a PNG only to the row client, once; any request without its header
+/// fails the test (checked on drop).
+async fn serve_row_only(server: &MockServer, route: &str) {
+    Mock::given(method("GET"))
+        .and(path(route))
+        .and(header(ROW_HEADER, "row"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "image/png")
+                .set_body_bytes(noisy_png()),
+        )
+        .expect(1)
+        .mount(server)
+        .await;
+}
+
+async fn refuse_shared_client(server: &MockServer) {
+    Mock::given(|req: &Request| !req.headers.contains_key(ROW_HEADER))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(server)
+        .await;
+}
+
+/// A source whose `media_hosts` is empty but whose own client and `allowed_hosts` cover the
+/// loopback server.
+fn own_client_source(server: &MockServer) -> Arc<Scripted> {
+    Arc::new(
+        Scripted::one_batch("wallhaven", &["a1"])
+            .serving(&server.uri(), &[])
+            .with_media(row_client(), LOOPBACK),
+    )
+}
+
+#[tokio::test]
+async fn a_source_with_its_own_media_client_downloads_through_it() {
+    let server = MockServer::start().await;
+    refuse_shared_client(&server).await;
+    serve_row_only(&server, "/img/a1.jpg").await;
+    serve_row_only(&server, "/preview/a1.jpg").await;
+    let p = own_client_source(&server);
+    let f = engine(&p).build();
+    browsed(&f).await;
+
+    let used = use_item(&f, "a1", BrowseAction::Download).await;
+
+    assert!(Path::new(&used.path).is_file());
+    server.verify().await;
+}
+
+#[tokio::test]
+async fn a_source_with_its_own_media_client_previews_through_it() {
+    let server = MockServer::start().await;
+    refuse_shared_client(&server).await;
+    serve_row_only(&server, "/preview/a1.jpg").await;
+    let p = own_client_source(&server);
+    let f = engine(&p).build();
+
+    let page = f.engine.browse(None, 0, None).await.unwrap();
+
+    let preview = page.items[0].preview.clone().map(PathBuf::from);
+    assert!(preview.is_some_and(|p| p.is_file()), "{:?}", page.items[0]);
+    server.verify().await;
+}
+
+#[tokio::test]
+async fn a_source_with_its_own_media_client_is_checked_against_its_allowed_hosts() {
+    let server = MockServer::start().await;
+    Mock::given(wiremock::matchers::any())
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let p = Arc::new(
+        Scripted::one_batch("wallhaven", &["a1"])
+            .serving(&server.uri(), LOOPBACK)
+            .with_media(row_client(), &["cdn.test"]),
+    );
+    let f = engine(&p).build();
+    browsed(&f).await;
+
+    let err = f
+        .engine
+        .browse_use("wh-1", "a1", BrowseAction::Set)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, BrowseError::Guard(_)), "{err:?}");
+    server.verify().await;
 }
 
 /// The daemon runs every request on a spawned task, so both futures must be `Send` for any

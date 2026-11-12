@@ -120,6 +120,31 @@ describe('SourcesTable', () => {
     )
   })
 
+  it('shows a pasted search URL as a readable summary, with the URL in the tooltip and Edit dialog', async () => {
+    const url = 'https://wallhaven.cc/search?categories=110&purity=100&topRange=6M&sorting=toplist&order=desc&page=2'
+    const { user } = await setup({ sources: [{ id: 'wh-top', enabled: false, type: 'wallhaven', location: url }] })
+    const cell = within(row(0)).getAllByRole('gridcell')[2]
+    expect(cell.textContent).toBe('Top list · 6 months · General, Anime · SFW')
+    expect(cell.querySelector('[title]')?.getAttribute('title')).toBe(url)
+    await user.click(within(row(0)).getByText('Wallhaven'))
+    await user.click(button('Edit…'))
+    const dialog = screen.getByRole('dialog', { name: /^Edit/ })
+    expect(
+      within(dialog)
+        .getAllByRole('textbox')
+        .map((b) => (b as HTMLInputElement).value),
+    ).toContain(url)
+  })
+
+  it('shows a web link as host and path, with the full URL in the tooltip', async () => {
+    const url = 'https://www.example.com/gallery/autumn?page=2'
+    await setup({ sources: [{ id: 'web-1a2b', enabled: false, type: 'web', location: url }] })
+    const cells = within(row(0)).getAllByRole('gridcell')
+    expect(cells[1].textContent).toBe('Web page')
+    expect(cells[2].textContent).toBe('example.com/gallery/autumn')
+    expect(cells[2].querySelector('[title]')?.getAttribute('title')).toBe(url)
+  })
+
   it('shows an empty state when there are no sources', async () => {
     await setup({ sources: [] })
     expect(screen.getByText(/No sources yet/)).toBeTruthy()

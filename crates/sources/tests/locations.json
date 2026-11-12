@@ -1,0 +1,56 @@
+{
+  "_comment": "How a [[sources]] location is read. Checked by the Rust parsers (src/instance.rs, test locations_fixture_matches_the_parsers) and by the Settings summary (crates/ui/frontend/src/settings/locationSummary.test.ts), so the two can't drift. expect null = the location is rejected. Wallhaven overrides use the URL parameter names; a missing key is not overridden.",
+  "wallhaven": [
+    {
+      "location": "https://wallhaven.cc/search?categories=110&purity=100&topRange=6M&sorting=toplist&order=desc&page=2",
+      "expect": { "query": "", "categories": "110", "purity": "100", "sorting": "toplist", "topRange": "6M", "order": "desc" }
+    },
+    { "location": "https://wallhaven.cc/search?q=mountains&sorting=random", "expect": { "query": "mountains", "sorting": "random" } },
+    { "location": "https://wallhaven.cc/search?q=sky+blue&seed=abc123", "expect": { "query": "sky blue" } },
+    {
+      "location": "https://wallhaven.cc/search?q=a%20b&purity=&atleast=2560x1440&resolutions=1920x1080%2C2560x1440&ratios=16x9,16x10&colors=0066cc",
+      "expect": { "query": "a b", "atleast": "2560x1440", "resolutions": "1920x1080,2560x1440", "ratios": "16x9,16x10", "colors": "0066cc" }
+    },
+    { "location": "nature", "expect": { "query": "nature" } },
+    { "location": "  +mountains -people  ", "expect": { "query": "+mountains -people" } },
+    { "location": "", "expect": { "query": "" } },
+    { "location": "wallhaven.cc/tag/37", "expect": { "query": "id:37" } },
+    { "location": "/tag/37", "expect": { "query": "id:37" } },
+    { "location": "https://wallhaven.cc/toplist?topRange=1y", "expect": { "query": "", "sorting": "toplist", "topRange": "1y" } },
+    { "location": "https://wallhaven.cc/latest", "expect": { "query": "", "sorting": "date_added" } },
+    { "location": "https://wallhaven.cc/hot", "expect": { "query": "", "sorting": "hot" } },
+    { "location": "  https://www.wallhaven.cc/random/  ", "expect": { "query": "", "sorting": "random" } },
+    { "location": "HTTPS://WALLHAVEN.CC/search?sorting=views", "expect": { "query": "", "sorting": "views" } },
+    { "location": "https://wallhaven.cc/search", "expect": { "query": "" } },
+    { "location": "https://example.com/search?q=x", "expect": null },
+    { "location": "https://wallhaven.cc/w/abc123", "expect": null },
+    { "location": "https://wallhaven.cc/tag/abc", "expect": null },
+    { "location": "https://wallhaven.cc/user/someone", "expect": null }
+  ],
+  "reddit": [
+    { "location": "EarthPorn", "expect": { "subreddit": "EarthPorn", "sort": "hot", "t": null } },
+    { "location": "r/earthporn", "expect": { "subreddit": "earthporn", "sort": "hot", "t": null } },
+    { "location": "/r/earthporn/", "expect": { "subreddit": "earthporn", "sort": "hot", "t": null } },
+    { "location": "R/pics", "expect": { "subreddit": "pics", "sort": "hot", "t": null } },
+    { "location": "EarthPorn+SkyPorn", "expect": { "subreddit": "EarthPorn+SkyPorn", "sort": "hot", "t": null } },
+    { "location": "https://www.reddit.com/r/EarthPorn/top/?t=month", "expect": { "subreddit": "EarthPorn", "sort": "top", "t": "month" } },
+    { "location": "reddit.com/r/wallpapers/top", "expect": { "subreddit": "wallpapers", "sort": "top", "t": null } },
+    { "location": "https://old.reddit.com/r/wallpapers/new/", "expect": { "subreddit": "wallpapers", "sort": "new", "t": null } },
+    { "location": "https://reddit.com/r/x/controversial?t=ALL", "expect": { "subreddit": "x", "sort": "controversial", "t": "all" } },
+    { "location": "https://www.reddit.com/r/EarthPorn/top/?t=forever", "expect": { "subreddit": "EarthPorn", "sort": "top", "t": null } },
+    { "location": "https://www.reddit.com/r/EarthPorn/hot/?t=week", "expect": { "subreddit": "EarthPorn", "sort": "hot", "t": null } },
+    { "location": "https://www.reddit.com/r/EarthPorn/comments/abc/title/", "expect": { "subreddit": "EarthPorn", "sort": "hot", "t": null } },
+    { "location": "https://example.com/r/x", "expect": null },
+    { "location": "https://www.reddit.com/user/foo", "expect": null },
+    { "location": "not a sub!", "expect": null }
+  ],
+  "unsplash": [
+    { "location": "mountains", "expect": "mountains" },
+    { "location": "", "expect": "" },
+    { "location": "https://unsplash.com/s/photos/misty-forest", "expect": "misty forest" },
+    { "location": "unsplash.com/s/photos/new%20york", "expect": "new york" },
+    { "location": "https://unsplash.com/s/photos/---", "expect": null },
+    { "location": "https://unsplash.com/collections/123", "expect": null },
+    { "location": "https://example.com/s/photos/x", "expect": null }
+  ]
+}

@@ -355,6 +355,7 @@ mod tests {
     fn interval_falls_back_and_respects_rotation_enabled() {
         let mut r = rot("2026-01-01T10:00:00Z");
         let mut cfg = Config::default();
+        cfg.daemon.rotation_enabled = true;
         cfg.daemon.interval = "5m".to_owned();
         assert_eq!(r.interval(&cfg), Some(Duration::from_secs(300)));
         for bad in ["nope", "0s"] {

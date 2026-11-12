@@ -120,7 +120,10 @@ fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
         Action::TogglePause => toggle_pause(app.clone()),
         Action::ShowPicker => windows::open(app, Page::Picker),
         Action::Settings => windows::open(app, Page::Settings),
-        Action::Quit => app.exit(0),
+        Action::Quit => {
+            windows::mark_quitting(app);
+            app.exit(0);
+        }
     }
 }
 
@@ -209,6 +212,13 @@ fn first_line(text: &str) -> &str {
 
 /// How long startup waits for the session bus to say whether a tray host exists. The check
 /// runs on the main thread before any window opens.
+/// `tray_available`: whether this session can show the tray icon ([`tray_supported`]). The
+/// welcome window asks so it can say where kakemono lives.
+#[tauri::command]
+pub async fn tray_available() -> bool {
+    tray_supported().await
+}
+
 #[cfg(target_os = "linux")]
 pub const TRAY_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 

@@ -12,7 +12,7 @@ import {
   saveConfig,
   startDaemon,
 } from '../shared/api'
-import type { Appearance } from '../shared/bindings/Appearance'
+import { useAppearance } from '../shared/useAppearance'
 import { useDaemonEvents, type Connection } from '../shared/useDaemonEvents'
 import { useImageDrop, type DropNotice } from '../shared/useImageDrop'
 import AdvancedSettings from './components/AdvancedSettings'
@@ -24,28 +24,6 @@ import { fileManagerName, TABS, type DaemonState, type TabId } from './sections'
 import { useConfigStore, type SaveStatus } from './useConfigStore'
 import { useUpdate } from './useUpdate'
 import { configErrors } from './validate'
-
-// ── Appearance ───────────────────────────────────────────────────────────────
-
-function systemPrefersDark(): boolean {
-  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches
-}
-
-/** Sets `<html data-theme>` from `[ui] appearance`, following the system when it is `system`. */
-function useAppearance(appearance: Appearance) {
-  useEffect(() => {
-    const root = document.documentElement
-    const apply = () => {
-      const dark = appearance === 'dark' || (appearance === 'system' && systemPrefersDark())
-      root.dataset.theme = dark ? 'dark' : 'light'
-    }
-    apply()
-    if (appearance !== 'system' || typeof window.matchMedia !== 'function') return
-    const mq = window.matchMedia('(prefers-color-scheme: dark)')
-    mq.addEventListener('change', apply)
-    return () => mq.removeEventListener('change', apply)
-  }, [appearance])
-}
 
 // ── Save status ──────────────────────────────────────────────────────────────
 
@@ -243,7 +221,8 @@ export default function App() {
     setLoading(true)
     setLoadError(null)
     try {
-      load(await getConfig())
+      const loaded = await getConfig()
+      load(loaded)
     } catch (err) {
       setLoadError(errorMessage(err))
     } finally {

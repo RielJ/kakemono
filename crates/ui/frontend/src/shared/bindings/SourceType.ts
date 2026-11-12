@@ -4,4 +4,4 @@
  * `[[sources]] type`. A string this version doesn't know loads as `unsupported` instead of failing
  * the whole load.
  */
-export type SourceType = "wallhaven" | "unsplash" | "reddit" | "bing" | "apod" | "folder" | "images" | "album-name" | "album-date" | "unsupported";
+export type SourceType = "wallhaven" | "unsplash" | "reddit" | "bing" | "apod" | "web" | "folder" | "images" | "album-name" | "album-date" | "unsupported";

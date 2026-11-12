@@ -40,6 +40,8 @@ pub const COMMANDS: &[&str] = &[
     "app_info",
     "daemon_connection",
     "show_picker",
+    "open_welcome",
+    "tray_available",
     "hide_picker",
     "reset_picker_position",
     "picker_resize_begin",

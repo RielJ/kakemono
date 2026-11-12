@@ -5,7 +5,10 @@
 
 use std::net::IpAddr;
 
-use kakemono_sources::guard::{GuardConfig, GuardError, check_url, guarded_client, is_blocked_ip};
+use kakemono_sources::guard::{
+    GuardConfig, GuardError, GuardedHttp, MAX_REDIRECTS, MAX_ROW_HOSTS, check_url, guarded_client,
+    is_blocked_ip,
+};
 use url::Url;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -345,4 +348,332 @@ async fn guard_permissive_resolver_keeps_loopback_name() {
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
+}
+
+// ─── GuardedHttp: one client per fixed host list ──────────────────────────────────────────
+
+fn row(hosts: &[&str]) -> GuardedHttp {
+    GuardedHttp::new(GuardConfig::strict(), hosts).unwrap()
+}
+
+fn row_check(http: &GuardedHttp, url: &str) -> Result<(), GuardError> {
+    http.check_url(&Url::parse(url).unwrap())
+}
+
+#[test]
+fn guard_row_accepts_listed_host() {
+    assert!(row_check(&row(&["example.com"]), "https://example.com/a.jpg").is_ok());
+}
+
+#[test]
+fn guard_row_accepts_subdomain_of_listed_host() {
+    assert!(row_check(&row(&["example.com"]), "https://img.example.com/a.jpg").is_ok());
+}
+
+#[test]
+fn guard_row_rejects_sibling_suffix() {
+    assert!(matches!(
+        row_check(&row(&["example.com"]), "https://evilexample.com/a.jpg"),
+        Err(GuardError::UnlistedHost { .. })
+    ));
+}
+
+#[test]
+fn guard_row_still_runs_the_strict_checks() {
+    assert!(matches!(
+        row_check(&row(&["example.com"]), "http://example.com/a.jpg"),
+        Err(GuardError::Scheme { .. })
+    ));
+}
+
+#[test]
+fn guard_row_dedupes_hosts_ignoring_case() {
+    let http = row(&["example.com", "EXAMPLE.com", "cdn.test", "example.com"]);
+    assert_eq!(http.hosts(), ["example.com", "cdn.test"]);
+}
+
+#[test]
+fn guard_row_keeps_at_most_max_row_hosts() {
+    let hosts: Vec<String> = (0..MAX_ROW_HOSTS + 10)
+        .map(|i| format!("h{i}.test"))
+        .collect();
+    let http = GuardedHttp::new(GuardConfig::strict(), &hosts).unwrap();
+    assert_eq!(http.hosts(), &hosts[..MAX_ROW_HOSTS]);
+}
+
+#[test]
+fn guard_row_refuses_a_host_past_the_cap() {
+    let hosts: Vec<String> = (0..=MAX_ROW_HOSTS).map(|i| format!("h{i}.test")).collect();
+    let http = GuardedHttp::new(GuardConfig::strict(), &hosts).unwrap();
+    let last = format!("https://h{MAX_ROW_HOSTS}.test/a.jpg");
+    assert!(matches!(
+        row_check(&http, &last),
+        Err(GuardError::UnlistedHost { .. })
+    ));
+}
+
+#[test]
+fn guard_row_reports_its_config() {
+    let http = GuardedHttp::new(GuardConfig::permissive_loopback(), &["127.0.0.1"]).unwrap();
+    assert_eq!(http.config(), GuardConfig::permissive_loopback());
+}
+
+#[test]
+fn guard_row_debug_shows_the_hosts() {
+    let text = format!("{:?}", row(&["example.com"]));
+    assert!(text.contains("example.com"), "{text}");
+}
+
+fn loopback_row(hosts: &[&str]) -> GuardedHttp {
+    GuardedHttp::new(GuardConfig::permissive_loopback(), hosts).unwrap()
+}
+
+#[tokio::test]
+async fn guard_row_client_follows_max_redirects() {
+    let server = MockServer::start().await;
+    let url = redirect_chain(&server, MAX_REDIRECTS).await;
+    let http = loopback_row(&["127.0.0.1"]);
+    http.check_url(&url).unwrap();
+    let response = http.client().get(url).send().await.unwrap();
+    assert_eq!(response.status(), 200);
+}
+
+#[tokio::test]
+async fn guard_row_client_rejects_more_than_max_redirects() {
+    let server = MockServer::start().await;
+    let url = redirect_chain(&server, MAX_REDIRECTS + 1).await;
+    let err = loopback_row(&["127.0.0.1"])
+        .client()
+        .get(url)
+        .send()
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(guard_cause(&err), Some(GuardError::TooManyRedirects { .. })),
+        "{err:?}"
+    );
+}
+
+/// Mounts `/away` on `server`, redirecting to `target` + `/ok`, and an `/ok` that must not
+/// be reached. Returns the `/away` URL on `from_host`.
+async fn redirect_away(server: &MockServer, from_host: &str, target_host: &str) -> Url {
+    let port = server.address().port();
+    Mock::given(method("GET"))
+        .and(path("/away"))
+        .respond_with(ResponseTemplate::new(302).insert_header(
+            "Location",
+            format!("http://{target_host}:{port}/ok").as_str(),
+        ))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/ok"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(server)
+        .await;
+    format!("http://{from_host}:{port}/away").parse().unwrap()
+}
+
+#[tokio::test]
+async fn guard_row_client_rejects_redirect_to_unlisted_host() {
+    let server = MockServer::start().await;
+    let url = redirect_away(&server, "127.0.0.1", "localhost").await;
+    let err = loopback_row(&["127.0.0.1"])
+        .client()
+        .get(url)
+        .send()
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(guard_cause(&err), Some(GuardError::UnlistedHost { .. })),
+        "{err:?}"
+    );
+}
+
+/// Two rows with different lists share nothing: each refuses the other's host, both before
+/// the first request and on a redirect.
+#[tokio::test]
+async fn guard_rows_are_isolated() {
+    let server = MockServer::start().await;
+    let port = server.address().port();
+    let ip_row = loopback_row(&["127.0.0.1"]);
+    let name_row = loopback_row(&["localhost"]);
+
+    let by_name: Url = format!("http://localhost:{port}/ok").parse().unwrap();
+    let by_ip: Url = format!("http://127.0.0.1:{port}/ok").parse().unwrap();
+    let first_url = (
+        ip_row.check_url(&by_name).is_err(),
+        name_row.check_url(&by_ip).is_err(),
+    );
+
+    let to_name = redirect_away(&server, "127.0.0.1", "localhost").await;
+    let ip_err = ip_row.client().get(to_name).send().await.unwrap_err();
+    let to_ip: Url = format!("http://localhost:{port}/away2").parse().unwrap();
+    Mock::given(method("GET"))
+        .and(path("/away2"))
+        .respond_with(
+            ResponseTemplate::new(302)
+                .insert_header("Location", format!("http://127.0.0.1:{port}/ok").as_str()),
+        )
+        .mount(&server)
+        .await;
+    let name_err = name_row.client().get(to_ip).send().await.unwrap_err();
+    let redirects = (
+        matches!(guard_cause(&ip_err), Some(GuardError::UnlistedHost { .. })),
+        matches!(
+            guard_cause(&name_err),
+            Some(GuardError::UnlistedHost { .. })
+        ),
+    );
+
+    assert_eq!((first_url, redirects), ((true, true), (true, true)));
+}
+
+// ─── GuardedHttp::any_public_host: a user-typed link ─────────────────────────────────────
+
+fn any_host(config: GuardConfig) -> GuardedHttp {
+    GuardedHttp::any_public_host(config).unwrap()
+}
+
+fn any_host_check(config: GuardConfig, url: &str) -> Result<(), GuardError> {
+    any_host(config).check_url(&Url::parse(url).unwrap())
+}
+
+#[test]
+fn guard_any_host_accepts_any_public_https_host() {
+    let accepted = ["https://example.com/a", "https://science.nasa.gov/apod/"]
+        .map(|url| any_host_check(GuardConfig::strict(), url).is_ok());
+    assert_eq!(accepted, [true, true]);
+}
+
+#[test]
+fn guard_any_host_lists_no_hosts() {
+    assert!(any_host(GuardConfig::strict()).hosts().is_empty());
+}
+
+#[test]
+fn guard_any_host_rejects_http_in_strict_mode() {
+    let err = any_host_check(GuardConfig::strict(), "http://example.com/a").unwrap_err();
+    assert!(matches!(err, GuardError::Scheme { .. }), "{err:?}");
+}
+
+#[test]
+fn guard_any_host_rejects_ip_literals_in_strict_mode() {
+    let errs = [
+        "https://10.0.0.1/a",
+        "https://127.0.0.1/a",
+        "https://[::1]/a",
+    ]
+    .map(|url| any_host_check(GuardConfig::strict(), url));
+    assert!(
+        errs.iter()
+            .all(|e| matches!(e, Err(GuardError::IpLiteral { .. }))),
+        "{errs:?}"
+    );
+}
+
+#[test]
+fn guard_any_host_rejects_localhost_credentials_and_ports_in_strict_mode() {
+    let errs = [
+        "https://localhost/a",
+        "https://user:pw@example.com/a",
+        "https://example.com:8443/a",
+    ]
+    .map(|url| any_host_check(GuardConfig::strict(), url));
+    assert!(
+        matches!(
+            errs,
+            [
+                Err(GuardError::Localhost { .. }),
+                Err(GuardError::Credentials { .. }),
+                Err(GuardError::Port { .. }),
+            ]
+        ),
+        "{errs:?}"
+    );
+}
+
+#[tokio::test]
+async fn guard_any_host_client_follows_a_redirect_to_another_host() {
+    let server = MockServer::start().await;
+    let port = server.address().port();
+    Mock::given(method("GET"))
+        .and(path("/moved"))
+        .respond_with(
+            ResponseTemplate::new(301)
+                .insert_header("Location", format!("http://localhost:{port}/here").as_str()),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/here"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let http = any_host(GuardConfig::permissive_loopback());
+    let url: Url = format!("http://127.0.0.1:{port}/moved").parse().unwrap();
+    http.check_url(&url).unwrap();
+
+    let response = http.client().get(url).send().await.unwrap();
+
+    assert_eq!(
+        (response.status().as_u16(), response.url().host_str()),
+        (200, Some("localhost"))
+    );
+}
+
+/// The redirect policy runs the address checks: a hop to a private IP literal is refused even
+/// in permissive mode, which allows only loopback literals.
+#[tokio::test]
+async fn guard_any_host_client_rejects_a_private_ip_hop() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/inside"))
+        .respond_with(ResponseTemplate::new(302).insert_header("Location", "http://10.0.0.1/admin"))
+        .mount(&server)
+        .await;
+    let url: Url = format!("{}/inside", server.uri()).parse().unwrap();
+
+    let err = any_host(GuardConfig::permissive_loopback())
+        .client()
+        .get(url)
+        .send()
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(guard_cause(&err), Some(GuardError::IpLiteral { .. })),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
+async fn guard_any_host_client_follows_max_redirects() {
+    let server = MockServer::start().await;
+    let url = redirect_chain(&server, MAX_REDIRECTS).await;
+    let response = any_host(GuardConfig::permissive_loopback())
+        .client()
+        .get(url)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+}
+
+#[tokio::test]
+async fn guard_any_host_client_rejects_more_than_max_redirects() {
+    let server = MockServer::start().await;
+    let url = redirect_chain(&server, MAX_REDIRECTS + 1).await;
+    let err = any_host(GuardConfig::permissive_loopback())
+        .client()
+        .get(url)
+        .send()
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(guard_cause(&err), Some(GuardError::TooManyRedirects { .. })),
+        "{err:?}"
+    );
 }

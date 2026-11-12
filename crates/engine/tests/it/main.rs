@@ -8,6 +8,7 @@ mod browse_preview;
 mod browse_session;
 mod browse_use;
 mod common;
+mod download_on_next;
 mod engine_core;
 mod files;
 mod hooks;

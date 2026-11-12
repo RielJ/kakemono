@@ -14,7 +14,7 @@ fn new_daemon_keys_have_the_spec_defaults() {
     let d = parse_str("", home()).expect("parse").daemon;
     assert!(!d.change_on_start);
     assert!(d.internet);
-    assert!(d.download_enabled);
+    assert!(!d.download_enabled);
     assert_eq!(d.download_interval, "10m");
     assert!(d.download_limit_mb_enabled);
     assert_eq!(d.download_limit_mb, 500);
