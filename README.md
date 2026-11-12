@@ -52,7 +52,10 @@ yay -S kakemono-bin
 ```
 
 ```powershell
-# Windows, with Scoop (not yet: the first Scoop release is 0.3.1)
+# Windows, with Scoop (no Git needed)
+scoop install https://raw.githubusercontent.com/RielJ/scoop-bucket/main/bucket/kakemono.json
+
+# Windows, with Scoop and Git: add the bucket, then install from it
 scoop bucket add rielj https://github.com/RielJ/scoop-bucket
 scoop install rielj/kakemono
 
@@ -557,7 +560,7 @@ Each channel needs a one-time setup. A channel whose secret is missing is skippe
 
 winget needs one version in `microsoft/winget-pkgs` before the workflow can submit updates. Submit the first version by hand: render the manifests as shown above, copy `out/winget/` to `manifests/r/RielJ/kakemono/<version>/` in your fork, and open a pull request.
 
-Scoop installs `kakemono-windows-x64-portable.zip`. Releases before 0.4.0 don't have that file, so the bucket can only start at 0.4.0.
+Scoop installs `kakemono-windows-x64-portable.zip`, which releases have shipped since 0.3.1. The README gives two Scoop commands. Adding the bucket needs Git; installing from the bucket's raw manifest URL doesn't. For a URL install, Scoop records the URL, so `scoop update kakemono` and `scoop status` read the newest manifest from the bucket.
 
 | Crate | Contents |
 |---|---|
