@@ -708,8 +708,10 @@ async fn http_send_fail_fast_returns_429_at_once_with_hint() {
     let err = http::send_fail_fast(paused_client().get(server.uri()), "unsplash api")
         .await
         .unwrap_err();
+    // The server asks for a 60 s wait; under 30 s proves there was none. A tighter bound
+    // fails when the whole workspace's tests load the machine.
     assert!(
-        start.elapsed() < Duration::from_secs(1),
+        start.elapsed() < Duration::from_secs(30),
         "{:?}",
         start.elapsed()
     );

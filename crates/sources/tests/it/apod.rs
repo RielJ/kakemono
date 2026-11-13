@@ -493,7 +493,13 @@ mod browse {
             .browse("", None)
             .await
             .unwrap_err();
-        assert!(started.elapsed() < Duration::from_secs(1));
+        // The server asks for a 60 s wait; under 30 s proves there was none. A tighter bound
+        // fails when the whole workspace's tests load the machine.
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "{:?}",
+            started.elapsed()
+        );
         assert!(
             matches!(
                 &err,
