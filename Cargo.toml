@@ -182,6 +182,10 @@ debug = false
 inherits = "dev"
 debug = true
 
+# Small and fast: whole-program LTO in one codegen unit cut the binaries by ~22-25% (measured
+# on macOS arm64) and ran no slower; release builds take ~1.5x longer. opt-level stays 3,
+# since "s"/"z" trade speed for size. panic stays "unwind": facts.rs catches decoder panics.
 [profile.release]
-lto = "thin"
+lto = "fat"
+codegen-units = 1
 strip = "symbols"
