@@ -198,9 +198,17 @@ jobs:
           install -d -m 700 ~/.ssh
           printf '%s\n' "$AUR_SSH_KEY" >~/.ssh/aur
           chmod 600 ~/.ssh/aur
-          ssh-keyscan -t ed25519 aur.archlinux.org 2>/dev/null \
-            >>~/.ssh/known_hosts
-          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes"
+          # Pinned: the Ed25519 key behind the fingerprint on aur.archlinux.org
+          # (SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4).
+          printf 'aur.archlinux.org ssh-ed25519 %s%s\n' \
+            AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawx \
+            A/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN >~/.ssh/known_hosts
+          # The container sets HOME=/github/home, but ssh looks in root's
+          # home from /etc/passwd (/root), so name every file explicitly.
+          GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes"
+          GIT_SSH_COMMAND="$GIT_SSH_COMMAND -o StrictHostKeyChecking=yes"
+          export GIT_SSH_COMMAND="$GIT_SSH_COMMAND
+            -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
           git clone ssh://aur@aur.archlinux.org/kakemono-bin.git aur
           cp out/aur/kakemono-bin/PKGBUILD aur/
           # makepkg refuses to run as root.
