@@ -27,8 +27,9 @@
 //!    through it, after the URL passes [`DownloadEnv::guard`] against its
 //!    [`allowed_hosts`](kakemono_sources::Provider::allowed_hosts); others use
 //!    [`DownloadEnv::http`].
-//! 3. Computes its facts (stored in the [`FactsCache`]). If the `[filters]` reject it, the file is
-//!    deleted with [`files::safe_delete`].
+//! 3. If any `[filters]` are on, computes its facts (stored in the [`FactsCache`]); if the filters
+//!    reject it, the file is deleted with [`files::safe_delete`]. With no filter on, the image
+//!    isn't decoded here: `pool::pick` computes facts on demand once a filter is enabled.
 //! 4. If `download_limit_mb_enabled`, trims the whole download folder with
 //!    [`files::trim_to_mb`], protecting the new file.
 //!
@@ -441,11 +442,18 @@ pub async fn download_one<E: DownloadEnv + ?Sized>(
         tracing::warn!(ledger = %ledger.display(), "can't record a downloaded url: {err}");
     }
 
-    let facts = env.facts();
-    let image = facts.facts(&path).await;
-    facts.schedule_save();
+    // Facts cost a full decode and only the filters read them, so skip them when none is on;
+    // `pool::pick` computes them on demand once a filter is enabled.
     let filters = env.filters();
-    if let Some(image) = image.filter(|_| !filters.is_empty())
+    let image = if filters.is_empty() {
+        None
+    } else {
+        let facts = env.facts();
+        let image = facts.facts(&path).await;
+        facts.schedule_save();
+        image
+    };
+    if let Some(image) = image
         && let Err(failed) = filters.check(&path, &image, &env.filter_ctx())
     {
         if let Err(err) = files::safe_delete(&path, download_dir, &env.protect()) {
@@ -901,6 +909,26 @@ mod tests {
             1,
             "facts are cached as the download lands"
         );
+    }
+
+    /// With no filter enabled nothing reads the facts, so the download isn't decoded for them;
+    /// `pool::pick` computes them on demand once a filter is turned on.
+    #[tokio::test(start_paused = true)]
+    async fn download_without_filters_does_not_compute_facts() {
+        let server = MockServer::start().await;
+        serve(&server, "/a/dark.png", false, 1).await;
+        let a = provider("bing", &server, &["/a/dark.png"]);
+        let fx = Fixture::new(SourceSet::fake(vec![(
+            "a",
+            Arc::clone(&a) as Arc<dyn Provider>,
+            "",
+        )]));
+        let source = fx.env.sources.get("a").unwrap().clone();
+
+        let path = download_one(&*fx.env, &source).await.unwrap();
+
+        assert!(path.is_file());
+        assert!(fx.env.facts.is_empty(), "no facts without a filter");
     }
 
     #[tokio::test(start_paused = true)]
