@@ -42,6 +42,8 @@ allow = [
     "Unicode-3.0",
     "CDLA-Permissive-2.0",
     "MPL-2.0",
+    # Boost: permissive, OSI approved, no notice needed in binaries (xxhash-rust).
+    "BSL-1.0",
 ]
 exceptions = []
 

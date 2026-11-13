@@ -50,7 +50,7 @@ pub const DECODE_LIMIT: usize = 4;
 /// Cache files not written for this long are deleted by [`Thumbs::prune_cache`].
 pub const CACHE_MAX_AGE: Duration = Duration::from_secs(30 * 24 * 3600);
 /// Bumped when the thumbnail recipe changes, so old cache files are not reused.
-const RECIPE: &str = "v1-384-q82";
+const RECIPE: &str = "v2-384-q82";
 /// Largest width or height of a [`ListKind::Previews`] image, px. The daemon applies the same
 /// cap when it saves a preview; this re-check means a file swapped under the preview root
 /// still can't make the UI decode a huge image.
@@ -354,7 +354,7 @@ impl Thumbs {
                 tracing::debug!(path = %path.display(), error = %err, "cannot decode image");
                 status(StatusCode::UNSUPPORTED_MEDIA_TYPE)
             }
-            Err(ThumbError::Io(err)) => {
+            Err(err @ (ThumbError::Io(_) | ThumbError::Resize(_))) => {
                 tracing::warn!(path = %path.display(), error = %err, "cannot make thumbnail");
                 status(StatusCode::INTERNAL_SERVER_ERROR)
             }
@@ -471,6 +471,9 @@ pub enum ThumbError {
     /// The header gives a size over the kind's cap; the image was not decoded.
     #[error("image is {width}×{height} px, over the size cap")]
     TooLarge { width: u32, height: u32 },
+    /// The decoded image could not be resampled (a bug, not a bad file).
+    #[error("cannot resize the image: {0}")]
+    Resize(String),
 }
 
 /// The admitted file with id `id` in any of `lists`. The id hashes the real path, so every
@@ -544,17 +547,14 @@ fn admissible(roots: &[PathBuf], path: &Path) -> Option<(PathBuf, std::fs::Metad
         .then_some((real, meta))
 }
 
-/// Stable content key: 128-bit FNV-1a of the bytes, plus the recipe version. Stable across
-/// runs and toolchains (unlike `DefaultHasher`).
+/// Stable content key: XXH3-128 of the recipe version and the bytes. Stable across runs,
+/// platforms and toolchains (unlike `DefaultHasher`). Runs on every first request of a
+/// session, so it must stay fast: a 4K wallpaper hashes in well under a millisecond.
 pub fn content_key(bytes: &[u8]) -> String {
-    const OFFSET: u128 = 0x6c62_272e_07bb_0142_62b8_2175_6295_c58d;
-    const PRIME: u128 = 0x0000_0000_0100_0000_0000_0000_0000_013b;
-    let mut hash = OFFSET;
-    for byte in RECIPE.as_bytes().iter().chain(bytes) {
-        hash ^= u128::from(*byte);
-        hash = hash.wrapping_mul(PRIME);
-    }
-    format!("{hash:032x}")
+    let mut hasher = xxhash_rust::xxh3::Xxh3::new();
+    hasher.update(RECIPE.as_bytes());
+    hasher.update(bytes);
+    format!("{:032x}", hasher.digest128())
 }
 
 /// Target size: short edge [`THUMB_EDGE`], aspect kept, never upscaled.
@@ -579,15 +579,38 @@ pub fn make_thumbnail(source: &[u8]) -> Result<Vec<u8>, ThumbError> {
     let mut img = DynamicImage::from_decoder(decoder)?;
     img.apply_orientation(orientation);
     let (w, h) = thumb_size(img.width(), img.height());
-    let thumb = if (w, h) == (img.width(), img.height()) {
-        img
+    let rgb = img.into_rgb8();
+    let thumb = if (w, h) == rgb.dimensions() {
+        rgb
     } else {
-        img.resize_exact(w, h, image::imageops::FilterType::Triangle)
+        resize_rgb(&rgb, w, h)?
     };
     let mut out = Vec::new();
     let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, JPEG_QUALITY);
-    thumb.to_rgb8().write_with_encoder(encoder)?;
+    thumb.write_with_encoder(encoder)?;
     Ok(out)
+}
+
+/// Bilinear (the same filter as `image`'s `Triangle`) resample of `src` to `w`×`h`, with
+/// SIMD where the CPU has it.
+fn resize_rgb(src: &image::RgbImage, w: u32, h: u32) -> Result<image::RgbImage, ThumbError> {
+    use fast_image_resize::{
+        FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer, images::Image, images::ImageRef,
+    };
+    let resize_error = |err: &dyn std::fmt::Display| ThumbError::Resize(err.to_string());
+    let (sw, sh) = src.dimensions();
+    let from =
+        ImageRef::new(sw, sh, src.as_raw(), PixelType::U8x3).map_err(|e| resize_error(&e))?;
+    let mut to = Image::new(w, h, PixelType::U8x3);
+    Resizer::new()
+        .resize(
+            &from,
+            &mut to,
+            &ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Bilinear)),
+        )
+        .map_err(|e| resize_error(&e))?;
+    image::RgbImage::from_raw(w, h, to.into_vec())
+        .ok_or_else(|| resize_error(&"the resized buffer has the wrong length"))
 }
 
 /// Registers the `thumb` scheme. Work runs on the blocking pool.
@@ -974,6 +997,27 @@ mod tests {
         assert_eq!(thumb_size(1080, 1920), (384, 682));
         assert_eq!(thumb_size(300, 200), (300, 200));
         assert_eq!(thumb_size(0, 0), (1, 1));
+    }
+
+    /// The SIMD resample is the same bilinear filter as `image`'s `Triangle`: on a busy
+    /// pattern the two differ by under 1/255 per channel on average.
+    #[test]
+    fn thumbs_resize_matches_image_triangle_filter() {
+        let src = image::RgbImage::from_fn(1920, 1080, |x, y| {
+            image::Rgb([(x % 251) as u8, (y % 241) as u8, ((x * y) % 239) as u8])
+        });
+        let (w, h) = thumb_size(1920, 1080);
+        let ours = resize_rgb(&src, w, h).unwrap();
+        let theirs = image::imageops::resize(&src, w, h, image::imageops::FilterType::Triangle);
+        assert_eq!(ours.dimensions(), (w, h));
+        let diff: u64 = ours
+            .as_raw()
+            .iter()
+            .zip(theirs.as_raw())
+            .map(|(a, b)| u64::from(a.abs_diff(*b)))
+            .sum();
+        let mean = diff as f64 / ours.as_raw().len() as f64;
+        assert!(mean < 1.0, "mean channel difference {mean}");
     }
 
     #[test]
