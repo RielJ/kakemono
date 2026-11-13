@@ -12,6 +12,7 @@
 # Fails, writing nothing for that template, when an asset is missing from SHA256SUMS or a
 # placeholder is left over.
 set -euo pipefail
+{ # Parsed whole before it runs, so editing this file mid-run is safe (scripts/check-scripts.sh).
 
 usage() {
   sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
@@ -88,3 +89,4 @@ for t in "${templates[@]}"; do
   echo "$dest"
 done
 exit "$failed"
+exit; }
