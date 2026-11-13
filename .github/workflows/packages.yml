@@ -205,10 +205,10 @@ jobs:
             A/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN >~/.ssh/known_hosts
           # The container sets HOME=/github/home, but ssh looks in root's
           # home from /etc/passwd (/root), so name every file explicitly.
-          GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes"
-          GIT_SSH_COMMAND="$GIT_SSH_COMMAND -o StrictHostKeyChecking=yes"
-          export GIT_SSH_COMMAND="$GIT_SSH_COMMAND
-            -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
+          # One line: git runs this through sh, so a newline splits it.
+          ssh_opts="-o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+          ssh_opts="$ssh_opts -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur $ssh_opts"
           git clone ssh://aur@aur.archlinux.org/kakemono-bin.git aur
           cp out/aur/kakemono-bin/PKGBUILD aur/
           # makepkg refuses to run as root.
