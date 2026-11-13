@@ -83,8 +83,23 @@ fn with_timeouts(builder: ClientBuilder, connect: Duration, read: Duration) -> C
 /// [`client`] adds the timeouts. Use this directly only when you need a different setup, e.g.
 /// tests under `tokio::time::pause`, where a pending timeout timer would auto-advance the
 /// paused clock and fire while a request is in flight.
+///
+/// This is the only place a reqwest client may be built (clippy.toml bans `Client::new`,
+/// `Client::builder` and the rest): it installs ring as the process's TLS crypto provider
+/// first, without which reqwest's `rustls-no-provider` build panics in `build()`.
+#[allow(clippy::disallowed_methods)]
 pub fn client_builder() -> ClientBuilder {
+    install_crypto_provider();
     Client::builder().user_agent(USER_AGENT)
+}
+
+/// Installs ring as the process-wide rustls provider, once. When something else installed one
+/// first (tauri-plugin-updater installs ring too), that one stays.
+fn install_crypto_provider() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
 }
 
 /// `GET url` with [`send_with_retry`].

@@ -79,7 +79,10 @@ async fn webp_included() {
 
 #[tokio::test]
 async fn name_is_reddit() {
-    let reddit = Reddit::for_subreddit("EarthPorn".parse().unwrap(), reqwest::Client::new());
+    let reddit = Reddit::for_subreddit(
+        "EarthPorn".parse().unwrap(),
+        kakemono_sources::http::client_builder().build().unwrap(),
+    );
     assert_eq!(reddit.name(), "reddit");
 }
 
@@ -204,7 +207,7 @@ mod browse {
         let subreddit: Subreddit = "wallpapers".parse().unwrap();
         Reddit::for_subreddit_with_base_url(
             subreddit,
-            reqwest::Client::new(),
+            kakemono_sources::http::client_builder().build().unwrap(),
             server.uri().parse().unwrap(),
         )
     }
@@ -439,13 +442,19 @@ mod browse {
 
     #[test]
     fn browse_support_is_paged() {
-        let reddit = Reddit::for_subreddit("pics".parse().unwrap(), reqwest::Client::new());
+        let reddit = Reddit::for_subreddit(
+            "pics".parse().unwrap(),
+            kakemono_sources::http::client_builder().build().unwrap(),
+        );
         assert_eq!(reddit.browse_support(), BrowseSupport::Paged);
     }
 
     #[test]
     fn media_hosts_are_reddit_and_imgur_image_hosts() {
-        let reddit = Reddit::for_subreddit("pics".parse().unwrap(), reqwest::Client::new());
+        let reddit = Reddit::for_subreddit(
+            "pics".parse().unwrap(),
+            kakemono_sources::http::client_builder().build().unwrap(),
+        );
         assert_eq!(
             reddit.media_hosts(),
             ["i.redd.it", "preview.redd.it", "i.imgur.com"]

@@ -213,7 +213,10 @@ async fn rate_limit_is_the_rate_limited_variant() {
 
 #[test]
 fn name_is_bing() {
-    let bing = Bing::new(BingConfig::default(), reqwest::Client::new());
+    let bing = Bing::new(
+        BingConfig::default(),
+        kakemono_sources::http::client_builder().build().unwrap(),
+    );
     assert_eq!(bing.name(), "bing");
 }
 
@@ -253,7 +256,7 @@ mod browse {
     fn bing(server: &MockServer) -> Bing {
         Bing::with_base_url(
             BingConfig::default(),
-            reqwest::Client::new(),
+            kakemono_sources::http::client_builder().build().unwrap(),
             server.uri().parse().unwrap(),
         )
     }
@@ -449,13 +452,19 @@ mod browse {
 
     #[test]
     fn browse_support_is_finite() {
-        let bing = Bing::new(BingConfig::default(), reqwest::Client::new());
+        let bing = Bing::new(
+            BingConfig::default(),
+            kakemono_sources::http::client_builder().build().unwrap(),
+        );
         assert_eq!(bing.browse_support(), BrowseSupport::Finite);
     }
 
     #[test]
     fn media_hosts_are_bing() {
-        let bing = Bing::new(BingConfig::default(), reqwest::Client::new());
+        let bing = Bing::new(
+            BingConfig::default(),
+            kakemono_sources::http::client_builder().build().unwrap(),
+        );
         assert_eq!(bing.media_hosts(), ["www.bing.com", "bing.com"]);
     }
 
@@ -466,7 +475,11 @@ mod browse {
         serve_idx(&server, "0", fixture("browse_idx0.json")).await;
         // Fixture URLs are relative, so rebase the mock's answers onto the production origin.
         let batch = bing(&server).browse("", None).await.unwrap();
-        let hosts = Bing::new(BingConfig::default(), reqwest::Client::new()).media_hosts();
+        let hosts = Bing::new(
+            BingConfig::default(),
+            kakemono_sources::http::client_builder().build().unwrap(),
+        )
+        .media_hosts();
         let origin = server.uri();
         for item in &batch.items {
             let ImageRef::Direct(full) = &item.image else {

@@ -320,7 +320,7 @@ async fn job_with_its_own_client_downloads_through_it() {
         .await;
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert("x-client", "row".parse().unwrap());
-    let own = reqwest::Client::builder()
+    let own = kakemono_sources::http::client_builder()
         .default_headers(headers)
         .build()
         .unwrap();

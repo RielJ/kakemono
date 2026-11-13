@@ -1,5 +1,5 @@
 # Installs what CI's Windows job builds with: the MSVC toolchain and Windows SDK from Visual
-# Studio Build Tools, and Rust through rustup. Clang comes with it because aws-lc-sys needs it
+# Studio Build Tools, and Rust through rustup. Clang comes with it because ring needs it
 # on Arm64 Windows. vm.sh setup pipes this file to PowerShell over SSH; it is safe to re-run.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -42,7 +42,7 @@ if (-not (Test-Path $cargo)) {
   & (Join-Path $env:USERPROFILE '.cargo\bin\rustup.exe') update stable
 }
 
-# The VS LLVM component puts clang under the VS folder; aws-lc-sys looks for it on PATH.
+# The VS LLVM component puts clang under the VS folder; ring looks for it on PATH.
 $vs = & $vswhere -products * -latest -property installationPath
 $llvm = Join-Path $vs 'VC\Tools\Llvm\ARM64\bin'
 if (-not (Test-Path $llvm)) { $llvm = Join-Path $vs 'VC\Tools\Llvm\bin' }

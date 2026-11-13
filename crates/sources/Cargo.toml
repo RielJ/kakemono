@@ -21,6 +21,7 @@ async-trait.workspace = true
 chrono.workspace = true
 tokio.workspace = true
 reqwest.workspace = true
+rustls.workspace = true
 scraper.workspace = true
 quick-xml.workspace = true
 imagesize.workspace = true

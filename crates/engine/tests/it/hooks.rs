@@ -68,9 +68,12 @@ fn fixture(hook: Option<&[&str]>) -> Fixture {
         setter: Arc::new(setter.clone()),
         signals: Arc::new(ManualSignals::new(Theme::Light)),
     };
-    let deps = Deps::new(platform, reqwest::Client::new())
-        .with_sources(kakemono_sources::SourceSet::default())
-        .with_runner(Arc::new(runner.clone()));
+    let deps = Deps::new(
+        platform,
+        kakemono_sources::http::client_builder().build().unwrap(),
+    )
+    .with_sources(kakemono_sources::SourceSet::default())
+    .with_runner(Arc::new(runner.clone()));
     let engine = Engine::new(cfg, State::new(), root.join("state.json"), deps).unwrap();
     Fixture {
         _dir: dir,

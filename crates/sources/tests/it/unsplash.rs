@@ -92,7 +92,7 @@ async fn blank_access_key_is_not_configured() {
         UnsplashConfig {
             access_key: "  ".into(),
         },
-        reqwest::Client::new(),
+        kakemono_sources::http::client_builder().build().unwrap(),
         // Unroutable: the test fails if a request is attempted.
         "http://127.0.0.1:1".parse().unwrap(),
     );
@@ -168,7 +168,10 @@ async fn non_array_body_is_a_decode_error() {
 
 #[test]
 fn name_is_unsplash() {
-    let unsplash = Unsplash::new(UnsplashConfig::default(), reqwest::Client::new());
+    let unsplash = Unsplash::new(
+        UnsplashConfig::default(),
+        kakemono_sources::http::client_builder().build().unwrap(),
+    );
     assert_eq!(unsplash.name(), "unsplash");
 }
 
@@ -179,7 +182,7 @@ async fn transport_error_hides_the_key() {
         UnsplashConfig {
             access_key: "testkey".into(),
         },
-        reqwest::Client::new(),
+        kakemono_sources::http::client_builder().build().unwrap(),
         common::hang_up_server().await,
     );
     let err = unsplash.fetch("forest").await.unwrap_err();
@@ -317,7 +320,7 @@ async fn browse_editorial_empty_page_ends() {
         UnsplashConfig {
             access_key: "k".into(),
         },
-        reqwest::Client::new(),
+        kakemono_sources::http::client_builder().build().unwrap(),
         server.uri().parse().unwrap(),
     );
     let batch = unsplash.browse("", Some(&cursor("7"))).await.unwrap();
@@ -381,7 +384,7 @@ async fn browse_search_maps_items() {
 async fn browse_without_key_is_not_configured() {
     let unsplash = Unsplash::with_base_url(
         UnsplashConfig::default(),
-        reqwest::Client::new(),
+        kakemono_sources::http::client_builder().build().unwrap(),
         // Unroutable: the test fails if a request is attempted.
         "http://127.0.0.1:1".parse().unwrap(),
     );
@@ -448,7 +451,7 @@ async fn browse_rejects_a_foreign_cursor() {
         UnsplashConfig {
             access_key: "k".into(),
         },
-        reqwest::Client::new(),
+        kakemono_sources::http::client_builder().build().unwrap(),
         "http://127.0.0.1:1".parse().unwrap(),
     );
     let err = unsplash
@@ -468,7 +471,7 @@ async fn browse_transport_error_hides_the_key() {
         UnsplashConfig {
             access_key: "testkey".into(),
         },
-        reqwest::Client::new(),
+        kakemono_sources::http::client_builder().build().unwrap(),
         common::hang_up_server().await,
     );
     let err = unsplash.browse("forest", None).await.unwrap_err();
@@ -478,13 +481,19 @@ async fn browse_transport_error_hides_the_key() {
 
 #[test]
 fn browse_support_is_paged() {
-    let unsplash = Unsplash::new(UnsplashConfig::default(), reqwest::Client::new());
+    let unsplash = Unsplash::new(
+        UnsplashConfig::default(),
+        kakemono_sources::http::client_builder().build().unwrap(),
+    );
     assert_eq!(unsplash.browse_support(), BrowseSupport::Paged);
 }
 
 #[test]
 fn media_hosts_are_the_image_cdns() {
-    let unsplash = Unsplash::new(UnsplashConfig::default(), reqwest::Client::new());
+    let unsplash = Unsplash::new(
+        UnsplashConfig::default(),
+        kakemono_sources::http::client_builder().build().unwrap(),
+    );
     assert_eq!(
         unsplash.media_hosts(),
         ["images.unsplash.com", "plus.unsplash.com"]

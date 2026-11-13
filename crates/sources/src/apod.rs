@@ -313,7 +313,10 @@ mod tests {
 
     #[test]
     fn clock_today_is_never_after_utc_today() {
-        let apod = Apod::new(ApodConfig::default(), Client::new());
+        let apod = Apod::new(
+            ApodConfig::default(),
+            crate::http::client_builder().build().unwrap(),
+        );
         assert!(apod.today() <= Utc::now().date_naive());
     }
 
@@ -322,7 +325,7 @@ mod tests {
         let cfg = ApodConfig {
             api_key: String::new(),
         };
-        let apod = Apod::new(cfg, Client::new());
+        let apod = Apod::new(cfg, crate::http::client_builder().build().unwrap());
         assert_eq!(apod.api_key, DEMO_KEY);
         assert_eq!(apod.base_url.as_str(), "https://api.nasa.gov/");
     }

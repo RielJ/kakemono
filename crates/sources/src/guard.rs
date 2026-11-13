@@ -23,7 +23,7 @@ use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use reqwest::redirect::Policy;
 use url::{Host, Url};
 
-use crate::http::{CONNECT_TIMEOUT, READ_TIMEOUT, USER_AGENT, redact_url};
+use crate::http::{CONNECT_TIMEOUT, READ_TIMEOUT, redact_url};
 
 /// The most redirect hops [`guarded_client`] follows. The fourth hop is an error.
 pub const MAX_REDIRECTS: usize = 3;
@@ -391,8 +391,7 @@ fn client_checking(
             }
         }
     });
-    Client::builder()
-        .user_agent(USER_AGENT)
+    crate::http::client_builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .read_timeout(READ_TIMEOUT)
         .https_only(!config.allow_loopback)

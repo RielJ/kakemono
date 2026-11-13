@@ -70,10 +70,14 @@ async fn api_errors_never_contain_the_key() {
         api_key: "testkey".to_owned(),
         ..WallhavenConfig::default()
     };
-    let err = Wallhaven::with_base_url(cfg, reqwest::Client::new(), base_url)
-        .fetch("")
-        .await
-        .unwrap_err();
+    let err = Wallhaven::with_base_url(
+        cfg,
+        kakemono_sources::http::client_builder().build().unwrap(),
+        base_url,
+    )
+    .fetch("")
+    .await
+    .unwrap_err();
     assert!(matches!(err, ProviderError::Request { .. }), "{err:?}");
     common::assert_key_absent(&err, "testkey");
     assert!(err.to_string().contains("apikey=REDACTED"), "{err}");
@@ -255,7 +259,11 @@ mod browse {
             sorting: "random".to_owned(),
             categories: "111".to_owned(),
         };
-        Wallhaven::with_base_url(cfg, reqwest::Client::new(), base_url)
+        Wallhaven::with_base_url(
+            cfg,
+            kakemono_sources::http::client_builder().build().unwrap(),
+            base_url,
+        )
     }
 
     fn base(server: &MockServer) -> url::Url {

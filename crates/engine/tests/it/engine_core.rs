@@ -66,7 +66,11 @@ async fn new_reports_a_dir_it_cannot_create() {
         setter: Arc::new(RecordingSetter::new()),
         signals: Arc::new(ManualSignals::new(Theme::Light)),
     };
-    let deps = Deps::new(platform, reqwest::Client::new()).with_sources(SourceSet::default());
+    let deps = Deps::new(
+        platform,
+        kakemono_sources::http::client_builder().build().unwrap(),
+    )
+    .with_sources(SourceSet::default());
     let err = Engine::new(cfg, State::new(), base.root.join("s.json"), deps).unwrap_err();
     assert!(matches!(err, EngineError::CreateDir { .. }), "{err:?}");
     assert!(err.to_string().starts_with("manager: create dir "), "{err}");
@@ -329,7 +333,11 @@ async fn engine_starts_from_loaded_state() {
         setter: Arc::new(RecordingSetter::new()),
         signals: Arc::new(ManualSignals::new(Theme::Light)),
     };
-    let deps = Deps::new(platform, reqwest::Client::new()).with_sources(SourceSet::default());
+    let deps = Deps::new(
+        platform,
+        kakemono_sources::http::client_builder().build().unwrap(),
+    )
+    .with_sources(SourceSet::default());
     let again = Engine::new((*f.engine.config()).clone(), loaded, f.state_path(), deps).unwrap();
     let st = again.status();
     assert_eq!(st.current, Some(a));

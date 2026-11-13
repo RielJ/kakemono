@@ -649,7 +649,13 @@ mod tests {
             SourceType::Reddit,
             "https://www.reddit.com/r/EarthPorn/top/?t=month",
         );
-        let src = build_online_at(&row, &Config::default(), Client::new(), &origins).unwrap();
+        let src = build_online_at(
+            &row,
+            &Config::default(),
+            crate::http::client_builder().build().unwrap(),
+            &origins,
+        )
+        .unwrap();
         src.provider.fetch(&src.query).await.unwrap();
     }
 
@@ -872,7 +878,12 @@ mod tests {
             (SourceType::Bing, "ignored", ""),
             (SourceType::Apod, "", ""),
         ] {
-            let src = build_online(&entry("x-1", kind, location), &cfg, Client::new()).unwrap();
+            let src = build_online(
+                &entry("x-1", kind, location),
+                &cfg,
+                crate::http::client_builder().build().unwrap(),
+            )
+            .unwrap();
             assert_eq!(src.provider.name(), kind.as_str());
             assert_eq!(src.kind, kind);
             assert_eq!(src.id, "x-1");
@@ -889,8 +900,12 @@ mod tests {
             SourceType::AlbumDate,
             SourceType::Unsupported,
         ] {
-            let err = build_online(&entry("x", kind, "/tmp"), &Config::default(), Client::new())
-                .unwrap_err();
+            let err = build_online(
+                &entry("x", kind, "/tmp"),
+                &Config::default(),
+                crate::http::client_builder().build().unwrap(),
+            )
+            .unwrap_err();
             assert_eq!(not_configured(err), format!("{kind}: not an online source"));
         }
     }
@@ -898,14 +913,24 @@ mod tests {
     #[test]
     fn build_online_web_takes_the_link_as_is_with_no_query() {
         let row = entry("web-1", SourceType::Web, " https://example.com/gallery ");
-        let src = build_online(&row, &Config::default(), Client::new()).unwrap();
+        let src = build_online(
+            &row,
+            &Config::default(),
+            crate::http::client_builder().build().unwrap(),
+        )
+        .unwrap();
         assert_eq!((src.provider.name(), src.query.as_str()), ("web", ""));
     }
 
     #[test]
     fn build_online_web_refuses_http() {
         let row = entry("web-1", SourceType::Web, "http://example.com/gallery");
-        let err = build_online(&row, &Config::default(), Client::new()).unwrap_err();
+        let err = build_online(
+            &row,
+            &Config::default(),
+            crate::http::client_builder().build().unwrap(),
+        )
+        .unwrap_err();
         assert_eq!(
             not_configured(err),
             "web: enter a link that starts with https://"
@@ -915,7 +940,12 @@ mod tests {
     #[test]
     fn build_online_web_refuses_a_loopback_address() {
         let row = entry("web-1", SourceType::Web, "https://127.0.0.1/gallery");
-        let err = build_online(&row, &Config::default(), Client::new()).unwrap_err();
+        let err = build_online(
+            &row,
+            &Config::default(),
+            crate::http::client_builder().build().unwrap(),
+        )
+        .unwrap_err();
         assert!(not_configured(err).contains("IP address"));
     }
 
@@ -945,7 +975,13 @@ mod tests {
             SourceType::Web,
             &format!("{}/instance-gallery", server.uri()),
         );
-        let src = build_online_at(&row, &Config::default(), Client::new(), &origins).unwrap();
+        let src = build_online_at(
+            &row,
+            &Config::default(),
+            crate::http::client_builder().build().unwrap(),
+            &origins,
+        )
+        .unwrap();
         let err = src.provider.fetch(&src.query).await.unwrap_err();
         assert!(matches!(err, ProviderError::Unusable(_)), "{err:?}");
     }
@@ -964,7 +1000,7 @@ mod tests {
             entry("rd-1", SourceType::Reddit, "r/pics"),
             entry("bing-1", SourceType::Bing, ""),
         ];
-        let set = SourceSet::from_config(&cfg, Client::new());
+        let set = SourceSet::from_config(&cfg, crate::http::client_builder().build().unwrap());
         let ids: Vec<&str> = set.online.iter().map(|s| s.id.as_str()).collect();
         assert_eq!(ids, ["wh-1", "rd-1", "bing-1"]);
         assert_eq!(set.get("wh-1").unwrap().query, "forest");
@@ -1013,7 +1049,13 @@ mod tests {
             "https://wallhaven.cc/search?q=forest&categories=010&purity=110&sorting=toplist\
              &topRange=1y&order=desc",
         );
-        let src = build_online_at(&row, &cfg, Client::new(), &origins).unwrap();
+        let src = build_online_at(
+            &row,
+            &cfg,
+            crate::http::client_builder().build().unwrap(),
+            &origins,
+        )
+        .unwrap();
         let results = src.provider.fetch(&src.query).await.unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].image_url, "https://w.wallhaven.cc/full/a1.jpg");
@@ -1045,7 +1087,13 @@ mod tests {
             SourceType::Reddit,
             "https://www.reddit.com/r/EarthPorn/",
         );
-        let src = build_online_at(&row, &Config::default(), Client::new(), &origins).unwrap();
+        let src = build_online_at(
+            &row,
+            &Config::default(),
+            crate::http::client_builder().build().unwrap(),
+            &origins,
+        )
+        .unwrap();
         assert!(src.provider.fetch(&src.query).await.unwrap().is_empty());
     }
 }

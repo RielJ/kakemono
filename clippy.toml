@@ -1,0 +1,9 @@
+# reqwest is built with "rustls-no-provider" (see Cargo.toml): building a client before a TLS
+# crypto provider is installed panics. kakemono_sources::http::client_builder installs ring
+# first, so every client must come from it (or from http::client, which calls it).
+disallowed-methods = [
+    { path = "reqwest::Client::new", reason = "use kakemono_sources::http::client() or client_builder(); they install the TLS provider" },
+    { path = "reqwest::Client::builder", reason = "use kakemono_sources::http::client_builder(); it installs the TLS provider" },
+    { path = "reqwest::ClientBuilder::new", reason = "use kakemono_sources::http::client_builder(); it installs the TLS provider" },
+    { path = "reqwest::get", reason = "builds a client without the TLS provider; use kakemono_sources::http::client()" },
+]

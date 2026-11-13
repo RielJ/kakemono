@@ -264,8 +264,12 @@ mod browse {
             sorting: "random".to_owned(),
             categories: "111".to_owned(),
         };
-        Wallhaven::with_base_url(cfg, reqwest::Client::new(), server.uri().parse().unwrap())
-            .with_scrape_delay(delay)
+        Wallhaven::with_base_url(
+            cfg,
+            kakemono_sources::http::client_builder().build().unwrap(),
+            server.uri().parse().unwrap(),
+        )
+        .with_scrape_delay(delay)
     }
 
     /// `/search` with the config params; `page` is added by the caller.
@@ -614,7 +618,10 @@ mod browse {
     #[tokio::test]
     #[ignore = "network: hits wallhaven.cc"]
     async fn browse_live_wallhaven_scrape() {
-        let wallhaven = Wallhaven::new(WallhavenConfig::default(), reqwest::Client::new());
+        let wallhaven = Wallhaven::new(
+            WallhavenConfig::default(),
+            kakemono_sources::http::client_builder().build().unwrap(),
+        );
         let batch = wallhaven.browse("", None).await.unwrap();
         assert!(batch.items.len() >= 20, "{batch:?}");
         assert!(

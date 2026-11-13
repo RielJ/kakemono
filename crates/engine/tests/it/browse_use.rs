@@ -379,7 +379,7 @@ const ROW_HEADER: &str = "x-client";
 fn row_client() -> reqwest::Client {
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(ROW_HEADER, "row".parse().unwrap());
-    reqwest::Client::builder()
+    kakemono_sources::http::client_builder()
         .default_headers(headers)
         .build()
         .unwrap()

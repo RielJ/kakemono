@@ -169,7 +169,10 @@ async fn null_fields_decode_as_empty() {
 
 #[test]
 fn name_is_apod() {
-    let apod = Apod::new(ApodConfig::default(), reqwest::Client::new());
+    let apod = Apod::new(
+        ApodConfig::default(),
+        kakemono_sources::http::client_builder().build().unwrap(),
+    );
     assert_eq!(apod.name(), "apod");
 }
 
@@ -178,7 +181,11 @@ fn name_is_apod() {
 async fn transport_error_hides_the_key() {
     let cfg: ApodConfig =
         serde_json::from_str(r#"{"enabled": true, "api_key": "testkey"}"#).unwrap();
-    let apod = Apod::with_base_url(cfg, reqwest::Client::new(), common::hang_up_server().await);
+    let apod = Apod::with_base_url(
+        cfg,
+        kakemono_sources::http::client_builder().build().unwrap(),
+        common::hang_up_server().await,
+    );
     let err = apod.fetch("").await.unwrap_err();
     assert!(matches!(err, ProviderError::Request { .. }), "{err:?}");
     common::assert_key_absent(&err, "testkey");
@@ -240,7 +247,7 @@ mod browse {
             ApodConfig {
                 api_key: api_key.to_owned(),
             },
-            reqwest::Client::new(),
+            kakemono_sources::http::client_builder().build().unwrap(),
             server.uri().parse().unwrap(),
         )
         .with_today(date(today))
@@ -547,19 +554,29 @@ mod browse {
 
     #[test]
     fn browse_support_is_paged() {
-        let apod = Apod::new(ApodConfig::default(), reqwest::Client::new());
+        let apod = Apod::new(
+            ApodConfig::default(),
+            kakemono_sources::http::client_builder().build().unwrap(),
+        );
         assert_eq!(apod.browse_support(), BrowseSupport::Paged);
     }
 
     #[test]
     fn media_hosts_are_apod() {
-        let apod = Apod::new(ApodConfig::default(), reqwest::Client::new());
+        let apod = Apod::new(
+            ApodConfig::default(),
+            kakemono_sources::http::client_builder().build().unwrap(),
+        );
         assert_eq!(apod.media_hosts(), ["apod.nasa.gov"]);
     }
 
     #[tokio::test]
     async fn fixture_urls_pass_the_guard() {
-        let hosts = Apod::new(ApodConfig::default(), reqwest::Client::new()).media_hosts();
+        let hosts = Apod::new(
+            ApodConfig::default(),
+            kakemono_sources::http::client_builder().build().unwrap(),
+        )
+        .media_hosts();
         for item in first_batch_items().await {
             let ImageRef::Direct(full) = &item.image else {
                 panic!("{item:?}")

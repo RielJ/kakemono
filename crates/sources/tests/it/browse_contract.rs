@@ -86,7 +86,7 @@ async fn browse_contract_works_through_dyn_provider() {
 fn browse_contract_default_allowed_hosts_are_the_media_hosts() {
     let bing = kakemono_sources::bing::Bing::new(
         kakemono_config::schema::BingConfig::default(),
-        reqwest::Client::new(),
+        kakemono_sources::http::client_builder().build().unwrap(),
     );
     let media: Vec<String> = bing.media_hosts().iter().map(|h| (*h).to_owned()).collect();
     assert!(!media.is_empty());
@@ -102,7 +102,7 @@ fn browse_contract_default_allowed_hosts_is_empty_without_media_hosts() {
 fn browse_contract_default_media_client_is_none() {
     let bing = kakemono_sources::bing::Bing::new(
         kakemono_config::schema::BingConfig::default(),
-        reqwest::Client::new(),
+        kakemono_sources::http::client_builder().build().unwrap(),
     );
     assert!(bing.media_client().is_none());
 }

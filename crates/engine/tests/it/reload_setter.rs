@@ -52,7 +52,11 @@ fn engine(root: &Path, cfg: Config, setter: Arc<dyn WallpaperSetter>) -> Engine 
         setter,
         signals: Arc::new(ManualSignals::new(Theme::Light)),
     };
-    let deps = Deps::new(platform, reqwest::Client::new()).with_sources(SourceSet::default());
+    let deps = Deps::new(
+        platform,
+        kakemono_sources::http::client_builder().build().unwrap(),
+    )
+    .with_sources(SourceSet::default());
     Engine::new(cfg, State::new(), root.join("state.json"), deps).unwrap()
 }
 

@@ -6,7 +6,7 @@
 #                                      the named crates are also clippy-checked for the Linux
 #                                      and Windows targets (only crates with cfg'd OS code)
 #
-# Cross clippy and C dependencies: crates that pull in reqwest build aws-lc-sys, which needs a C
+# Cross clippy and C dependencies: crates that pull in reqwest build ring, which needs a C
 # compiler for the target. For Linux the gate uses `x86_64-linux-gnu-gcc` if installed, else zig
 # (scripts/cross/zig-cc-linux). For Windows it uses `cargo xwin` if installed, else zig
 # (scripts/cross/zig-cc-windows). Without either, the step is skipped and the gate says so
@@ -60,11 +60,11 @@ step() {
   "${run[@]}" "$@"
 }
 
-# True when the named crates build C code (aws-lc-sys, ring, or anything with a `cc` build dep)
+# True when the named crates build C code (ring, or anything with a `cc` build dep)
 # for this target.
 needs_c() {
   cargo tree "${cross_flags[@]}" --target "$1" -e normal,build,dev --prefix none 2>/dev/null |
-    grep -qE '^(aws-lc-sys|ring|cc) '
+    grep -qE '^(ring|cc) '
 }
 
 if ! command -v cargo-nextest >/dev/null; then

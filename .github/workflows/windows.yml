@@ -2,7 +2,7 @@ name: Windows
 
 # Compiles, lints and tests the Windows-only code (platform, service,
 # detect/doctor) on branch pushes. ci.yml covers main and pull requests;
-# macOS cannot cross-check Windows because aws-lc-sys does not
+# macOS cannot cross-check Windows because ring (TLS) does not
 # cross-compile there.
 
 on:

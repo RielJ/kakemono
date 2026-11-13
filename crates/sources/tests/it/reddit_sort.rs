@@ -22,7 +22,7 @@ fn reddit(server: &MockServer, sort: Sort) -> Reddit {
     let subreddit: Subreddit = "wallpapers".parse().unwrap();
     Reddit::for_subreddit_with_base_url(
         subreddit,
-        reqwest::Client::new(),
+        kakemono_sources::http::client_builder().build().unwrap(),
         server.uri().parse().unwrap(),
     )
     .with_sort(sort)

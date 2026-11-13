@@ -363,7 +363,10 @@ mod tests {
             api_key: "testkey".to_owned(),
             ..WallhavenConfig::default()
         };
-        let debug = format!("{:?}", Wallhaven::new(cfg, Client::new()));
+        let debug = format!(
+            "{:?}",
+            Wallhaven::new(cfg, crate::http::client_builder().build().unwrap())
+        );
         assert!(!debug.contains("testkey"), "{debug}");
         assert!(debug.contains("REDACTED"), "{debug}");
     }

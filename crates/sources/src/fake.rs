@@ -186,8 +186,10 @@ mod tests {
 
     #[test]
     fn static_provider_with_media_supplies_client_and_hosts() {
-        let p = StaticProvider::new("bing", vec![])
-            .with_media(reqwest::Client::new(), vec!["cdn.test".into()]);
+        let p = StaticProvider::new("bing", vec![]).with_media(
+            crate::http::client_builder().build().unwrap(),
+            vec!["cdn.test".into()],
+        );
         assert_eq!(
             (p.media_client().is_some(), p.allowed_hosts()),
             (true, vec!["cdn.test".to_owned()])

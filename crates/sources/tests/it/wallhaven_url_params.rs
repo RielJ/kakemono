@@ -57,9 +57,13 @@ fn wallhaven(server: &MockServer, api_key: &str, overrides: &WallhavenOverrides)
         api_key: api_key.to_owned(),
         ..WallhavenConfig::default()
     };
-    Wallhaven::with_base_url(cfg, reqwest::Client::new(), server.uri().parse().unwrap())
-        .with_scrape_delay(Duration::ZERO)
-        .apply_overrides(overrides)
+    Wallhaven::with_base_url(
+        cfg,
+        kakemono_sources::http::client_builder().build().unwrap(),
+        server.uri().parse().unwrap(),
+    )
+    .with_scrape_delay(Duration::ZERO)
+    .apply_overrides(overrides)
 }
 
 /// Query with every [`overrides`] value, sorted by key, before `extra` (also sorted in).
