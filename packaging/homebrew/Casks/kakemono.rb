@@ -8,7 +8,7 @@ cask "kakemono" do
   url "https://github.com/RielJ/kakemono/releases/download/v#{version}/kakemono-macos-#{arch}.dmg"
   name "kakemono"
   desc "Wallpaper manager with a tray app, a picker and many image sources"
-  homepage "https://github.com/RielJ/kakemono"
+  homepage "https://kakemono.rielj.xyz"
 
   livecheck do
     url :url

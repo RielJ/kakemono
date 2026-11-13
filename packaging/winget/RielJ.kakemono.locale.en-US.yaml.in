@@ -6,7 +6,7 @@ Publisher: RielJ
 PublisherUrl: https://github.com/RielJ
 PublisherSupportUrl: https://github.com/RielJ/kakemono/issues
 PackageName: kakemono
-PackageUrl: https://github.com/RielJ/kakemono
+PackageUrl: https://kakemono.rielj.xyz
 License: MIT
 LicenseUrl: https://github.com/RielJ/kakemono/blob/main/LICENSE
 ShortDescription: A wallpaper manager for macOS, Linux, and Windows.

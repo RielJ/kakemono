@@ -4,7 +4,7 @@ pkgver=@VERSION@
 pkgrel=1
 pkgdesc='Wallpaper manager with a tray app, a picker and many image sources'
 arch=('x86_64')
-url='https://github.com/RielJ/kakemono'
+url='https://kakemono.rielj.xyz'
 license=('MIT')
 # The tray loads libayatana-appindicator at run time (dlopen), so namcap can't see it.
 depends=('gtk3' 'webkit2gtk-4.1' 'libayatana-appindicator')

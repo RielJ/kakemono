@@ -1,7 +1,7 @@
 {
     "version": "@VERSION@",
     "description": "A wallpaper manager: new wallpapers from Bing, Wallhaven, Unsplash, Reddit, NASA APOD, any web page, or your own folders, on a timer.",
-    "homepage": "https://github.com/RielJ/kakemono",
+    "homepage": "https://kakemono.rielj.xyz",
     "license": "MIT",
     "notes": "Updates come through Scoop: scoop update kakemono",
     "architecture": {

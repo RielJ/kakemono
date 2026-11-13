@@ -1,6 +1,6 @@
 class KakemonoCli < Formula
   desc "Wallpaper manager CLI and headless daemon"
-  homepage "https://github.com/RielJ/kakemono"
+  homepage "https://kakemono.rielj.xyz"
   license "MIT"
 
   livecheck do
