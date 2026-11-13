@@ -81,6 +81,17 @@ jobs:
       - run: npm run build
       - run: npm test
 
+  # scripts/gate.sh runs these first; CI runs them too, so a commit
+  # made without the gate (as package-manifests.sh once was) fails.
+  scripts:
+    name: script checks
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/check-scripts.sh
+      - run: scripts/check-old-name.sh
+
   deny:
     name: cargo deny
     if: github.event_name != 'schedule'

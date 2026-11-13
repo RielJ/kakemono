@@ -2,7 +2,8 @@
 # Rust gate for kakemono. Two modes:
 #
 #   scripts/gate.sh quick <crate>...   while working: check + tests of the named crates only
-#   scripts/gate.sh full [<crate>...]  once, before commit: fmt, clippy, all tests, doctests;
+#   scripts/gate.sh full [<crate>...]  once, before commit: script checks, fmt, clippy, all
+#                                      tests, doctests, cargo deny (licenses, advisories);
 #                                      the named crates are also clippy-checked for the Linux
 #                                      and Windows targets (only crates with cfg'd OS code)
 #
@@ -88,6 +89,12 @@ case "$mode" in
     step cargo clippy --workspace --all-targets --all-features -- -D warnings
     step cargo nextest run --workspace --all-features
     step cargo test --workspace --all-features --doc
+    # Same check as CI's deny job, so a new crate with an unlisted license fails here first.
+    if command -v cargo-deny >/dev/null; then
+      step cargo deny check
+    else
+      skipped+=("cargo deny: not installed (brew install cargo-deny); covered by CI")
+    fi
     if ((${#cross_flags[@]} > 0)); then
       for target in x86_64-unknown-linux-gnu x86_64-pc-windows-msvc; do
         clippy=(cargo clippy)
@@ -96,7 +103,7 @@ case "$mode" in
             *linux*)
               if ! command -v x86_64-linux-gnu-gcc >/dev/null; then
                 if ! command -v zig >/dev/null; then
-                  skipped+=("$target: needs x86_64-linux-gnu-gcc or zig (brew install zig)")
+                  skipped+=("cross clippy for $target: needs x86_64-linux-gnu-gcc or zig (brew install zig)")
                   continue
                 fi
                 export CC_x86_64_unknown_linux_gnu="$PWD/scripts/cross/zig-cc-linux"
@@ -110,7 +117,7 @@ case "$mode" in
                 export CC_x86_64_pc_windows_msvc="$PWD/scripts/cross/zig-cc-windows"
                 export AR_x86_64_pc_windows_msvc="$PWD/scripts/cross/zig-lib"
               else
-                skipped+=("$target: needs cargo-xwin or zig (brew install zig); covered by CI")
+                skipped+=("cross clippy for $target: needs cargo-xwin or zig (brew install zig); covered by CI")
                 continue
               fi
               ;;
@@ -120,7 +127,7 @@ case "$mode" in
       done
     fi
     for s in "${skipped[@]+"${skipped[@]}"}"; do
-      printf '\n==> skipped cross clippy for %s\n' "$s"
+      printf '\n==> skipped %s\n' "$s"
     done
     printf '\n==> gate passed\n'
     ;;
